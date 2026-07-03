@@ -156,6 +156,9 @@ importers:
 
   packages/preflight:
     dependencies:
+      '@skill-steward/catalog':
+        specifier: workspace:*
+        version: link:../catalog
       '@skill-steward/engine':
         specifier: workspace:*
         version: link:../engine

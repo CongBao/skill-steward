@@ -1,10 +1,9 @@
-import type {
-  Finding,
-  PortfolioReport,
-  Severity,
-  SkillRecord
-} from "@skill-steward/engine";
-import { sha256 } from "@skill-steward/engine";
+import { sha256, type Finding, type Severity } from "@skill-steward/engine";
+import {
+  normalizePreflightCandidates,
+  type AnalyzePreflightInputV2,
+  type NormalizedPreflightCandidate
+} from "./candidates.js";
 import { PREFLIGHT_CONFIG } from "./config.js";
 import {
   PREFLIGHT_ALGORITHM_VERSION,
@@ -17,23 +16,19 @@ import {
 } from "./domain.js";
 import { normalizeTask, tokenize } from "./tokenize.js";
 
-export interface AnalyzePreflightInput {
-  task: string;
-  report: PortfolioReport;
-  maxSkills?: number;
-  id: string;
-  now: Date;
-}
+export type AnalyzePreflightInput = AnalyzePreflightInputV2;
 
 interface ScoredCandidate {
-  skill: SkillRecord;
+  candidate: NormalizedPreflightCandidate;
   routeTerms: Set<string>;
   matchedTaskTerms: Set<string>;
   relevance: number;
   adjustedRelevance: number;
   riskPenalty: number;
+  installPenalty: number;
   nameMatch: boolean;
   plausible: boolean;
+  critical: boolean;
   initialReasons: PreflightReason[];
 }
 
@@ -42,6 +37,13 @@ interface SelectedCandidate {
   uniqueCoverage: number;
   redundancyPenalty: number;
 }
+
+const severityRank: Record<Severity, number> = {
+  info: 0,
+  warning: 1,
+  error: 2,
+  critical: 3
+};
 
 function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -57,36 +59,35 @@ function ratio(numerator: number, denominator: number): number {
 
 function jaccard(left: Set<string>, right: Set<string>): number {
   if (left.size === 0 && right.size === 0) return 0;
-  const shared = intersection(left, right).size;
-  return shared / new Set([...left, ...right]).size;
+  return intersection(left, right).size / new Set([...left, ...right]).size;
 }
 
 function stableNumber(value: number): number {
   return Number(value.toFixed(6));
 }
 
-function riskPenalty(
-  skillId: string,
-  findings: Finding[]
-): number {
-  return clamp(
-    findings
-      .filter(({ skillIds }) => skillIds.includes(skillId))
-      .reduce(
-        (total, { severity }) =>
-          total + PREFLIGHT_CONFIG.riskWeights[severity as Severity],
-        0
-      )
-  );
+function candidateRisk(findings: Finding[]): number {
+  return clamp(findings.reduce(
+    (total, { severity }) => total + PREFLIGHT_CONFIG.riskWeights[severity],
+    0
+  ));
+}
+
+function highestSeverity(findings: Finding[]): Severity | null {
+  return findings.reduce<Severity | null>((highest, finding) => {
+    if (!highest || severityRank[finding.severity] > severityRank[highest]) {
+      return finding.severity;
+    }
+    return highest;
+  }, null);
 }
 
 function matchesName(
-  task: string,
+  normalizedTask: string,
   taskTerms: Set<string>,
-  skill: SkillRecord
+  candidate: NormalizedPreflightCandidate
 ): boolean {
-  const normalizedTask = normalizeTask(task).toLowerCase();
-  const normalizedName = normalizeTask(skill.name)
+  const normalizedName = normalizeTask(candidate.name)
     .toLowerCase()
     .replace(/[-_]+/g, " ");
   if (
@@ -95,34 +96,40 @@ function matchesName(
   ) {
     return true;
   }
-  const nameTerms = tokenize(skill.name.replace(/[-_]+/g, " ")).terms;
+  const nameTerms = tokenize(candidate.name.replace(/[-_]+/g, " ")).terms;
   return nameTerms.length > 0 && nameTerms.every((term) => taskTerms.has(term));
 }
 
 function scoreCandidates(
   task: string,
-  report: PortfolioReport
-): { candidates: ScoredCandidate[]; taskTerms: Set<string> } {
-  const taskTerms = new Set(tokenize(task).terms);
-  const candidates = report.skills.map((skill): ScoredCandidate => {
+  normalizedCandidates: NormalizedPreflightCandidate[]
+): { candidates: ScoredCandidate[]; taskTerms: Set<string>; taskTermOrder: string[] } {
+  const tokenizedTask = tokenize(task);
+  const taskTerms = new Set(tokenizedTask.terms);
+  const normalizedTask = normalizeTask(task).toLowerCase();
+  const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
     const routeTerms = new Set(
-      tokenize(`${skill.name.replace(/[-_]+/g, " ")} ${skill.description}`)
-        .terms
+      tokenize(`${candidate.name.replace(/[-_]+/g, " ")} ${candidate.description}`).terms
     );
     const matchedTaskTerms = intersection(taskTerms, routeTerms);
     const taskCoverage = ratio(matchedTaskTerms.size, taskTerms.size);
     const skillPrecision = ratio(matchedTaskTerms.size, routeTerms.size);
-    const nameMatch = matchesName(task, taskTerms, skill);
-    const projectFit = skill.scope === "project" ? 1 : 0;
+    const nameMatch = matchesName(normalizedTask, taskTerms, candidate);
+    const projectFit = candidate.scope === "project" ? 1 : 0;
     const relevance = clamp(
       taskCoverage * PREFLIGHT_CONFIG.taskCoverageWeight +
-        skillPrecision * PREFLIGHT_CONFIG.skillPrecisionWeight +
-        (nameMatch ? PREFLIGHT_CONFIG.nameMatchWeight : 0) +
-        projectFit * PREFLIGHT_CONFIG.projectScopeWeight
+      skillPrecision * PREFLIGHT_CONFIG.skillPrecisionWeight +
+      (nameMatch ? PREFLIGHT_CONFIG.nameMatchWeight : 0) +
+      projectFit * PREFLIGHT_CONFIG.projectScopeWeight
     );
-    const risk = riskPenalty(skill.id, report.findings);
-    const adjustedRelevance = clamp(relevance - risk);
+    const riskPenalty = candidateRisk(candidate.findings);
+    const installPenalty = candidate.availability === "available"
+      ? PREFLIGHT_CONFIG.installPenalty
+      : 0;
+    const critical = candidate.findings.some(({ severity }) => severity === "critical");
+    const adjustedRelevance = clamp(relevance - riskPenalty - installPenalty);
     const initialReasons: PreflightReason[] = [];
+
     if (matchedTaskTerms.size > 0) {
       initialReasons.push({
         code: "TASK_TERM_MATCH",
@@ -132,7 +139,7 @@ function scoreCandidates(
     if (nameMatch) {
       initialReasons.push({
         code: "NAME_MATCH",
-        detail: `Task matches '${skill.name}' routing metadata.`
+        detail: `Task matches '${candidate.name}' routing metadata.`
       });
     }
     if (projectFit) {
@@ -141,48 +148,65 @@ function scoreCandidates(
         detail: "Project-scoped Skill is available in the current workspace."
       });
     }
-    if (risk > 0) {
+    if (riskPenalty > 0) {
       initialReasons.push({
         code: "PORTFOLIO_RISK",
-        detail: `Existing findings apply a ${Math.round(risk * 100)}% risk penalty.`
+        detail: `Existing findings apply a ${Math.round(riskPenalty * 100)}% risk penalty.`
+      });
+    }
+    if (candidate.availability === "available") {
+      initialReasons.push({
+        code: "INSTALL_REQUIRED",
+        detail: "This candidate is not installed and requires explicit approval."
+      });
+    }
+    if (critical) {
+      initialReasons.push({
+        code: "CRITICAL_RISK",
+        detail: "A critical finding makes this catalog candidate non-installable."
+      });
+    }
+    if (!candidate.harnessCompatible) {
+      initialReasons.push({
+        code: "HARNESS_INCOMPATIBLE",
+        detail: "The candidate does not declare compatibility with the target Harness."
       });
     }
 
     return {
-      skill,
+      candidate,
       routeTerms,
       matchedTaskTerms,
       relevance,
       adjustedRelevance,
-      riskPenalty: risk,
+      riskPenalty,
+      installPenalty,
       nameMatch,
-      plausible:
-        nameMatch || adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold,
+      plausible: candidate.harnessCompatible && !critical &&
+        (nameMatch || adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold),
+      critical,
       initialReasons
     };
   });
 
-  return { candidates, taskTerms };
+  return { candidates, taskTerms, taskTermOrder: tokenizedTask.terms };
 }
 
-function compareCandidates(
-  left: ScoredCandidate,
-  right: ScoredCandidate
-): number {
-  return (
-    right.adjustedRelevance - left.adjustedRelevance ||
-    left.skill.estimatedTokens - right.skill.estimatedTokens ||
-    left.skill.id.localeCompare(right.skill.id)
-  );
+function compareCandidates(left: ScoredCandidate, right: ScoredCandidate): number {
+  return right.adjustedRelevance - left.adjustedRelevance ||
+    left.candidate.contextTokens - right.candidate.contextTokens ||
+    left.candidate.candidateId.localeCompare(right.candidate.candidateId);
 }
 
-function selectMinimalSet(
+function selectInstalled(
   candidates: ScoredCandidate[],
   taskTerms: Set<string>,
   maxSkills: number
 ): SelectedCandidate[] {
-  const plausible = candidates.filter(({ plausible }) => plausible);
-  if (plausible.length === 0 || maxSkills === 0) return [];
+  const plausible = candidates.filter(
+    ({ candidate, plausible }) => candidate.availability === "installed" && plausible
+  );
+  if (plausible.length === 0) return [];
 
   const plausibleCoverage = new Set(
     plausible.flatMap(({ matchedTaskTerms }) => [...matchedTaskTerms])
@@ -193,57 +217,29 @@ function selectMinimalSet(
   const selectedRouteTerms = new Set<string>();
 
   while (remaining.length > 0 && selected.length < maxSkills) {
-    const ranked = remaining
-      .map((candidate) => {
-        const uncovered = new Set(
-          [...candidate.matchedTaskTerms].filter(
-            (term) => !coveredTerms.has(term)
-          )
-        );
-        const uniqueCoverage = ratio(uncovered.size, taskTerms.size);
-        const redundancy = jaccard(candidate.routeTerms, selectedRouteTerms);
-        const redundancyPenalty =
-          redundancy * PREFLIGHT_CONFIG.redundancyWeight;
-        const marginal = clamp(
-          candidate.relevance +
-            uniqueCoverage -
-            redundancyPenalty -
-            candidate.riskPenalty
-        );
-        return {
-          candidate,
-          uniqueCoverage,
-          redundancyPenalty,
-          marginal
-        };
-      })
-      .sort(
-        (left, right) =>
-          right.marginal - left.marginal ||
-          compareCandidates(left.candidate, right.candidate)
+    const ranked = remaining.map((candidate) => {
+      const uncovered = new Set(
+        [...candidate.matchedTaskTerms].filter((term) => !coveredTerms.has(term))
       );
+      const uniqueCoverage = ratio(uncovered.size, taskTerms.size);
+      const redundancyPenalty = jaccard(candidate.routeTerms, selectedRouteTerms) *
+        PREFLIGHT_CONFIG.redundancyWeight;
+      const marginal = clamp(
+        candidate.relevance + uniqueCoverage - redundancyPenalty - candidate.riskPenalty
+      );
+      return { candidate, uniqueCoverage, redundancyPenalty, marginal };
+    }).sort((left, right) =>
+      right.marginal - left.marginal || compareCandidates(left.candidate, right.candidate)
+    );
     const next = ranked[0];
-    if (!next) break;
-    if (
-      selected.length > 0 &&
-      next.marginal < PREFLIGHT_CONFIG.marginalThreshold
-    ) {
+    if (!next || (selected.length > 0 && next.marginal < PREFLIGHT_CONFIG.marginalThreshold)) {
       break;
     }
-
-    selected.push({
-      candidate: next.candidate,
-      uniqueCoverage: next.uniqueCoverage,
-      redundancyPenalty: next.redundancyPenalty
-    });
+    selected.push(next);
     next.candidate.matchedTaskTerms.forEach((term) => coveredTerms.add(term));
     next.candidate.routeTerms.forEach((term) => selectedRouteTerms.add(term));
     remaining.splice(remaining.indexOf(next.candidate), 1);
-
-    if (
-      ratio(coveredTerms.size, plausibleCoverage.size) >=
-      PREFLIGHT_CONFIG.coverageTarget
-    ) {
+    if (ratio(coveredTerms.size, plausibleCoverage.size) >= PREFLIGHT_CONFIG.coverageTarget) {
       break;
     }
   }
@@ -251,23 +247,78 @@ function selectMinimalSet(
   return selected;
 }
 
+function selectedTerms(selected: SelectedCandidate[]): Set<string> {
+  return new Set(selected.flatMap(({ candidate }) => [...candidate.matchedTaskTerms]));
+}
+
+function selectAvailable(
+  candidates: ScoredCandidate[],
+  taskTerms: Set<string>,
+  installed: SelectedCandidate[]
+): SelectedCandidate[] {
+  const remaining = candidates.filter(
+    ({ candidate, plausible }) => candidate.availability === "available" && plausible
+  );
+  const selected: SelectedCandidate[] = [];
+  const coveredTerms = selectedTerms(installed);
+  const selectedRouteTerms = new Set(
+    installed.flatMap(({ candidate }) => [...candidate.routeTerms])
+  );
+
+  while (
+    remaining.length > 0 &&
+    selected.length < PREFLIGHT_CONFIG.maxAvailableSkills &&
+    ratio(coveredTerms.size, taskTerms.size) < PREFLIGHT_CONFIG.projectedCoverageTarget
+  ) {
+    const ranked = remaining.flatMap((candidate) => {
+      const uncovered = new Set(
+        [...candidate.matchedTaskTerms].filter((term) => !coveredTerms.has(term))
+      );
+      if (uncovered.size === 0) return [];
+      const uniqueCoverage = ratio(uncovered.size, taskTerms.size);
+      const redundancyPenalty = jaccard(candidate.routeTerms, selectedRouteTerms) *
+        PREFLIGHT_CONFIG.redundancyWeight;
+      const marginal = clamp(
+        candidate.relevance + uniqueCoverage - redundancyPenalty -
+        candidate.riskPenalty - candidate.installPenalty
+      );
+      return [{ candidate, uniqueCoverage, redundancyPenalty, marginal }];
+    }).sort((left, right) =>
+      right.marginal - left.marginal || compareCandidates(left.candidate, right.candidate)
+    );
+    const next = ranked[0];
+    if (!next || next.marginal < PREFLIGHT_CONFIG.availableMarginalThreshold) break;
+    selected.push(next);
+    next.candidate.matchedTaskTerms.forEach((term) => coveredTerms.add(term));
+    next.candidate.routeTerms.forEach((term) => selectedRouteTerms.add(term));
+    remaining.splice(remaining.indexOf(next.candidate), 1);
+  }
+
+  return selected;
+}
+
 function presentCandidates(
   candidates: ScoredCandidate[],
-  selected: SelectedCandidate[]
+  installed: SelectedCandidate[],
+  available: SelectedCandidate[]
 ): PreflightCandidate[] {
+  const selected = [...installed, ...available];
   const selectedById = new Map(
-    selected.map((entry, index) => [entry.candidate.skill.id, { ...entry, index }])
+    selected.map((entry, index) => [
+      entry.candidate.candidate.candidateId,
+      { ...entry, index }
+    ])
   );
   const selectedRouteTerms = new Set(
     selected.flatMap(({ candidate }) => [...candidate.routeTerms])
   );
 
-  const result = candidates.map((candidate): PreflightCandidate => {
-    const selectedEntry = selectedById.get(candidate.skill.id);
+  return candidates.map((candidate): PreflightCandidate => {
+    const id = candidate.candidate.candidateId;
+    const selectedEntry = selectedById.get(id);
     const redundancyPenalty = selectedEntry
       ? selectedEntry.redundancyPenalty
-      : jaccard(candidate.routeTerms, selectedRouteTerms) *
-        PREFLIGHT_CONFIG.redundancyWeight;
+      : jaccard(candidate.routeTerms, selectedRouteTerms) * PREFLIGHT_CONFIG.redundancyWeight;
     const uniqueCoverage = selectedEntry?.uniqueCoverage ?? 0;
     const reasons = [...candidate.initialReasons];
 
@@ -276,7 +327,7 @@ function presentCandidates(
         code: "UNIQUE_COVERAGE",
         detail: `${Math.round(uniqueCoverage * 100)}% unique task-term coverage.`
       });
-    } else if (!candidate.plausible) {
+    } else if (!candidate.plausible && !candidate.critical && candidate.candidate.harnessCompatible) {
       reasons.push({
         code: "LOW_RELEVANCE",
         detail: "Task relevance is below the deterministic threshold."
@@ -286,66 +337,92 @@ function presentCandidates(
         code: "REDUNDANT_WITH_SELECTED",
         detail: `${Math.round(redundancyPenalty * 100)}% weighted overlap with the selected set.`
       });
-    } else {
+    } else if (!candidate.critical && candidate.candidate.harnessCompatible) {
       reasons.push({
         code: "LOW_RELEVANCE",
         detail: "Candidate adds less marginal value than the selected set."
       });
     }
 
+    const decision = selectedEntry
+      ? candidate.candidate.availability === "installed" ? "use" : "install"
+      : "excluded";
     return {
-      skillId: candidate.skill.id,
-      name: candidate.skill.name,
-      description: candidate.skill.description,
-      scope: candidate.skill.scope,
-      visibleTo: candidate.skill.visibleTo,
+      candidateId: id,
+      availability: candidate.candidate.availability,
+      ...(candidate.candidate.installedSkillId
+        ? { installedSkillId: candidate.candidate.installedSkillId }
+        : {}),
+      ...(candidate.candidate.catalogSkillId
+        ? { catalogSkillId: candidate.candidate.catalogSkillId }
+        : {}),
+      name: candidate.candidate.name,
+      description: candidate.candidate.description,
+      scope: candidate.candidate.scope,
+      compatibleHarnesses: candidate.candidate.compatibleHarnesses,
+      compatibility: candidate.candidate.compatibility,
+      scripts: candidate.candidate.scripts,
+      executables: candidate.candidate.executables,
+      highestSeverity: highestSeverity(candidate.candidate.findings),
       relevance: stableNumber(candidate.relevance),
       uniqueCoverage: stableNumber(uniqueCoverage),
       riskPenalty: stableNumber(candidate.riskPenalty),
       redundancyPenalty: stableNumber(redundancyPenalty),
-      contextTokens: candidate.skill.estimatedTokens,
-      decision: selectedEntry ? "selected" : "excluded",
+      installPenalty: stableNumber(candidate.installPenalty),
+      contextTokens: candidate.candidate.contextTokens,
+      decision,
+      ...(candidate.candidate.source ? { source: candidate.candidate.source } : {}),
       reasons
     };
-  });
-
-  return result.sort((left, right) => {
-    const leftSelected = selectedById.get(left.skillId);
-    const rightSelected = selectedById.get(right.skillId);
-    if (leftSelected && rightSelected) {
-      return leftSelected.index - rightSelected.index;
-    }
+  }).sort((left, right) => {
+    const leftSelected = selectedById.get(left.candidateId);
+    const rightSelected = selectedById.get(right.candidateId);
+    if (leftSelected && rightSelected) return leftSelected.index - rightSelected.index;
     if (leftSelected) return -1;
     if (rightSelected) return 1;
-    return right.relevance - left.relevance || left.skillId.localeCompare(right.skillId);
+    return right.relevance - left.relevance || left.candidateId.localeCompare(right.candidateId);
   });
 }
 
-export function analyzePreflight(
-  input: AnalyzePreflightInput
-): PreflightResult {
+export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult {
   const request = preflightRequestSchema.parse({
     task: input.task,
-    maxSkills: input.maxSkills ?? 5
+    maxSkills: input.maxSkills ?? 5,
+    ...(input.harness ? { harness: input.harness } : {}),
+    includeAvailable: input.includeAvailable ?? true
   });
   const normalizedTask = normalizeTask(request.task);
-  const { candidates, taskTerms } = scoreCandidates(
+  const normalizedCandidates = normalizePreflightCandidates({
+    ...input,
+    task: normalizedTask,
+    ...(request.harness ? { harness: request.harness } : {}),
+    includeAvailable: request.includeAvailable,
+    maxSkills: request.maxSkills
+  });
+  const { candidates, taskTerms, taskTermOrder } = scoreCandidates(
     normalizedTask,
-    input.report
+    normalizedCandidates
   );
-  const selected = selectMinimalSet(candidates, taskTerms, request.maxSkills);
-  const selectedSkillIds = selected.map(({ candidate }) => candidate.skill.id);
-  const presented = presentCandidates(candidates, selected);
-  const plausibleContextTokens = candidates
-    .filter(({ plausible }) => plausible)
-    .reduce((total, { skill }) => total + skill.estimatedTokens, 0);
-  const selectedContextTokens = selected.reduce(
-    (total, { candidate }) => total + candidate.skill.estimatedTokens,
-    0
-  );
-  const selectedIds = new Set(selectedSkillIds);
+  const installed = selectInstalled(candidates, taskTerms, request.maxSkills);
+  const available = request.includeAvailable
+    ? selectAvailable(candidates, taskTerms, installed)
+    : [];
+  const useCandidateIds = installed.map(({ candidate }) => candidate.candidate.candidateId);
+  const installCandidateIds = available.map(({ candidate }) => candidate.candidate.candidateId);
+  const presented = presentCandidates(candidates, installed, available);
+  const installedTerms = selectedTerms(installed);
+  const projectedTerms = selectedTerms([...installed, ...available]);
+  const selectedIds = new Set(useCandidateIds);
   const conflicts = input.report.findings.filter(({ skillIds }) =>
     skillIds.some((id) => selectedIds.has(id))
+  );
+  const selectedContextTokens = [...installed, ...available].reduce(
+    (total, { candidate }) => total + candidate.candidate.contextTokens,
+    0
+  );
+  const plausibleContextTokens = candidates.filter(({ plausible }) => plausible).reduce(
+    (total, { candidate }) => total + candidate.contextTokens,
+    0
   );
 
   return preflightResultSchema.parse({
@@ -357,14 +434,17 @@ export function analyzePreflight(
     taskHash: sha256(normalizedTask),
     taskCharacterCount: [...normalizedTask].length,
     taskTermCount: taskTerms.size,
-    selectedSkillIds,
+    useCandidateIds,
+    installCandidateIds,
     candidates: presented,
     conflicts,
+    capabilityGaps: taskTermOrder
+      .filter((term) => !projectedTerms.has(term))
+      .slice(0, PREFLIGHT_CONFIG.maxCapabilityGaps),
+    installedCoverage: stableNumber(ratio(installedTerms.size, taskTerms.size)),
+    projectedCoverage: stableNumber(ratio(projectedTerms.size, taskTerms.size)),
     selectedContextTokens,
     plausibleContextTokens,
-    estimatedContextSaved: Math.max(
-      0,
-      plausibleContextTokens - selectedContextTokens
-    )
+    estimatedContextSaved: Math.max(0, plausibleContextTokens - selectedContextTokens)
   });
 }

@@ -1,3 +1,4 @@
+import type { CatalogSkillRecord, CatalogSource } from "@skill-steward/catalog";
 import type {
   Finding,
   PortfolioReport,
@@ -14,7 +15,8 @@ function skill(
   name: string,
   description: string,
   estimatedTokens: number,
-  scope: SkillScope = "global"
+  scope: SkillScope = "global",
+  fingerprint = hash("b")
 ): SkillRecord {
   return {
     id,
@@ -24,7 +26,7 @@ function skill(
     root: id,
     scope,
     visibleTo: ["codex"],
-    fingerprint: hash("b"),
+    fingerprint,
     files: [],
     estimatedTokens
   };
@@ -48,10 +50,7 @@ function finding(
   };
 }
 
-function report(
-  skills: SkillRecord[],
-  findings: Finding[] = []
-): PortfolioReport {
+function report(skills: SkillRecord[], findings: Finding[] = []): PortfolioReport {
   return {
     schemaVersion: 1,
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -61,62 +60,104 @@ function report(
   };
 }
 
-const fixed = {
-  id: "run-1",
-  now: new Date("2026-07-03T01:00:00.000Z")
+const catalogSource: CatalogSource = {
+  id: "fixture-catalog",
+  name: "Fixture catalog",
+  kind: "git",
+  url: "https://example.com/skills.git",
+  enabled: true,
+  trust: "user",
+  preset: false
 };
 
-describe("analyzePreflight", () => {
-  it("selects a minimal complementary set and explains exclusions", () => {
-    expect(analyzePreflight).toBeDefined();
+function catalogSkill(
+  id: string,
+  name: string,
+  description: string,
+  options: {
+    fingerprint?: string;
+    findings?: Finding[];
+    compatibleHarnesses?: CatalogSkillRecord["compatibleHarnesses"];
+    estimatedTokens?: number;
+  } = {}
+): CatalogSkillRecord {
+  return {
+    id,
+    sourceId: catalogSource.id,
+    sourceRevision: "a".repeat(40),
+    relativePath: id,
+    name,
+    description,
+    fingerprint: options.fingerprint ?? hash("c"),
+    estimatedTokens: options.estimatedTokens ?? 220,
+    scripts: [],
+    executables: [],
+    findings: options.findings ?? [],
+    compatibleHarnesses: options.compatibleHarnesses ?? [],
+    compatibility: options.compatibleHarnesses?.length ? "declared" : "unknown"
+  };
+}
+
+const fixed = {
+  id: "run-1",
+  now: new Date("2026-07-03T01:00:00.000Z"),
+  catalogSkills: [] as CatalogSkillRecord[],
+  catalogSources: [catalogSource]
+};
+
+describe("analyzePreflight v2", () => {
+  it("selects a minimal installed set and explains exclusions", () => {
     const result = analyzePreflight({
       ...fixed,
       task: "Review this TypeScript change for security regressions and missing tests",
       report: report([
-        skill(
-          "security-review",
-          "security-review",
-          "Review code changes for security vulnerabilities and regressions",
-          500,
-          "project"
-        ),
-        skill(
-          "test-review",
-          "test-review",
-          "Review code changes for missing tests and test quality",
-          300
-        ),
-        skill(
-          "resume-review",
-          "resume-review",
-          "Improve resumes and job applications",
-          900
-        )
+        skill("security-review", "security-review", "Review code changes for security vulnerabilities and regressions", 500, "project"),
+        skill("test-review", "test-review", "Review code changes for missing tests and test quality", 300),
+        skill("resume-review", "resume-review", "Improve resumes and job applications", 900)
       ]),
       maxSkills: 3
     });
 
-    expect(result.selectedSkillIds).toEqual([
-      "security-review",
-      "test-review"
-    ]);
-    expect(
-      result.candidates.find(({ skillId }) => skillId === "resume-review")
-    ).toMatchObject({
-      decision: "excluded",
-      reasons: expect.arrayContaining([
-        expect.objectContaining({ code: "LOW_RELEVANCE" })
-      ])
-    });
-    expect(result.estimatedContextSaved).toBe(
-      result.plausibleContextTokens - result.selectedContextTokens
-    );
-    expect(result.candidates.every(({ reasons }) => reasons.length > 0)).toBe(
-      true
-    );
+    expect(result.useCandidateIds).toEqual(["security-review", "test-review"]);
+    expect(result.installCandidateIds).toEqual([]);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "resume-review"))
+      .toMatchObject({ decision: "excluded" });
+    expect(result.candidates.every(({ reasons }) => reasons.length > 0)).toBe(true);
   });
 
-  it("matches complementary Skills for a Chinese task", () => {
+  it("prefers installed Skills and recommends only complementary available Skills", () => {
+    const critical = finding("critical", ["critical-available"], "critical");
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Review security vulnerabilities and find missing tests",
+      report: report([
+        skill("security-installed", "security-installed", "Review security vulnerabilities", 300)
+      ]),
+      catalogSkills: [
+        catalogSkill("security-available", "security-available", "Review security vulnerabilities"),
+        catalogSkill("testing-available", "testing-available", "Find missing tests"),
+        catalogSkill("critical-available", "critical-available", "Find missing tests", {
+          fingerprint: hash("d"),
+          findings: [critical]
+        })
+      ],
+      harness: "codex"
+    });
+
+    expect(result.schemaVersion).toBe(2);
+    expect(result.algorithmVersion).toBe(2);
+    expect(result.candidates.find(({ name }) => name === "security-installed"))
+      .toMatchObject({ availability: "installed", decision: "use" });
+    expect(result.candidates.find(({ name }) => name === "security-available"))
+      .toMatchObject({ decision: "excluded" });
+    expect(result.candidates.find(({ name }) => name === "testing-available"))
+      .toMatchObject({ availability: "available", decision: "install" });
+    expect(result.candidates.find(({ name }) => name === "critical-available"))
+      .toMatchObject({ decision: "excluded", highestSeverity: "critical" });
+    expect(result.projectedCoverage).toBeGreaterThanOrEqual(result.installedCoverage);
+  });
+
+  it("matches complementary installed Skills for a Chinese task", () => {
     const result = analyzePreflight({
       ...fixed,
       task: "检查代码安全问题和测试遗漏",
@@ -126,11 +167,10 @@ describe("analyzePreflight", () => {
         skill("resume", "简历优化", "优化求职简历内容", 600)
       ])
     });
-
-    expect(result.selectedSkillIds).toEqual(["security", "testing"]);
+    expect(result.useCandidateIds).toEqual(["security", "testing"]);
   });
 
-  it("keeps task relevance separate from risk and prefers the safer Skill", () => {
+  it("keeps relevance separate from risk and prefers the safer installed Skill", () => {
     const skills = [
       skill("safe", "security-review", "Review security vulnerabilities", 300),
       skill("risky", "security-review", "Review security vulnerabilities", 200)
@@ -141,66 +181,58 @@ describe("analyzePreflight", () => {
       report: report(skills, [finding("risk-1", ["risky"], "error")]),
       maxSkills: 1
     });
-
-    expect(result.selectedSkillIds).toEqual(["safe"]);
-    const safe = result.candidates.find(({ skillId }) => skillId === "safe");
-    const risky = result.candidates.find(({ skillId }) => skillId === "risky");
+    expect(result.useCandidateIds).toEqual(["safe"]);
+    const safe = result.candidates.find(({ candidateId }) => candidateId === "safe");
+    const risky = result.candidates.find(({ candidateId }) => candidateId === "risky");
     expect(risky?.relevance).toBe(safe?.relevance);
     expect(risky?.riskPenalty).toBe(0.2);
   });
 
-  it("excludes redundant candidates once covered terms reach the target", () => {
+  it("drops exact installed fingerprints and excludes incompatible available candidates", () => {
+    const installed = skill("installed", "security", "Review security code", 200, "global", hash("e"));
     const result = analyzePreflight({
       ...fixed,
-      task: "Review code security vulnerabilities",
-      report: report([
-        skill("a", "security-review", "Review code security vulnerabilities", 300),
-        skill("b", "security-audit", "Review code security vulnerabilities", 280)
-      ]),
-      maxSkills: 5
+      task: "Review security code and missing tests",
+      report: report([installed]),
+      catalogSkills: [
+        catalogSkill("same-content", "same-content", "Review security code", { fingerprint: hash("e") }),
+        catalogSkill("claude-testing", "claude-testing", "Find missing tests", {
+          fingerprint: hash("f"),
+          compatibleHarnesses: ["claude"]
+        })
+      ],
+      harness: "codex"
     });
-
-    expect(result.selectedSkillIds).toHaveLength(1);
-    expect(
-      result.candidates.find(({ decision }) => decision === "excluded")
-        ?.reasons
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "REDUNDANT_WITH_SELECTED" })
-      ])
-    );
+    expect(result.candidates.some(({ candidateId }) => candidateId === "same-content")).toBe(false);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "claude-testing"))
+      .toMatchObject({ decision: "excluded" });
   });
 
-  it("treats an exact normalized Skill name as plausible", () => {
+  it("returns gaps for uncovered task terms and supports installed-only mode", () => {
     const result = analyzePreflight({
       ...fixed,
-      task: "Run resume-analyzer for this candidate",
-      report: report([
-        skill("resume", "resume-analyzer", "Evaluate a curriculum vitae", 250)
-      ])
+      task: "Review cryptography migration tests",
+      report: report([]),
+      catalogSkills: [catalogSkill("testing", "testing", "Review tests")],
+      includeAvailable: false
     });
-
-    expect(result.selectedSkillIds).toEqual(["resume"]);
-    expect(result.candidates[0]?.reasons).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "NAME_MATCH" })
-      ])
-    );
+    expect(result.installCandidateIds).toEqual([]);
+    expect(result.capabilityGaps).toEqual(expect.arrayContaining(["cryptography", "migration"]));
   });
 
-  it("returns a valid empty result for an empty portfolio", () => {
+  it("returns a valid empty-candidate result", () => {
     const result = analyzePreflight({
       ...fixed,
       task: "Review this source change",
       report: report([])
     });
-
-    expect(result.selectedSkillIds).toEqual([]);
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.installCandidateIds).toEqual([]);
     expect(result.candidates).toEqual([]);
     expect(result.estimatedContextSaved).toBe(0);
   });
 
-  it("uses stable Skill IDs to break exact ties", () => {
+  it("uses stable candidate IDs to break exact ties", () => {
     const input = {
       ...fixed,
       task: "Review code changes",
@@ -210,8 +242,7 @@ describe("analyzePreflight", () => {
       ]),
       maxSkills: 1
     };
-
-    expect(analyzePreflight(input).selectedSkillIds).toEqual(["a-skill"]);
+    expect(analyzePreflight(input).useCandidateIds).toEqual(["a-skill"]);
     expect(analyzePreflight(input)).toEqual(analyzePreflight(input));
   });
 });
