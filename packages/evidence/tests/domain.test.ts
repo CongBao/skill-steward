@@ -10,6 +10,22 @@ import {
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
 const pseudonym = (character: string) => `hmac-sha256:${character.repeat(64)}`;
+const zeroMetric = { numerator: 0, denominator: 0, value: null } as const;
+const zeroMetrics = {
+  feedbackRate: zeroMetric,
+  usefulRate: zeroMetric,
+  incompleteRate: zeroMetric,
+  incorrectRate: zeroMetric,
+  correctionPrecision: zeroMetric,
+  correctionRecall: zeroMetric,
+  correctionF1: zeroMetric,
+  installConversion: zeroMetric
+};
+const zeroBreakdown = {
+  key: "empty",
+  totals: { preflights: 0, labeled: 0, portfolios: 0, events: 0 },
+  metrics: zeroMetrics
+};
 
 describe("evidence domain", () => {
   it("accepts bounded policies and rejects unsafe retention", () => {
@@ -114,16 +130,14 @@ describe("evidence domain", () => {
       generatedAt: "2026-07-03T00:00:00.000Z",
       period: { from: null, to: null },
       totals: { preflights: 0, labeled: 0, portfolios: 0, events: 0 },
-      metrics: {
-        usefulRate: { numerator: 0, denominator: 0, value: null },
-        correctionPrecision: { numerator: 0, denominator: 0, value: null },
-        correctionRecall: { numerator: 0, denominator: 0, value: null },
-        correctionF1: { numerator: 0, denominator: 0, value: null },
-        installConversion: { numerator: 0, denominator: 0, value: null }
-      },
+      metrics: zeroMetrics,
       lifecycleReasons: {},
       harnesses: [],
       algorithms: [],
+      windows: {
+        last7Days: { ...zeroBreakdown, key: "7d" },
+        last30Days: { ...zeroBreakdown, key: "30d" }
+      },
       readiness: {
         status: "insufficient-evidence",
         reasons: ["Need 100 labeled preflights"]

@@ -169,7 +169,10 @@ export const evidenceMetricSchema = z.object({
 });
 
 export const evidenceMetricsSchema = z.object({
+  feedbackRate: evidenceMetricSchema,
   usefulRate: evidenceMetricSchema,
+  incompleteRate: evidenceMetricSchema,
+  incorrectRate: evidenceMetricSchema,
   correctionPrecision: evidenceMetricSchema,
   correctionRecall: evidenceMetricSchema,
   correctionF1: evidenceMetricSchema,
@@ -212,6 +215,10 @@ export const evidenceSummarySchema = z.object({
   lifecycleReasons: z.record(lifecycleReasonSchema, countSchema),
   harnesses: z.array(evidenceBreakdownSchema),
   algorithms: z.array(evidenceBreakdownSchema),
+  windows: z.object({
+    last7Days: evidenceBreakdownSchema,
+    last30Days: evidenceBreakdownSchema
+  }).strict(),
   readiness: evidenceReadinessSchema
 }).strict();
 
