@@ -7,7 +7,10 @@ import {
   writeCatalogSnapshot,
   writeCatalogSources
 } from "@skill-steward/store";
-import type { PreflightResult } from "@skill-steward/preflight";
+import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  type PreflightResult
+} from "@skill-steward/preflight";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderPreflightHuman } from "../src/commands/preflight.js";
 import type { CliContext } from "../src/context.js";
@@ -156,7 +159,7 @@ describe("preflight command", () => {
     const output = JSON.parse(current.stdout.join(""));
     expect(output).toMatchObject({
       schemaVersion: 3,
-      algorithmVersion: 3,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       useCandidateIds: expect.any(Array),
       installCandidateIds: expect.any(Array)
     });
@@ -235,7 +238,7 @@ describe("preflight command", () => {
   it("bounds low-value exclusions and points to complete JSON", () => {
     const result: PreflightResult = {
       schemaVersion: 3,
-      algorithmVersion: 3,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
       portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -299,7 +302,7 @@ describe("preflight command", () => {
   it("explains a hard exclusion instead of the generic relevance fallback", () => {
     const result: PreflightResult = {
       schemaVersion: 3,
-      algorithmVersion: 3,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
       portfolioFingerprint: `sha256:${"a".repeat(64)}`,

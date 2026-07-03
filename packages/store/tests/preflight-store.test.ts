@@ -1,7 +1,10 @@
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PreflightResult } from "@skill-steward/preflight";
+import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  type PreflightResult
+} from "@skill-steward/preflight";
 import { describe, expect, it } from "vitest";
 import {
   appendPreflightEvidence,
@@ -18,7 +21,7 @@ const sourceUrl = "https://example.com/private-skills.git";
 function result(id: string, createdAt: string): PreflightResult {
   return {
     schemaVersion: 3,
-    algorithmVersion: 3,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id,
     generatedAt: createdAt,
     portfolioFingerprint: hash("a"),

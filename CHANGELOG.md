@@ -14,6 +14,10 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Integration history uses private immutable journal fragments with bounded recovery and cleanup rather than concurrent rewrites of one shared record.
 - Preflight evidence preserves normalized Harness and CLI/dashboard/Hook delivery attribution while continuing to exclude raw task content.
 
+### Changed
+
+- Preflight algorithm v4 routes Simplified- and Traditional-Chinese tasks with word-level concepts and filters generic workflow language, preventing unrelated Skills from matching through common single characters while preserving explainable deterministic scoring. Evidence uses a distinct numeric identity when the Node ICU/CLDR/Unicode segmentation runtime differs from the verified reference.
+
 ### Distribution
 
 - The CLI package now ships a package README, MIT license, deterministic complete third-party notices, and complete repository metadata.

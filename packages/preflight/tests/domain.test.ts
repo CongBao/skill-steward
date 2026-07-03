@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  algorithmVersionForIntlRuntime,
   preflightFeedbackSchema,
   preflightRequestSchema,
   preflightResultSchema
@@ -10,7 +12,7 @@ const hash = (character: string) => `sha256:${character.repeat(64)}`;
 function result(candidate: Record<string, unknown>) {
   return {
     schemaVersion: 3,
-    algorithmVersion: 3,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: hash("a"),
@@ -31,6 +33,30 @@ function result(candidate: Record<string, unknown>) {
 }
 
 describe("preflight v3 domain", () => {
+  it("separates ranking evidence when the Intl word-boundary runtime changes", () => {
+    expect(algorithmVersionForIntlRuntime({
+      cldr: "48.0",
+      icu: "78.2",
+      unicode: "17.0"
+    })).toBe(4);
+    const alternate = algorithmVersionForIntlRuntime({
+      cldr: "47.0",
+      icu: "76.1",
+      unicode: "16.0"
+    });
+    expect(alternate).toBeGreaterThan(4_000_000_000_000);
+    expect(algorithmVersionForIntlRuntime({
+      cldr: "47.0",
+      icu: "76.1",
+      unicode: "16.0"
+    })).toBe(alternate);
+    expect(algorithmVersionForIntlRuntime({
+      cldr: "46.0",
+      icu: "75.1",
+      unicode: "15.1"
+    })).not.toBe(alternate);
+  });
+
   it("normalizes discovery options and validates Harness IDs", () => {
     expect(preflightRequestSchema.parse({
       task: "  Review the security tests  ",

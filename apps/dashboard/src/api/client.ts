@@ -200,7 +200,7 @@ export interface PreflightCandidate {
 
 export interface PreflightResult {
   schemaVersion: 3;
-  algorithmVersion: 3;
+  algorithmVersion: number;
   id: string;
   generatedAt: string;
   portfolioFingerprint: string;

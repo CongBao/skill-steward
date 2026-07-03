@@ -121,7 +121,7 @@ printf '%s' "Review this pull request" | skill-steward preflight --stdin --json
 skill-steward preflight --task "Review this pull request" --installed-only
 ```
 
-Installed candidates rank ahead of otherwise similar catalog candidates. An available candidate is excluded when it is critically risky, incompatible with the target Harness, or duplicates installed content. Algorithm v3 also recognizes narrow English routing clauses such as `do not use this skill for PDFs`, and requires at least two shared task terms unless the Skill name itself matches. Results include relevance, unique coverage, risk, redundancy, context estimates, source revision, compatibility, readable reasons, and human-readable gap labels for Chinese as well as Latin-script tasks.
+Installed candidates rank ahead of otherwise similar catalog candidates. An available candidate is excluded when it is critically risky, incompatible with the target Harness, or duplicates installed content. Algorithm v4 recognizes narrow English routing clauses such as `do not use this skill for PDFs`, requires at least two shared task terms unless the Skill name itself matches, and routes Chinese tasks by words instead of common single-character overlap. Results include relevance, unique coverage, risk, redundancy, context estimates, source revision, compatibility, readable reasons, and human-readable gap labels for Chinese as well as Latin-script tasks.
 
 Human CLI output includes the Preflight run ID and a direct feedback command. Full candidate and reason details remain available with `--json`.
 
@@ -285,7 +285,7 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 
 ## Current limitations
 
-- Task scoring is a deterministic lexical baseline. Algorithm v3 improves observed intent errors but does not provide semantic understanding or measure actual task success.
+- Task scoring is a deterministic lexical baseline. Algorithm v4 improves observed English-boundary and Chinese single-character errors but does not provide cross-language semantic understanding or measure actual task success.
 - Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
 - GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.
 - Local inventory follows known Skill roots and does not yet enumerate every Skill nested inside a natively installed plugin.

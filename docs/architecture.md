@@ -12,7 +12,7 @@ flowchart LR
   Hook --> Services
   Observe --> Services
   Server --> Services
-  Services --> Preflight[Preflight algorithm v3 / schema v3]
+  Services --> Preflight[Preflight algorithm v4 / schema v3]
   Services --> Catalog[Cached catalog metadata]
   Services --> Installer[Reviewed installer]
   Services --> Evidence[Privacy-safe evidence]
@@ -32,7 +32,7 @@ flowchart LR
 - `packages/engine` owns root discovery, parsing, fingerprints, findings, overlap analysis, and the shared Harness root catalog.
 - `packages/insights` converts reports into deterministic health and KPI presentation models.
 - `packages/catalog` defines source metadata, disabled presets, Git refresh, last-known-good behavior, candidate identity, and installation reinspection. It does not persist data itself.
-- `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English `do not use ... for/when ...` routing clauses, and installation penalties. Algorithm v3 requires at least two shared task terms for non-name matches. It has no filesystem or network I/O.
+- `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English `do not use ... for/when ...` routing clauses, and installation penalties. Algorithm v4 requires at least two shared task terms for non-name matches and uses word-level Chinese routing instead of isolated-character overlap. It has no filesystem or network I/O.
 - `packages/evidence` defines strict content-free evidence, policy, lifecycle, metric, breakdown, and readiness schemas plus pure aggregation.
 - `packages/integrations` defines compact Hook protocols, the shared capability matrix, transactional Codex/Claude/Copilot configuration, readiness rollback, trust status, and companion-Skill file operations.
 - `packages/store` owns validated atomic reports, private reviewed-plan envelopes, catalog metadata, bounded history, labels, fragment-based integration records, the integration mutation lease, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
@@ -44,7 +44,7 @@ flowchart LR
 
 ## Task-time data flow
 
-The Codex and Claude Code adapters run `skill-steward hook prompt` when a user submits a prompt. The command reads the latest installed-portfolio report and cached catalog index, calls deterministic Preflight algorithm v3, and emits at most 2,048 bytes of additional context. Their completion Hooks record content-free turn/session reasons only in opt-in learning mode. Invalid input, missing state, timeout, HMAC failure, or evidence-write failure returns protocol-valid non-blocking JSON so the Harness continues normally.
+The Codex and Claude Code adapters run `skill-steward hook prompt` when a user submits a prompt. The command reads the latest installed-portfolio report and cached catalog index, calls deterministic Preflight algorithm v4, and emits at most 2,048 bytes of additional context. Algorithm v4 uses word-level Chinese Han segmentation and removes common Simplified- and Traditional-Chinese workflow terms so isolated characters cannot create relevance. Because word boundaries come from Node's ICU/CLDR data, a non-reference ICU/CLDR/Unicode combination receives a distinct numeric algorithm identity and is separated in evidence. Japanese kana and Korean Hangul are not currently tokenized. Their completion Hooks record content-free turn/session reasons only in opt-in learning mode. Invalid input, missing state, timeout, HMAC failure, or evidence-write failure returns protocol-valid non-blocking JSON so the Harness continues normally.
 
 GitHub Copilot CLI uses a separate observe-only adapter. Its dedicated `~/.copilot/hooks/skill-steward.json` file observes `userPromptSubmitted` and `sessionEnd`, always returns `{}`, and never injects recommendation context. The companion Skill or explicit CLI remains its recommendation surface. This distinction is encoded in the capability model instead of inferred by the UI.
 

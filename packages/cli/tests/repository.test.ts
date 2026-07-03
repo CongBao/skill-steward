@@ -320,7 +320,7 @@ describe("open-source repository", () => {
     expect(architecture).toContain("evidence-events.jsonl");
     expect(architecture).toContain("governance.jsonl");
     expect(architecture).toContain("observe-only");
-    expect(architecture).toContain("Preflight algorithm v3");
+    expect(architecture).toContain("Preflight algorithm v4");
     expect(architecture).toContain("explicit CLI feedback command");
     expect(architecture).toContain("reviewed-plans/");
     expect(architecture).toContain("staging/");

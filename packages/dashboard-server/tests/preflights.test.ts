@@ -1,7 +1,10 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PreflightResult } from "@skill-steward/preflight";
+import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  type PreflightResult
+} from "@skill-steward/preflight";
 import { readPreflightEvidence } from "@skill-steward/store";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDashboardApp } from "../src/app.js";
@@ -21,7 +24,7 @@ afterEach(async () => {
 function result(): PreflightResult {
   return {
     schemaVersion: 3,
-    algorithmVersion: 3,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T01:00:00.000Z",
     portfolioFingerprint: report.portfolioFingerprint,

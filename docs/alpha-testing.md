@@ -37,7 +37,7 @@ Scan an empty set of Skill roots. The result must be unscored and actionable: it
 3. Run the same task with available candidates enabled.
 4. Ask whether **Use now**, **Consider installing**, and **Capability gaps** changed the next action they would take.
 5. For one available candidate, open the installation inspection but do not confirm it. Record whether source, revision, scripts, findings, destination, and exact changes are sufficient for a decision.
-6. Run a PDF task against PDF and docx candidates, including a docx description that explicitly excludes PDF work. Algorithm v3 must not recommend docx for that task.
+6. Run a PDF task against PDF and docx candidates, including a docx description that explicitly excludes PDF work. Algorithm v4 must not recommend docx for that task.
 7. Run a generic one-term match against a project-scoped Skill. It must remain excluded unless stronger task evidence or a name match exists.
 8. Inspect normal CLI output for a run ID, readable reasons, a bounded excluded section, and a direct feedback command. Keep complete reason codes in `--json` output.
 

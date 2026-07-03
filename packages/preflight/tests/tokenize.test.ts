@@ -37,27 +37,41 @@ describe("tokenize", () => {
     expect(tokenize("Please create this change so it works").terms).toEqual(["work"]);
   });
 
-  it("creates CJK characters and adjacent bigrams", () => {
+  it("segments CJK text into words without single-character noise", () => {
     expect(tokenize("检查安全测试").terms).toEqual([
-      "检",
-      "查",
-      "安",
-      "全",
-      "测",
-      "试",
       "检查",
-      "查安",
       "安全",
-      "全测",
       "测试"
     ]);
+  });
+
+  it("removes generic Chinese workflow filler from routing terms", () => {
+    expect(tokenize("继续推进当前阶段，完成产品测试并重新评估竞争力").terms).toEqual([
+      "产品",
+      "测试",
+      "评估",
+      "竞争"
+    ]);
+  });
+
+  it("removes the same workflow filler from Traditional Chinese tasks", () => {
+    expect(tokenize("繼續推進當前階段，完成產品測試並重新評估競爭力").terms).toEqual([
+      "產品",
+      "測試",
+      "評估",
+      "競爭力"
+    ]);
+  });
+
+  it("removes broad Chinese request framing without dropping Skill intent", () => {
+    expect(tokenize("Skill 用户整体测试").terms).toEqual(["skill", "测试"]);
   });
 
   it("is stable for mixed Unicode and repeated terms", () => {
     expect(normalizeTask("  ＡＰＩ API 安全安全  ")).toBe("API API 安全安全");
     expect(tokenize("ＡＰＩ API 安全安全")).toEqual({
-      terms: ["api", "安", "全", "安全", "全安"],
-      counts: { api: 2, "安": 2, "全": 2, "安全": 2, "全安": 1 }
+      terms: ["api", "安全"],
+      counts: { api: 2, "安全": 2 }
     });
   });
 });

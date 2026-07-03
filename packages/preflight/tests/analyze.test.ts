@@ -7,6 +7,7 @@ import type {
 } from "@skill-steward/engine";
 import { describe, expect, it } from "vitest";
 import { analyzePreflight } from "../src/analyze.js";
+import { PREFLIGHT_ALGORITHM_VERSION } from "../src/domain.js";
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
 
@@ -105,7 +106,7 @@ const fixed = {
   catalogSources: [catalogSource]
 };
 
-describe("analyzePreflight v3", () => {
+describe("analyzePreflight schema v3 / algorithm v4", () => {
   it("selects a minimal installed set and explains exclusions", () => {
     const result = analyzePreflight({
       ...fixed,
@@ -145,7 +146,7 @@ describe("analyzePreflight v3", () => {
     });
 
     expect(result.schemaVersion).toBe(3);
-    expect(result.algorithmVersion).toBe(3);
+    expect(result.algorithmVersion).toBe(PREFLIGHT_ALGORITHM_VERSION);
     expect(result.candidates[0]?.features).toEqual(expect.objectContaining({
       taskCoverage: expect.any(Number),
       skillPrecision: expect.any(Number),
@@ -175,6 +176,59 @@ describe("analyzePreflight v3", () => {
       ])
     });
     expect(result.useCandidateIds).toEqual(["security", "testing"]);
+  });
+
+  it("does not route Chinese tasks through common single-character matches", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "继续推进 Skill Steward 的当前阶段：完成 CLI 和 Dashboard 的真实测试，从用户角度评估产品是否好理解、好用、值得持续使用，修复所有 P0/P1 问题，并重新评估竞争力。",
+      report: report([
+        skill(
+          "product-review",
+          "产品体验审查",
+          "测试 CLI 和 Dashboard，评估产品易用性、可靠性和竞争力",
+          500
+        ),
+        skill(
+          "resume",
+          "简历分析",
+          "以直接、坦诚、可执行、可视化的方式分析并改进用户简历，评审整体质量",
+          600
+        )
+      ])
+    });
+
+    expect(result.taskTermCount).toBeLessThan(30);
+    expect(result.useCandidateIds).toEqual(["product-review"]);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "resume"))
+      .toMatchObject({ decision: "excluded", relevance: 0 });
+    expect(result.candidates.find(({ candidateId }) => candidateId === "resume")?.reasons)
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "TASK_TERM_MATCH" })
+      ]));
+    expect(result.capabilityGaps).not.toEqual(expect.arrayContaining([
+      "继续",
+      "推进",
+      "阶段",
+      "完成"
+    ]));
+    expect(result.candidates.flatMap(({ reasons }) => reasons)
+      .filter(({ code }) => code === "TASK_TERM_MATCH")
+      .every(({ detail }) => detail.split(", ").every((term) => [...term].length >= 2)))
+      .toBe(true);
+  });
+
+  it("keeps Skill as a routing term when it combines with specific intent", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Manage my Skills",
+      report: report([
+        skill("skill-manager", "skill-manager", "Manage installed Agent Skills", 240),
+        skill("resume", "resume", "Improve resumes and job applications", 400)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["skill-manager"]);
   });
 
   it("keeps relevance separate from risk and prefers the safer installed Skill", () => {
