@@ -303,7 +303,7 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 3. Add scope migration and broader policy baselines on top of the reversible governance journal.
 4. Add signed release artifacts and supply-chain attestations.
 
-See [CHANGELOG.md](CHANGELOG.md) for released behavior and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for the tested baseline, findings, and priorities.
+See [CHANGELOG.md](CHANGELOG.md) for released behavior and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for the current Alpha.3 verdict, hands-on evidence, historical baseline, and priorities.
 
 ## Contributing
 
