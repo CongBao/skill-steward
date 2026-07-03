@@ -8,7 +8,7 @@ export interface CliContext {
   stateDir: string;
   stdout: (value: string) => void;
   stderr: (value: string) => void;
-  stdin?: () => Promise<string>;
+  stdin?: (maxBytes?: number) => Promise<string>;
   catalogInspect?: RefreshCatalogInput["inspect"];
   catalogStage?: typeof stagePublicGit;
   now?: () => Date;
@@ -22,10 +22,15 @@ export function defaultContext(): CliContext {
     stateDir: process.env.SKILL_STEWARD_HOME ?? join(home, ".skill-steward"),
     stdout: (value) => process.stdout.write(value),
     stderr: (value) => process.stderr.write(value),
-    stdin: async () => {
+    stdin: async (maxBytes = Number.POSITIVE_INFINITY) => {
       process.stdin.setEncoding("utf8");
       let value = "";
-      for await (const chunk of process.stdin) value += chunk;
+      let bytes = 0;
+      for await (const chunk of process.stdin) {
+        bytes += Buffer.byteLength(chunk, "utf8");
+        if (bytes > maxBytes) throw new Error(`Standard input exceeds ${maxBytes} bytes`);
+        value += chunk;
+      }
       return value;
     }
   };

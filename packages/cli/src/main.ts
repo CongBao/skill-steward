@@ -19,7 +19,11 @@ import { discoverCommand } from "./commands/discover.js";
 import { diffCommand } from "./commands/diff.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { labelCommand } from "./commands/label.js";
-import { hookPromptCommand } from "./commands/hook.js";
+import {
+  hookLifecycleCommand,
+  hookObserveCommand,
+  hookPromptCommand
+} from "./commands/hook.js";
 import {
   integrateApplyCommand,
   integratePlanCommand,
@@ -71,6 +75,21 @@ export async function run(
     .requiredOption("--harness <id>", "codex or claude-code")
     .action(async (options: { harness: string }) => {
       exitCode = await hookPromptCommand(options.harness, context);
+    });
+
+  hook
+    .command("lifecycle")
+    .requiredOption("--harness <id>", "codex or claude-code")
+    .action(async (options: { harness: string }) => {
+      exitCode = await hookLifecycleCommand(options.harness, context);
+    });
+
+  hook
+    .command("observe")
+    .requiredOption("--harness <id>", "github-copilot")
+    .requiredOption("--event <name>", "userPromptSubmitted or sessionEnd")
+    .action(async (options: { harness: string; event: string }) => {
+      exitCode = await hookObserveCommand(options.harness, options.event, context);
     });
 
   const integrate = program
