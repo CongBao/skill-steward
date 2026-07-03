@@ -187,6 +187,32 @@ describe("open-source repository", () => {
     expect(packageJson.scripts?.prepack).toContain("pnpm build");
   });
 
+  it("ships focused package onboarding and the exact project license", async () => {
+    const packageReadme = await readFile(join(root, "packages/cli/README.md"), "utf8");
+    expect(packageReadme).toContain("# Skill Steward");
+    expect(packageReadme).toContain("## Five-minute start");
+    expect(packageReadme).toContain("skill-steward scan");
+    expect(packageReadme).toContain("skill-steward preflight");
+    expect(packageReadme).toContain("skill-steward dashboard");
+    expect(packageReadme).toContain("local-first");
+    expect(packageReadme).toContain("reversible");
+    expect(packageReadme).not.toContain("OpenSpec");
+    expect(await readFile(join(root, "packages/cli/LICENSE"), "utf8"))
+      .toBe(await readFile(join(root, "LICENSE"), "utf8"));
+    await expect(access(join(
+      root,
+      "packages/cli/tests/verify-packed-artifact.mjs"
+    ))).resolves.toBeUndefined();
+  });
+
+  it("verifies dry-run and real packed artifacts in clean-checkout CI", async () => {
+    const workflow = await readFile(join(root, ".github/workflows/ci.yml"), "utf8");
+    expect(workflow).toContain("npm pack --dry-run --ignore-scripts --json");
+    expect(workflow).toContain("verify-packed-artifact.mjs");
+    expect(workflow).toContain("artifacts/skill-steward-");
+    expect(workflow).toContain("windows-smoke:");
+  });
+
   it("states the local filesystem threat boundary without weakening symlink defenses", async () => {
     const security = await readFile(join(root, "SECURITY.md"), "utf8");
     expect(security).toContain("same operating-system user");

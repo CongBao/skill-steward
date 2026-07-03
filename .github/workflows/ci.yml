@@ -21,6 +21,13 @@ jobs:
       - run: mkdir -p artifacts
       - name: Pack from a clean checkout
         run: pnpm --filter skill-steward pack --pack-destination artifacts
+      - name: Inspect npm pack dry-run
+        working-directory: packages/cli
+        run: npm pack --dry-run --ignore-scripts --json > ../../artifacts/pack-dry-run.json
+      - name: Verify dry-run package contents
+        run: node packages/cli/tests/verify-packed-artifact.mjs --dry-run artifacts/pack-dry-run.json
+      - name: Verify packed artifact
+        run: node packages/cli/tests/verify-packed-artifact.mjs artifacts/skill-steward-*.tgz
       - name: Build
         run: pnpm build
       - name: Typecheck
