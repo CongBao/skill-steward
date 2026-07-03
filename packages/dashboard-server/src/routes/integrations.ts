@@ -25,6 +25,10 @@ export function registerIntegrationRoutes(
   services: IntegrationServices
 ): void {
   app.get("/api/v1/integrations", async () => apiSuccess(await services.list()));
+  app.get(
+    "/api/v1/integrations/capabilities",
+    async () => apiSuccess(services.capabilities())
+  );
 
   app.post<{ Params: { harness: string } }>(
     "/api/v1/integrations/:harness/plan",

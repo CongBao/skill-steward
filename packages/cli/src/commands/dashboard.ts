@@ -5,6 +5,8 @@ import {
   createDashboardApp,
   createDashboardServices,
   createCatalogServices,
+  createEvidenceServices,
+  createGovernanceServices,
   createInstallationServices,
   createIntegrationServices,
   createPreflightServices,
@@ -92,12 +94,26 @@ export function createDashboardApplication(
     companionSkillDirectory: packagedCompanionSkillDirectory(),
     ...(context.now ? { now: context.now } : {})
   });
+  const evidenceServices = createEvidenceServices({
+    stateDirectory: context.stateDir,
+    ...(context.now ? { now: context.now } : {})
+  });
+  const governanceServices = createGovernanceServices({
+    stateDirectory: context.stateDir,
+    activeRoots: () => standardRoots({ home: context.home, cwd: context.cwd }),
+    afterCommit: async () => {
+      await dashboardServices.scan([]);
+    },
+    ...(context.now ? { now: context.now } : {})
+  });
   return createDashboardApp({
     services: dashboardServices,
     installationServices,
     preflightServices,
     catalogServices,
     integrationServices,
+    evidenceServices,
+    governanceServices,
     ...(assetsDirectory ? { assetsDirectory } : {})
   });
 }

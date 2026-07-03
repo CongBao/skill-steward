@@ -2,9 +2,7 @@ import { resolve } from "node:path";
 import {
   aggregateEvidence,
   evidenceDatasetSchema,
-  evidencePreflightSchema,
-  type EvidenceDataset,
-  type EvidencePreflight
+  type EvidenceDataset
 } from "@skill-steward/evidence";
 import { readInstallationHistory } from "@skill-steward/installer";
 import {
@@ -14,10 +12,9 @@ import {
   planEvidenceErase,
   planEvidencePolicyChange,
   readEvidenceEvents,
+  readNormalizedPreflightEvidence,
   readEvidencePolicy,
-  readPreflightEvidence,
-  writeEvidenceExport,
-  type PreflightEvidenceRecord
+  writeEvidenceExport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
 
@@ -34,65 +31,15 @@ function integer(value: string, label: string): number {
   return parsed;
 }
 
-function normalizePreflight(record: PreflightEvidenceRecord): EvidencePreflight {
-  if (record.schemaVersion === 3) return evidencePreflightSchema.parse(record);
-  if (record.schemaVersion === 2) {
-    return evidencePreflightSchema.parse({
-      schemaVersion: 3,
-      id: record.id,
-      createdAt: record.createdAt,
-      portfolioFingerprint: record.portfolioFingerprint,
-      taskHash: record.taskHash,
-      taskCharacterCount: record.taskCharacterCount,
-      taskTermCount: record.taskTermCount,
-      algorithmVersion: record.algorithmVersion,
-      candidateIds: record.candidates.map(({ candidateId }) => candidateId),
-      useCandidateIds: record.useCandidateIds,
-      installCandidateIds: record.installCandidateIds,
-      ...(record.feedback ? {
-        feedback: {
-          schemaVersion: 1,
-          preflightId: record.id,
-          recordedAt: record.feedback.createdAt,
-          label: record.feedback.label,
-          candidateIds: record.feedback.candidateIds
-        }
-      } : {})
-    });
-  }
-  return evidencePreflightSchema.parse({
-    schemaVersion: 3,
-    id: record.id,
-    createdAt: record.createdAt,
-    portfolioFingerprint: record.portfolioFingerprint,
-    taskHash: record.taskHash,
-    taskCharacterCount: record.taskCharacterCount,
-    taskTermCount: record.taskTermCount,
-    algorithmVersion: record.algorithmVersion,
-    candidateIds: record.candidates.map(({ skillId }) => skillId),
-    useCandidateIds: record.selectedSkillIds,
-    installCandidateIds: [],
-    ...(record.feedback ? {
-      feedback: {
-        schemaVersion: 1,
-        preflightId: record.id,
-        recordedAt: record.feedback.createdAt,
-        label: record.feedback.label,
-        candidateIds: record.feedback.selectedSkillIds
-      }
-    } : {})
-  });
-}
-
 export async function readLocalEvidenceDataset(stateDirectory: string): Promise<EvidenceDataset> {
   const [preflights, events, installations] = await Promise.all([
-    readPreflightEvidence(stateDirectory),
+    readNormalizedPreflightEvidence(stateDirectory),
     readEvidenceEvents(stateDirectory),
     readInstallationHistory(stateDirectory)
   ]);
   return evidenceDatasetSchema.parse({
     schemaVersion: 1,
-    preflights: preflights.map(normalizePreflight),
+    preflights,
     events,
     installations: installations
       .filter((record) => record.status === "installed" && record.provenance)

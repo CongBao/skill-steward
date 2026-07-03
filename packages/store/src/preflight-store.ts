@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   evidencePolicySchema,
   evidencePreflightSchema,
+  type EvidencePreflight,
   type EvidenceHarness,
   type EvidencePolicy
 } from "@skill-steward/evidence";
@@ -335,4 +336,60 @@ export async function assertPreflightInstallationRecommendation(
       "Candidate was not an explicit installation recommendation in this preflight"
     );
   }
+}
+
+function normalizeEvidenceRecord(record: PreflightEvidenceRecord): EvidencePreflight {
+  if (record.schemaVersion === 3) return evidencePreflightSchema.parse(record);
+  if (record.schemaVersion === 2) {
+    return evidencePreflightSchema.parse({
+      schemaVersion: 3,
+      id: record.id,
+      createdAt: record.createdAt,
+      portfolioFingerprint: record.portfolioFingerprint,
+      taskHash: record.taskHash,
+      taskCharacterCount: record.taskCharacterCount,
+      taskTermCount: record.taskTermCount,
+      algorithmVersion: record.algorithmVersion,
+      candidateIds: record.candidates.map(({ candidateId }) => candidateId),
+      useCandidateIds: record.useCandidateIds,
+      installCandidateIds: record.installCandidateIds,
+      ...(record.feedback ? {
+        feedback: {
+          schemaVersion: 1,
+          preflightId: record.id,
+          recordedAt: record.feedback.createdAt,
+          label: record.feedback.label,
+          candidateIds: record.feedback.candidateIds
+        }
+      } : {})
+    });
+  }
+  return evidencePreflightSchema.parse({
+    schemaVersion: 3,
+    id: record.id,
+    createdAt: record.createdAt,
+    portfolioFingerprint: record.portfolioFingerprint,
+    taskHash: record.taskHash,
+    taskCharacterCount: record.taskCharacterCount,
+    taskTermCount: record.taskTermCount,
+    algorithmVersion: record.algorithmVersion,
+    candidateIds: record.candidates.map(({ skillId }) => skillId),
+    useCandidateIds: record.selectedSkillIds,
+    installCandidateIds: [],
+    ...(record.feedback ? {
+      feedback: {
+        schemaVersion: 1,
+        preflightId: record.id,
+        recordedAt: record.feedback.createdAt,
+        label: record.feedback.label,
+        candidateIds: record.feedback.selectedSkillIds
+      }
+    } : {})
+  });
+}
+
+export async function readNormalizedPreflightEvidence(
+  stateDirectory: string
+): Promise<EvidencePreflight[]> {
+  return (await readPreflightEvidence(stateDirectory)).map(normalizeEvidenceRecord);
 }

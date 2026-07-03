@@ -13,6 +13,8 @@
   "dependencies": {
     "@skill-steward/catalog": "workspace:*",
     "@skill-steward/engine": "workspace:*",
+    "@skill-steward/evidence": "workspace:*",
+    "@skill-steward/governance": "workspace:*",
     "@skill-steward/insights": "workspace:*",
     "@skill-steward/installer": "workspace:*",
     "@skill-steward/integrations": "workspace:*",
