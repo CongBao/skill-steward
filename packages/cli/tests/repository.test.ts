@@ -3,6 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(process.cwd(), "../..");
+const englishScreenshots = ["overview-light-en.png", "skills-install-dark-en.png"];
+const chineseScreenshots = ["overview-light-zh-CN.png", "skills-install-dark-zh-CN.png"];
 const required = [
   "LICENSE",
   "README.zh-CN.md",
@@ -19,8 +21,8 @@ const required = [
   ".github/pull_request_template.md",
   ".github/workflows/ci.yml",
   "docs/architecture.md",
-  "docs/images/overview-light.png",
-  "docs/images/skills-install-dark.png"
+  ...englishScreenshots.map((name) => `docs/images/${name}`),
+  ...chineseScreenshots.map((name) => `docs/images/${name}`)
 ];
 
 async function expectLocalLinksToExist(markdownPath: string, markdown: string): Promise<void> {
@@ -58,14 +60,9 @@ describe("open-source repository", () => {
     expect(readme).toContain("[简体中文](README.zh-CN.md)");
     expect(readme).not.toContain("not a design mockup or a real user's portfolio");
     expect(readme).not.toContain("OpenSpec");
+    for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
+    for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.md", readme);
-
-    for (const screenshot of ["overview-light.png", "skills-install-dark.png"]) {
-      const bytes = await readFile(join(root, "docs/images", screenshot));
-      expect(bytes.subarray(1, 4).toString("ascii")).toBe("PNG");
-      expect(bytes.readUInt32BE(16)).toBeGreaterThanOrEqual(900);
-      expect(bytes.readUInt32BE(20)).toBeGreaterThanOrEqual(700);
-    }
   });
 
   it("ships a complete Chinese README with mutual language navigation", async () => {
@@ -86,7 +83,18 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("[English](README.md)");
     expect(chineseReadme).not.toContain("并非设计稿");
     expect(chineseReadme).not.toContain("OpenSpec");
+    for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
+    for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.zh-CN.md", chineseReadme);
+  });
+
+  it("ships full-size localized screenshots", async () => {
+    for (const screenshot of [...englishScreenshots, ...chineseScreenshots]) {
+      const bytes = await readFile(join(root, "docs/images", screenshot));
+      expect(bytes.subarray(1, 4).toString("ascii")).toBe("PNG");
+      expect(bytes.readUInt32BE(16)).toBeGreaterThanOrEqual(900);
+      expect(bytes.readUInt32BE(20)).toBeGreaterThanOrEqual(700);
+    }
   });
 
   it("keeps internal planning references out of the public documentation tree", async () => {

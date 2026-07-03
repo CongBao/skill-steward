@@ -22,9 +22,9 @@ Skill Steward gives that portfolio one control plane without becoming another ag
 
 ## Screenshots
 
-![Skill Steward Overview in light mode](docs/images/overview-light.png)
+![Skill Steward Overview in light mode](docs/images/overview-light-en.png)
 
-![Reviewed Skill installation in Chinese dark mode](docs/images/skills-install-dark.png)
+![Skill installation in dark mode](docs/images/skills-install-dark-en.png)
 
 ## Installation
 
