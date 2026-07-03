@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
   applyIntegrationPlan,
@@ -44,6 +45,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
   await writeFile(join(home, ".codex", "hooks.json"), '{"unrelated":true}\n');
   await writeFile(join(companionSkillDirectory, "SKILL.md"), "---\nname: skill-steward-preflight\ndescription: Preflight tasks\n---\nRun preflight.\n");
   let readinessFailure: (() => Promise<void>) | undefined;
+  let readinessSequence: Array<(() => Promise<void>) | undefined> = [];
   let domainFailureAfterCommit: Error | undefined;
   let uncertainJournalCommit = false;
   let rollbackJournalFailure = false;
@@ -59,7 +61,9 @@ async function fixture(ids: string[] = ["integration-record"]) {
     companionSkillDirectory,
     afterApply: async () => {
       readinessCalls += 1;
-      if (readinessFailure) await readinessFailure();
+      const sequenced = readinessSequence.shift();
+      if (sequenced) await sequenced();
+      else if (readinessSequence.length === 0 && readinessFailure) await readinessFailure();
       const report = await scanPortfolio(standardRoots({ home, cwd: home }));
       await writeLatestReport(stateDirectory, report);
     },
@@ -131,6 +135,9 @@ async function fixture(ids: string[] = ["integration-record"]) {
         throw error;
       };
     },
+    sequenceReadiness(value: Array<(() => Promise<void>) | undefined>) {
+      readinessSequence = [...value];
+    },
     failDomainAfterCommit(error: Error) {
       domainFailureAfterCommit = error;
     },
@@ -192,6 +199,96 @@ describe("Harness integration routes", () => {
       code: "INTEGRATION_DRIFTED"
     });
     expect(appliedPlanIds).toEqual(["plan-a", "plan-b"]);
+  });
+
+  it("consumes one Dashboard plan only once under concurrent calls", async () => {
+    const instance = await fixture(["single-plan"]);
+    const plan = await instance.integrationServices.plan("codex");
+    instance.sequenceReadiness([async () => { await delay(25); }]);
+
+    const outcomes = await Promise.allSettled([
+      instance.integrationServices.apply("codex", plan.id),
+      instance.integrationServices.apply("codex", plan.id)
+    ]);
+
+    expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(({ status }) => status === "rejected"))
+      .toEqual([expect.objectContaining({
+        reason: expect.objectContaining({ code: "INTEGRATION_PLAN_REQUIRED" })
+      })]);
+    expect(instance.readinessCalls()).toBe(1);
+  });
+
+  it("serializes exact same-Harness plans across readiness rollback", async () => {
+    const instance = await fixture(["failing-plan", "successful-plan"]);
+    const failing = await instance.integrationServices.plan("codex");
+    const successful = await instance.integrationServices.plan("codex");
+    instance.sequenceReadiness([
+      async () => {
+        await delay(50);
+        throw new Error("first scan failed");
+      },
+      undefined
+    ]);
+
+    const outcomes = await Promise.allSettled([
+      instance.integrationServices.apply("codex", failing.id),
+      instance.integrationServices.apply("codex", successful.id)
+    ]);
+    expect(outcomes.filter(({ status }) => status === "rejected"))
+      .toEqual([expect.objectContaining({
+        reason: expect.objectContaining({ code: "INTEGRATION_READINESS_FAILED" })
+      })]);
+    expect(outcomes.filter(({ status }) => status === "fulfilled"))
+      .toEqual([expect.objectContaining({
+        value: expect.objectContaining({ status: "needs-trust" })
+      })]);
+    await expect(instance.integrationServices.list()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        harness: "codex",
+        status: "needs-trust"
+      })])
+    );
+  });
+
+  it("serializes apply with overlapping removal through final status", async () => {
+    const instance = await fixture(["apply-plan"]);
+    const plan = await instance.integrationServices.plan("codex");
+    let readinessStarted!: () => void;
+    const started = new Promise<void>((resolve) => { readinessStarted = resolve; });
+    instance.sequenceReadiness([async () => {
+      readinessStarted();
+      await delay(50);
+    }]);
+
+    const applying = instance.integrationServices.apply("codex", plan.id);
+    await started;
+    const removing = instance.integrationServices.remove("codex");
+
+    await expect(applying).resolves.toMatchObject({ status: "needs-trust" });
+    await expect(removing).resolves.toMatchObject({ status: "not-installed" });
+  });
+
+  it("serializes different Harness applies around the shared companion", async () => {
+    const instance = await fixture(["codex-plan", "claude-plan"]);
+    const codex = await instance.integrationServices.plan("codex");
+    const claude = await instance.integrationServices.plan("claude-code");
+
+    const results = await Promise.all([
+      instance.integrationServices.apply("codex", codex.id),
+      instance.integrationServices.apply("claude-code", claude.id)
+    ]);
+
+    expect(results).toEqual([
+      expect.objectContaining({ harness: "codex", status: "needs-trust" }),
+      expect.objectContaining({ harness: "claude-code", status: "installed" })
+    ]);
+    await expect(access(join(
+      instance.home,
+      ".agents",
+      "skills",
+      "skill-steward-preflight"
+    ))).resolves.toBeUndefined();
   });
 
   it("expires reviewed plans opportunistically", async () => {

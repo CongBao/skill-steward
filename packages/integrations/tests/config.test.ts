@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -431,7 +440,7 @@ it("preserves journal and rollback failures in one cause chain", async () => {
   };
   const plan = await planIntegration("codex", options);
   const journalFailure = new Error("journal failed");
-  const external = '{"changedDuringJournal":true,"external":"preserve-exactly"}\n';
+  const external = "external bytes are not JSON\n";
   const failure = await applyIntegrationPlan(plan, options, {
     appendRecord: async () => {
       await writeFile(plan.targetPath, external, "utf8");
@@ -445,6 +454,45 @@ it("preserves journal and rollback failures in one cause chain", async () => {
   expect(causes[0]).toBe(journalFailure);
   expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
   expect(await readFile(plan.targetPath, "utf8")).toBe(external);
+});
+
+it("rechecks the target after syncing a large rollback temporary file", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-atomic-rollback-window-"));
+  const options = { home, stateDirectory: join(home, "state") };
+  const path = join(home, ".codex", "hooks.json");
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify({ padding: "x".repeat(40 * 1024 * 1024) })}\n`);
+  const plan = await planIntegration("codex", options);
+  const journalFailure = new Error("journal failed after configuration write");
+  const external = '{"external":"arrived-after-temp-sync"}\n';
+  let watcher: Promise<void> | undefined;
+
+  const failure = await applyIntegrationPlan(plan, options, {
+    appendRecord: async () => {
+      watcher = (async () => {
+        for (let attempt = 0; attempt < 10_000; attempt += 1) {
+          const entries = await readdir(dirname(path));
+          if (entries.some((entry) =>
+            entry.startsWith("hooks.json.") && entry.endsWith(".tmp")
+          )) {
+            await writeFile(path, external, "utf8");
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        throw new Error("Timed out waiting for rollback temporary file");
+      })();
+      throw journalFailure;
+    }
+  }).catch((error: unknown) => error);
+  await watcher;
+
+  expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+  expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+  const causes = ((failure as Error).cause as AggregateError).errors;
+  expect(causes[0]).toBe(journalFailure);
+  expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
+  expect(await readFile(path, "utf8")).toBe(external);
 });
 
 it("does not roll back configuration when journal commit is uncertain", async () => {

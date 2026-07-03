@@ -1,12 +1,16 @@
 import { access, mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   applyIntegrationPlan,
   removeIntegration,
   rollbackIntegrationPlan
 } from "@skill-steward/integrations";
-import { readLatestReport } from "@skill-steward/store";
+import {
+  readLatestReport,
+  withIntegrationMutationLease
+} from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
 import {
@@ -105,6 +109,35 @@ describe("integrate command", () => {
       "integrate", "status", "--harness", "codex", "--json"
     ], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({ status: "needs-trust" });
+  });
+
+  it("does not consume a reviewed plan when the integration lease is busy", async () => {
+    const plan = await preview("codex");
+    let release!: () => void;
+    const held = withIntegrationMutationLease(current.context.stateDir, async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+    });
+    while (!await exists(join(current.context.stateDir, "integration-mutation.lease"))) {
+      await delay(2);
+    }
+
+    const busyDependencies = {
+      withLease: <T>(stateDirectory: string, operation: () => Promise<T>) =>
+        withIntegrationMutationLease(stateDirectory, operation, {
+          waitMs: 15,
+          pollMs: 2
+        })
+    } as unknown as Parameters<typeof integrateApplyCommand>[2];
+    expect(await integrateApplyCommand({
+      plan: plan.id,
+      confirm: true,
+      json: false
+    }, current.context, busyDependencies)).toBe(1);
+    expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_BUSY");
+
+    release();
+    await held;
+    expect(await apply(plan.id)).toBe(0);
   });
 
   it("retains the shared Skill while another Harness is active", async () => {

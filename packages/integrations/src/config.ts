@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
+  open,
   readFile,
   realpath,
   rename,
@@ -337,21 +338,33 @@ function parseConfig(source: string): JsonObject {
   }
 }
 
+async function readTargetState(targetPath: string): Promise<{
+  exists: boolean;
+  source: string;
+  fingerprint: string;
+}> {
+  try {
+    const source = await readFile(targetPath, "utf8");
+    return { exists: true, source, fingerprint: hash(source) };
+  } catch (error) {
+    if (isMissing(error)) {
+      return { exists: false, source: "", fingerprint: hash("") };
+    }
+    throw error;
+  }
+}
+
 async function readConfig(targetPath: string): Promise<{
   exists: boolean;
   source: string;
   fingerprint: string;
   config: JsonObject;
 }> {
-  try {
-    const source = await readFile(targetPath, "utf8");
-    return { exists: true, source, fingerprint: hash(source), config: parseConfig(source) };
-  } catch (error) {
-    if (isMissing(error)) {
-      return { exists: false, source: "", fingerprint: hash(""), config: {} };
-    }
-    throw error;
-  }
+  const state = await readTargetState(targetPath);
+  return {
+    ...state,
+    config: state.exists ? parseConfig(state.source) : {}
+  };
 }
 
 async function requireExactTargetState(input: {
@@ -360,7 +373,7 @@ async function requireExactTargetState(input: {
   expectedFingerprint: string;
   message: string;
 }): Promise<void> {
-  const current = await readConfig(input.targetPath);
+  const current = await readTargetState(input.targetPath);
   if (
     current.exists !== input.expectedExists
     || current.fingerprint !== input.expectedFingerprint
@@ -494,13 +507,50 @@ function backupPath(targetPath: string, now: Date, discriminator: string): strin
   return `${targetPath}.skill-steward-${stamp}-${safeDiscriminator}.bak`;
 }
 
-async function atomicWrite(path: string, source: string, home: string): Promise<void> {
+async function atomicWrite(
+  path: string,
+  source: string,
+  home: string,
+  expected: {
+    exists: boolean;
+    fingerprint: string;
+    message: string;
+  }
+): Promise<void> {
   await assertSafeTarget(path, home);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await assertSafeTarget(path, home);
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, source, { encoding: "utf8", mode: 0o600 });
-  await rename(temporary, path);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let handle: Awaited<ReturnType<typeof open>> | undefined = await open(
+    temporary,
+    "wx",
+    0o600
+  );
+  let renamed = false;
+  try {
+    await handle.writeFile(source, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await assertSafeTarget(path, home);
+    await requireExactTargetState({
+      targetPath: path,
+      expectedExists: expected.exists,
+      expectedFingerprint: expected.fingerprint,
+      message: expected.message
+    });
+    await rename(temporary, path);
+    renamed = true;
+  } finally {
+    await handle?.close();
+    if (!renamed) {
+      try {
+        await unlink(temporary);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
+  }
 }
 
 async function writeBackup(path: string, source: string, home: string): Promise<void> {
@@ -510,7 +560,7 @@ async function writeBackup(path: string, source: string, home: string): Promise<
 
 async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Promise<void> {
   await assertSafeTarget(plan.targetPath, home);
-  const current = await readConfig(plan.targetPath);
+  const current = await readTargetState(plan.targetPath);
   if (!current.exists || current.fingerprint !== plan.afterFingerprint) {
     throw new IntegrationError(
       "INTEGRATION_DRIFTED",
@@ -536,7 +586,11 @@ async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Pr
         "Integration backup changed before rollback"
       );
     }
-    await atomicWrite(plan.targetPath, backupSource, home);
+    await atomicWrite(plan.targetPath, backupSource, home, {
+      exists: true,
+      fingerprint: plan.afterFingerprint,
+      message: "Harness configuration changed while integration rollback was prepared"
+    });
     await unlink(plan.backupPath);
     return;
   }
@@ -723,7 +777,13 @@ export async function applyIntegrationPlan(
   if (plan.backupPath && before.exists && plan.changes.length > 0) {
     await writeBackup(plan.backupPath, before.source, options.home);
   }
-  if (plan.changes.length > 0) await atomicWrite(plan.targetPath, afterSource, options.home);
+  if (plan.changes.length > 0) {
+    await atomicWrite(plan.targetPath, afterSource, options.home, {
+      exists: before.exists,
+      fingerprint: before.fingerprint,
+      message: "Harness configuration changed while integration apply was prepared"
+    });
+  }
   const record: IntegrationRecord = {
     schemaVersion: 1,
     id: plan.id,
@@ -812,7 +872,11 @@ export async function rollbackIntegrationPlan(
         expectedFingerprint: plan.expectedBeforeFingerprint,
         message: "Harness configuration changed while integration rollback was journaling"
       });
-      await atomicWrite(plan.targetPath, stableJson(plan.afterConfig), options.home);
+      await atomicWrite(plan.targetPath, stableJson(plan.afterConfig), options.home, {
+        exists: plan.expectedBeforeFingerprint !== hash(""),
+        fingerprint: plan.expectedBeforeFingerprint,
+        message: "Harness configuration changed while rollback compensation was prepared"
+      });
     } catch (compensationError) {
       throw new IntegrationError(
         "INTEGRATION_ROLLBACK_FAILED",
@@ -972,7 +1036,11 @@ export async function removeIntegration(
           expectedFingerprint: record.afterFingerprint,
           message: "Harness configuration changed while integration removal was journaling"
         });
-        await atomicWrite(targetPath, before.source, options.home);
+        await atomicWrite(targetPath, before.source, options.home, {
+          exists: harness !== "github-copilot",
+          fingerprint: record.afterFingerprint,
+          message: "Harness configuration changed while removal restoration was prepared"
+        });
       } catch (rollbackError) {
         throw new IntegrationError(
           "INTEGRATION_ROLLBACK_FAILED",
@@ -1035,7 +1103,11 @@ export async function removeIntegration(
   const id = options.id?.() ?? randomUUID();
   const path = backupPath(targetPath, now, `${id}-remove`);
   await writeBackup(path, before.source, options.home);
-  await atomicWrite(targetPath, afterSource, options.home);
+  await atomicWrite(targetPath, afterSource, options.home, {
+    exists: before.exists,
+    fingerprint: before.fingerprint,
+    message: "Harness configuration changed while integration removal was prepared"
+  });
   const record: IntegrationRecord = {
     schemaVersion: 1,
     id,

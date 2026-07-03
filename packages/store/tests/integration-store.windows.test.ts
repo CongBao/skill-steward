@@ -1,4 +1,13 @@
-import { mkdtemp, mkdir, readdir, symlink } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readdir,
+  symlink,
+  utimes,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +16,7 @@ import {
   readIntegrationRecords,
   type IntegrationRecord
 } from "../src/integration-store.js";
+import { withIntegrationMutationLease } from "../src/integration-mutation-lease.js";
 
 function record(index: number): IntegrationRecord {
   return {
@@ -49,5 +59,52 @@ describe.skipIf(process.platform !== "win32")("Windows integration journal smoke
     await expect(appendIntegrationRecord(state, record(1))).rejects.toBeDefined();
     await expect(readIntegrationRecords(state)).rejects.toBeDefined();
     expect(await readdir(outside)).toEqual([]);
+  });
+
+  it("serializes and releases the hard-link mutation lease", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-windows-lease-"));
+    let active = 0;
+    let maximum = 0;
+
+    await Promise.all(Array.from({ length: 4 }, () =>
+      withIntegrationMutationLease(state, async () => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+      }, { waitMs: 2_000, pollMs: 2, heartbeatMs: 2 })
+    ));
+
+    expect(maximum).toBe(1);
+    await expect(access(join(state, "integration-mutation.lease")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recovers a stale mutation lease after its Windows owner exits", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-windows-stale-lease-"));
+    const leasePath = join(state, "integration-mutation.lease");
+    const deadPid = await new Promise<number>((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+      const pid = child.pid;
+      child.once("error", reject);
+      child.once("exit", () => pid === undefined
+        ? reject(new Error("Child process did not expose a PID"))
+        : resolve(pid));
+    });
+    await writeFile(leasePath, `${JSON.stringify({
+      schemaVersion: 1,
+      token: "00000000-0000-4000-8000-000000000010",
+      pid: deadPid,
+      acquiredAt: "2026-07-04T00:00:00.000Z"
+    })}\n`);
+    const old = new Date(Date.now() - 60_000);
+    await utimes(leasePath, old, old);
+
+    await expect(withIntegrationMutationLease(state, async () => "recovered", {
+      waitMs: 500,
+      pollMs: 2,
+      staleMs: 10,
+      hardStaleMs: 120_000
+    })).resolves.toBe("recovered");
   });
 });

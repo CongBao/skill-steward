@@ -21,6 +21,7 @@ import {
 import {
   claimReviewedPlan,
   cleanupExpiredReviewedPlans,
+  withIntegrationMutationLease,
   writeLatestReport,
   writeReviewedPlan,
   type ReviewedPlanEnvelope
@@ -46,20 +47,24 @@ export interface IntegrateApplyDependencies {
   applyPlan: typeof applyIntegrationPlan;
   rollbackPlan: typeof rollbackIntegrationPlan;
   removeCompanion: typeof removeManagedCompanionSkill;
+  withLease: typeof withIntegrationMutationLease;
 }
 
 const integrateApplyDefaults: IntegrateApplyDependencies = {
   applyPlan: applyIntegrationPlan,
   rollbackPlan: rollbackIntegrationPlan,
-  removeCompanion: removeManagedCompanionSkill
+  removeCompanion: removeManagedCompanionSkill,
+  withLease: withIntegrationMutationLease
 };
 
 export interface IntegrateRemoveDependencies {
   remove: typeof removeIntegration;
+  withLease: typeof withIntegrationMutationLease;
 }
 
 const integrateRemoveDefaults: IntegrateRemoveDependencies = {
-  remove: removeIntegration
+  remove: removeIntegration,
+  withLease: withIntegrationMutationLease
 };
 
 class IntegrateCommandError extends Error {
@@ -248,40 +253,44 @@ export async function integrateApplyCommand(
         "Apply accepts only --plan <id> --confirm; --harness is ambiguous"
       );
     }
-    const envelope = await claimReviewedPlan(context.stateDir, {
-      id: options.plan,
-      kind: "integration",
-      now: context.now?.() ?? new Date()
-    });
-    const result = await applyClaimedReviewedPlan(async () => {
-      const plan = parseStoredPlan(envelope);
-      const installed = await installSharedSkill(context);
-      let applied = false;
-      try {
-        const record = await dependencies.applyPlan(plan, configOptions(context));
-        applied = true;
+    const transaction = await dependencies.withLease(context.stateDir, async () => {
+      const envelope = await claimReviewedPlan(context.stateDir, {
+        id: options.plan!,
+        kind: "integration",
+        now: context.now?.() ?? new Date()
+      });
+      const result = await applyClaimedReviewedPlan(async () => {
+        const plan = parseStoredPlan(envelope);
+        const installed = await installSharedSkill(context);
+        let applied = false;
         try {
-          await initialReadinessScan(context);
+          const record = await dependencies.applyPlan(plan, configOptions(context));
+          applied = true;
+          try {
+            await initialReadinessScan(context);
+          } catch (error) {
+            return rollbackFailedReadiness(plan, installed, context, error, dependencies);
+          }
+          await integrationStatus(plan.harness, configOptions(context));
+          return { plan, record };
         } catch (error) {
-          return rollbackFailedReadiness(plan, installed, context, error, dependencies);
+          return rethrowAfterIntegrationApplyFailure({
+            error,
+            companionCreated: !applied && installed.created,
+            removeCompanion: () => dependencies.removeCompanion({
+                home: context.home,
+                sourceDirectory: packagedSkillDirectory()
+            })
+          });
         }
-        return { plan, record };
-      } catch (error) {
-        return rethrowAfterIntegrationApplyFailure({
-          error,
-          companionCreated: !applied && installed.created,
-          removeCompanion: () => dependencies.removeCompanion({
-              home: context.home,
-              sourceDirectory: packagedSkillDirectory()
-          })
-        });
-      }
+      });
+      return { envelope, result };
     });
     context.stdout(options.json
-      ? `${JSON.stringify({ record: result.record, planId: envelope.id, readiness: "ready" }, null, 2)}\n`
+      ? `${JSON.stringify({ record: transaction.result.record, planId: transaction.envelope.id, readiness: "ready" }, null, 2)}\n`
       : [
-          `Installed ${terminalSafeText(result.plan.harness)} integration (${terminalSafeText(result.record.id)}).`,
-          `Plan ID: ${terminalSafeText(envelope.id)}`,
+          `Installed ${terminalSafeText(transaction.result.plan.harness)} integration (${terminalSafeText(transaction.result.record.id)}).`,
+          `Plan ID: ${terminalSafeText(transaction.envelope.id)}`,
           "Initial portfolio scan: ready",
           ""
         ].join("\n")
@@ -327,8 +336,12 @@ export async function integrateRemoveCommand(
   try {
     if (!confirm) throw new Error("Integration removal requires --confirm");
     const harness = integrationHarnessSchema.parse(inputHarness);
-    const record = await dependencies.remove(harness, configOptions(context));
-    await removeSharedSkillIfUnused(context);
+    const record = await dependencies.withLease(context.stateDir, async () => {
+      const removed = await dependencies.remove(harness, configOptions(context));
+      await removeSharedSkillIfUnused(context);
+      await integrationStatus(harness, configOptions(context));
+      return removed;
+    });
     context.stdout(`Removed ${harness} integration (${record.id}).\n`);
     return 0;
   } catch (error) {
