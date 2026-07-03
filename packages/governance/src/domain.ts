@@ -55,13 +55,17 @@ export type QuarantinedSkill = z.infer<typeof quarantinedSkillSchema>;
 
 export type GovernanceErrorCode =
   | "PLAN_INVALID"
+  | "PLAN_EXPIRED"
+  | "PLAN_ALREADY_USED"
   | "SOURCE_UNSAFE"
   | "SOURCE_OUTSIDE_ACTIVE_ROOT"
   | "SOURCE_DRIFT"
   | "VAULT_DRIFT"
   | "DESTINATION_CONFLICT"
   | "UNSAFE_DESTINATION"
-  | "UNSUPPORTED_FILESYSTEM";
+  | "UNSUPPORTED_FILESYSTEM"
+  | "COPY_VERIFICATION_FAILED"
+  | "TRANSACTION_RECOVERY_FAILED";
 
 export class GovernanceError extends Error {
   constructor(public readonly code: GovernanceErrorCode, message: string) {
