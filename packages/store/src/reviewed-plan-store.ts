@@ -529,8 +529,22 @@ async function cleanupStaleOwnedPlan(
 ): Promise<boolean> {
   const assessment = await assessStoredPlan(owned, id, now);
   if (assessment === "removable") return removeFile(owned);
-  await restoreOwnedPlan(owned, resolve(dirname(owned), `${id}.json`));
-  return false;
+  const pending = resolve(dirname(owned), `${id}.json`);
+  const [ownedMetadata, pendingMetadata] = await Promise.all([
+    inspectPlanFileMetadata(owned),
+    inspectPlanFileMetadata(pending)
+  ]);
+  if (ownedMetadata === undefined || pendingMetadata === undefined) return false;
+  if (
+    ownedMetadata.dev === pendingMetadata.dev
+    && ownedMetadata.ino === pendingMetadata.ino
+  ) {
+    return removeFile(owned);
+  }
+  throw storeError(
+    "REVIEWED_PLAN_UNSAFE_STATE",
+    "Stale reviewed plan cleanup data conflicts with newer pending state"
+  );
 }
 
 function cleanupPath(directory: string, id: string): string {
