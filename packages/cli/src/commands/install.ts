@@ -16,6 +16,7 @@ import {
   StagingRegistry
 } from "@skill-steward/installer";
 import {
+  assertPreflightInstallationRecommendation,
   readCatalogSnapshot,
   readCatalogSources,
   writeLatestReport
@@ -28,6 +29,7 @@ export interface CatalogInstallOptions {
   harness: string;
   scope: string;
   workspace?: string;
+  preflight?: string;
   targetName?: string;
   replace: boolean;
   confirm: boolean;
@@ -79,6 +81,21 @@ export async function catalogInstallCommand(
       );
     }
     const gitSource = catalogCandidateSource(candidate, source);
+    const provenance = options.preflight
+      ? {
+          preflightId: options.preflight,
+          candidateId: candidate.id,
+          sourceId: candidate.sourceId,
+          sourceRevision: candidate.sourceRevision
+        }
+      : undefined;
+    if (provenance) {
+      await assertPreflightInstallationRecommendation(
+        context.stateDir,
+        provenance.preflightId,
+        provenance.candidateId
+      );
+    }
     const preview = await staging.create({ ttlMs: 15 * 60_000 });
     previewId = preview.id;
     const staged = await (context.catalogStage ?? stagePublicGit)(preview.directory, gitSource);
@@ -101,6 +118,7 @@ export async function catalogInstallCommand(
       source: staged.sourceDirectory,
       sourceFingerprint: candidate.fingerprint,
       destination: target,
+      ...(provenance ? { provenance } : {}),
       ...(options.replace ? { conflictAction: "replace" as const } : {})
     });
 

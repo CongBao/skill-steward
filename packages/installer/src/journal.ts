@@ -1,19 +1,24 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
+import { installationProvenanceSchema } from "./domain.js";
 
 const JOURNAL_FILE = "installations.jsonl";
 
-export interface InstallationRecord {
-  id: string;
-  status: "installed" | "rolled-back";
-  action: "create" | "replace";
-  destination: string;
-  installedFingerprint: string;
-  previousFingerprint: string | null;
-  backupDirectory: string | null;
-  createdAt: string;
-  rolledBackAt?: string;
-}
+export const installationRecordSchema = z.object({
+  id: z.string().min(1),
+  status: z.enum(["installed", "rolled-back"]),
+  action: z.enum(["create", "replace"]),
+  destination: z.string().min(1),
+  installedFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  previousFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(),
+  backupDirectory: z.string().min(1).nullable(),
+  createdAt: z.string().datetime(),
+  rolledBackAt: z.string().datetime().optional(),
+  provenance: installationProvenanceSchema.optional()
+}).strict();
+
+export type InstallationRecord = z.infer<typeof installationRecordSchema>;
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -23,30 +28,21 @@ export async function appendInstallationRecord(
   stateDirectory: string,
   record: InstallationRecord
 ): Promise<void> {
+  const parsed = installationRecordSchema.parse(record);
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   await appendFile(
     join(stateDirectory, JOURNAL_FILE),
-    `${JSON.stringify(record)}\n`,
+    `${JSON.stringify(parsed)}\n`,
     { encoding: "utf8", mode: 0o600 }
   );
 }
 
 function parseRecord(value: unknown): InstallationRecord {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("id" in value) ||
-    typeof value.id !== "string" ||
-    !("status" in value) ||
-    (value.status !== "installed" && value.status !== "rolled-back") ||
-    !("destination" in value) ||
-    typeof value.destination !== "string" ||
-    !("installedFingerprint" in value) ||
-    typeof value.installedFingerprint !== "string"
-  ) {
+  const parsed = installationRecordSchema.safeParse(value);
+  if (!parsed.success) {
     throw new Error("Installation journal contains an invalid record");
   }
-  return value as unknown as InstallationRecord;
+  return parsed.data;
 }
 
 export async function readInstallationHistory(

@@ -8,7 +8,7 @@ const MAX_RECORDS = 100;
 export const integrationRecordSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().min(1),
-  harness: z.enum(["codex", "claude-code"]),
+  harness: z.enum(["codex", "claude-code", "github-copilot"]),
   action: z.enum(["apply", "remove"]),
   status: z.enum(["installed", "removed"]),
   targetPath: z.string().min(1),

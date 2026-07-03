@@ -29,6 +29,12 @@ skill-steward integrate apply --harness codex --confirm
 
 Submit one synthetic task in the Harness. Verify that the Hook returns quickly, the Harness continues if Skill Steward state is missing, and the recommendation contains installed/available names but not raw task text or source URLs.
 
+Repeat against the declared capability matrix:
+
+- Codex: `UserPromptSubmit` returns recommendation context; `Stop` returns valid non-blocking JSON.
+- Claude Code: `UserPromptSubmit` returns recommendation context; `Stop` and `SessionEnd` return valid non-blocking JSON.
+- GitHub Copilot CLI: `userPromptSubmitted` and `sessionEnd` both return `{}`; recommendations are tested separately through the companion Skill or CLI.
+
 Remove only the managed entry:
 
 ```bash
@@ -36,6 +42,41 @@ skill-steward integrate remove --harness codex --confirm
 ```
 
 Confirm unrelated Hook configuration remains. If cleanup is needed, remove the companion Skill only when it still matches the packaged fingerprint; the normal remove command already performs this check.
+
+## Evidence and privacy
+
+Start in the default minimal mode, run Preflight, and submit one explicit label. Confirm no `evidence-salt` or lifecycle journal is created by minimal-mode Hooks. Then review before enabling learning mode:
+
+```bash
+skill-steward evidence policy
+skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000
+skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000 --confirm
+```
+
+Use a synthetic payload containing unique prompt, transcript, raw ID, working-path, assistant-message, tool-argument, and tool-output canaries. Confirm none appear in `preflights.json`, `evidence-events.jsonl`, sanitized export, Evidence API output, or the Evidence dashboard. Confirm the export does not contain the private salt in raw, hex, or base64 form.
+
+Review feedback and correction metrics with their numerator/denominator. Treat lifecycle reasons as proxy signals only; do not report them as task success. A readiness badge does not authorize ranking changes.
+
+Finally, review and apply evidence erasure. Confirm only `preflights.json`, `evidence-events.jsonl`, and `evidence-salt` are removed while portfolio, catalog, integration, installation, and governance state remains.
+
+## Reversible governance
+
+Use a synthetic disposable Skill. Run quarantine without `--confirm`, inspect the active/vault paths, fingerprint, aliases, and every operation, then confirm it:
+
+```bash
+skill-steward govern quarantine --skill <skill-id>
+skill-steward govern quarantine --skill <skill-id> --confirm
+skill-steward govern history --json
+```
+
+Verify the Skill no longer appears in active discovery and appears as quarantined. Review and confirm restore, then compare the restored fingerprint with the original:
+
+```bash
+skill-steward govern restore --transaction <quarantine-id>
+skill-steward govern restore --transaction <quarantine-id> --confirm
+```
+
+Also test refusal: edit the active source after planning quarantine, occupy the original destination before restore, and alter a disposable vault fixture. Each case must stop without deleting or overwriting the only verified copy. There is no permanent-delete acceptance path.
 
 ## Temporary-HOME smoke test
 
@@ -47,8 +88,8 @@ CI=true pnpm --filter @skill-steward/dashboard-server build
 CI=true pnpm --filter skill-steward test -- tests/binary.test.ts
 ```
 
-It seeds an installed Skill and cached catalog record, invokes the Codex Hook JSON protocol, checks privacy-reduced state, applies the integration, verifies the shared Skill and configuration, and removes the managed entry while preserving unrelated configuration.
+It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, applies all three integration adapters, verifies the shared Skill and configuration, checks drift refusal, and removes managed entries while preserving unrelated configuration.
 
 ## Advancement criteria
 
-The next phase requires at least 100 labeled findings across 20 portfolios, actionable precision of at least 60%, 30 reviewed available-candidate decisions, and no unresolved case where apply/remove overwrote unrelated configuration or stored raw task text.
+Ranking calibration remains out of scope until there are at least 100 labeled preflights, 30 corrected candidate sets, 20 portfolio fingerprints, a useful-label rate of at least 60%, no detected raw-content persistence, no unresolved governance failure that loses or overwrites a Skill, and a still-valid Harness capability matrix. Meeting these thresholds allows a separate calibration review; it does not change ranking automatically.

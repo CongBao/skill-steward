@@ -1,7 +1,11 @@
-import { mkdtemp } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  applyEvidencePolicyPlan,
+  planEvidencePolicyChange,
+  readEvidenceEvents,
+  readPreflightEvidence,
   writeCatalogSnapshot,
   writeCatalogSources,
   writeLatestReport
@@ -28,6 +32,15 @@ async function fixture() {
     })
   };
   return { base, stateDir, stdout, stderr, context };
+}
+
+async function enableLearning(stateDir: string): Promise<void> {
+  const plan = await planEvidencePolicyChange(stateDir, {
+    mode: "learning",
+    retentionDays: 30,
+    maxEvents: 5_000
+  });
+  await applyEvidencePolicyPlan(stateDir, plan);
 }
 
 async function seedState(stateDir: string): Promise<void> {
@@ -104,6 +117,13 @@ describe("hook command", () => {
     expect(output.hookSpecificOutput.additionalContext).toContain("testing-review");
     expect(current.stdout[0]).not.toContain("PRIVATE");
     expect(current.stdout[0]).not.toContain("https://example.com");
+    const [record] = await readPreflightEvidence(current.stateDir);
+    expect(record).toMatchObject({ schemaVersion: 3, harness: "codex" });
+    expect(record).not.toHaveProperty("candidateFeatures");
+    await expect(access(join(current.stateDir, "evidence-events.jsonl")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(join(current.stateDir, "evidence-salt")))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("fails open with valid JSON for missing state and malformed input", async () => {
@@ -113,6 +133,87 @@ describe("hook command", () => {
     expect(await run([
       "hook", "prompt", "--harness", "claude-code"
     ], current.context)).toBe(0);
+    expect(current.stdout).toEqual(["{}\n"]);
+  });
+
+  it("records learning-mode prompt, turn, and Copilot session evidence without content", async () => {
+    await seedState(current.stateDir);
+    await enableLearning(current.stateDir);
+    current.context.stdin = async () => JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      prompt: "PRIVATE review security and missing tests",
+      cwd: "/private/customer/project",
+      session_id: "raw-session",
+      turn_id: "raw-turn",
+      transcript_path: "/private/transcript.jsonl"
+    });
+    expect(await run(["hook", "prompt", "--harness", "codex"], current.context)).toBe(0);
+    const delivery = (await readEvidenceEvents(current.stateDir)).find(
+      ({ kind }) => kind === "preflight-delivered"
+    );
+    expect(delivery).toMatchObject({
+      kind: "preflight-delivered",
+      harness: "codex",
+      sessionKey: expect.stringMatching(/^hmac-sha256:/),
+      turnKey: expect.stringMatching(/^hmac-sha256:/)
+    });
+    expect((await readPreflightEvidence(current.stateDir))[0]).toMatchObject({
+      harness: "codex",
+      candidateFeatures: expect.any(Array)
+    });
+
+    current.stdout.splice(0);
+    current.context.stdin = async () => JSON.stringify({
+      hook_event_name: "Stop",
+      session_id: "raw-session",
+      turn_id: "raw-turn",
+      last_assistant_message: "PRIVATE assistant output",
+      transcript_path: "/private/transcript.jsonl"
+    });
+    expect(await run(["hook", "lifecycle", "--harness", "codex"], current.context)).toBe(0);
+    expect(current.stdout).toEqual(["{}\n"]);
+
+    current.stdout.splice(0);
+    current.context.stdin = async () => JSON.stringify({
+      sessionId: "raw-copilot-session",
+      timestamp: 1_783_035_600_000,
+      cwd: "/private/customer/project",
+      prompt: "PRIVATE copilot prompt"
+    });
+    expect(await run([
+      "hook", "observe", "--harness", "github-copilot", "--event", "userPromptSubmitted"
+    ], current.context)).toBe(0);
+    expect(current.stdout).toEqual(["{}\n"]);
+
+    current.stdout.splice(0);
+    current.context.stdin = async () => JSON.stringify({
+      sessionId: "raw-copilot-session",
+      timestamp: 1_783_035_601_000,
+      cwd: "/private/customer/project",
+      reason: "complete"
+    });
+    expect(await run([
+      "hook", "observe", "--harness", "github-copilot", "--event", "sessionEnd"
+    ], current.context)).toBe(0);
+    expect(current.stdout).toEqual(["{}\n"]);
+
+    const serialized = await readFile(join(current.stateDir, "evidence-events.jsonl"), "utf8");
+    expect(serialized).toContain('"kind":"turn-finished"');
+    expect(serialized).toContain('"kind":"prompt-observed"');
+    expect(serialized).toContain('"kind":"session-ended"');
+    expect(serialized).not.toMatch(/PRIVATE|raw-session|raw-turn|raw-copilot|customer|transcript/);
+  });
+
+  it("keeps Harness output valid when learning evidence fails or stdin is oversized", async () => {
+    await seedState(current.stateDir);
+    await enableLearning(current.stateDir);
+    await writeFile(join(current.stateDir, "evidence-salt"), "invalid", "utf8");
+    expect(await run(["hook", "prompt", "--harness", "codex"], current.context)).toBe(0);
+    expect(JSON.parse(current.stdout[0]!)).toHaveProperty("hookSpecificOutput");
+
+    current.stdout.splice(0);
+    current.context.stdin = async () => "x".repeat(65_537);
+    expect(await run(["hook", "lifecycle", "--harness", "codex"], current.context)).toBe(0);
     expect(current.stdout).toEqual(["{}\n"]);
   });
 });

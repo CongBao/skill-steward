@@ -19,6 +19,7 @@ import {
   type ConflictAction,
   type InstallCandidate,
   type InstallationPlan,
+  type InstallationProvenance,
   type InstallationRecord,
   type InstallationSource,
   type UploadedFile
@@ -29,6 +30,7 @@ export interface InspectionResult {
   expiresAt: number;
   source: InstallationSource;
   candidates: Array<Partial<InstallCandidate> & Pick<InstallCandidate, "id" | "name" | "fingerprint">>;
+  provenance?: InstallationProvenance;
 }
 
 export interface InstallationPlanRequest {
@@ -44,7 +46,10 @@ export interface InstallationPlanRequest {
 export interface InstallationServices {
   inspectFolder(source: { kind: "folder"; label: string }, files: UploadedFile[]): Promise<InspectionResult>;
   inspectZip(source: { kind: "zip"; fileName: string }, archive: Buffer): Promise<InspectionResult>;
-  inspectGit(source: Extract<InstallationSource, { kind: "git" }>): Promise<InspectionResult>;
+  inspectGit(
+    source: Extract<InstallationSource, { kind: "git" }>,
+    provenance?: InstallationProvenance
+  ): Promise<InspectionResult>;
   plan(request: InstallationPlanRequest): Promise<Partial<InstallationPlan> & Pick<InstallationPlan, "id" | "status" | "action" | "changes">>;
   commit(planId: string): Promise<Partial<InstallationRecord> & Pick<InstallationRecord, "id" | "status">>;
   history(): Promise<InstallationRecord[]>;
@@ -55,6 +60,7 @@ interface StoredPreview {
   source: InstallationSource;
   sourceDirectory: string;
   candidates: InstallCandidate[];
+  provenance?: InstallationProvenance;
 }
 
 export interface LocalInstallationServiceOptions {
@@ -62,6 +68,7 @@ export interface LocalInstallationServiceOptions {
   home: string;
   workspace: string;
   previewTtlMs?: number;
+  stageGit?: typeof stagePublicGit;
   afterCommit?: () => void | Promise<void>;
 }
 
@@ -77,11 +84,23 @@ export function createInstallationServices(
     source: InstallationSource,
     sourceDirectory: string,
     previewId: string,
-    expiresAt: number
+    expiresAt: number,
+    provenance?: InstallationProvenance
   ): Promise<InspectionResult> {
     const candidates = await inspectStagedSkills(sourceDirectory);
-    previews.set(previewId, { source, sourceDirectory, candidates });
-    return { previewId, expiresAt, source, candidates };
+    previews.set(previewId, {
+      source,
+      sourceDirectory,
+      candidates,
+      ...(provenance ? { provenance } : {})
+    });
+    return {
+      previewId,
+      expiresAt,
+      source,
+      candidates,
+      ...(provenance ? { provenance } : {})
+    };
   }
 
   return {
@@ -101,16 +120,17 @@ export function createInstallationServices(
       await stageZipArchive(sourceDirectory, archive);
       return recordPreview(source, sourceDirectory, preview.id, preview.expiresAt);
     },
-    async inspectGit(input) {
+    async inspectGit(input, provenance) {
       const source = installationSourceSchema.parse(input);
       if (source.kind !== "git") throw new InstallerError("INVALID_SOURCE", "Expected Git source");
       const preview = await staging.create({ ttlMs: previewTtlMs });
-      const staged = await stagePublicGit(preview.directory, source);
+      const staged = await (options.stageGit ?? stagePublicGit)(preview.directory, source);
       const result = await recordPreview(
         source,
         staged.sourceDirectory,
         preview.id,
-        preview.expiresAt
+        preview.expiresAt,
+        provenance
       );
       return { ...result, source: { ...source, ref: source.ref ?? staged.commitSha } };
     },
@@ -137,6 +157,7 @@ export function createInstallationServices(
         source,
         sourceFingerprint: candidate.fingerprint,
         destination: target,
+        ...(preview.provenance ? { provenance: preview.provenance } : {}),
         ...(request.conflictAction ? { conflictAction: request.conflictAction } : {})
       });
       plans.set(plan.id, plan);

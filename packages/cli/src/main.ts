@@ -18,8 +18,25 @@ import {
 import { discoverCommand } from "./commands/discover.js";
 import { diffCommand } from "./commands/diff.js";
 import { doctorCommand } from "./commands/doctor.js";
+import {
+  evidenceCompactCommand,
+  evidenceEraseCommand,
+  evidenceExportCommand,
+  evidencePolicyCommand,
+  evidencePolicySetCommand,
+  evidenceSummaryCommand
+} from "./commands/evidence.js";
+import {
+  governHistoryCommand,
+  governQuarantineCommand,
+  governRestoreCommand
+} from "./commands/govern.js";
 import { labelCommand } from "./commands/label.js";
-import { hookPromptCommand } from "./commands/hook.js";
+import {
+  hookLifecycleCommand,
+  hookObserveCommand,
+  hookPromptCommand
+} from "./commands/hook.js";
 import {
   integrateApplyCommand,
   integratePlanCommand,
@@ -73,13 +90,126 @@ export async function run(
       exitCode = await hookPromptCommand(options.harness, context);
     });
 
+  hook
+    .command("lifecycle")
+    .requiredOption("--harness <id>", "codex or claude-code")
+    .action(async (options: { harness: string }) => {
+      exitCode = await hookLifecycleCommand(options.harness, context);
+    });
+
+  hook
+    .command("observe")
+    .requiredOption("--harness <id>", "github-copilot")
+    .requiredOption("--event <name>", "userPromptSubmitted or sessionEnd")
+    .action(async (options: { harness: string; event: string }) => {
+      exitCode = await hookObserveCommand(options.harness, options.event, context);
+    });
+
   const integrate = program
     .command("integrate")
     .description("Plan and manage Harness preflight integrations");
 
+  const evidence = program
+    .command("evidence")
+    .description("Inspect and manage private local recommendation evidence");
+
+  const evidencePolicy = evidence
+    .command("policy")
+    .description("Show the local evidence policy")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await evidencePolicyCommand(options.json, context);
+    });
+
+  evidencePolicy
+    .command("set")
+    .requiredOption("--mode <mode>", "minimal or learning")
+    .requiredOption("--retention-days <number>")
+    .requiredOption("--max-events <number>")
+    .option("--confirm", "apply the reviewed policy plan", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      mode: string;
+      retentionDays: string;
+      maxEvents: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await evidencePolicySetCommand({
+        ...options,
+        json: options.json || Boolean(evidencePolicy.opts().json)
+      }, context);
+    });
+
+  evidence
+    .command("summary")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await evidenceSummaryCommand(options.json, context);
+    });
+
+  evidence
+    .command("export")
+    .requiredOption("--output <path>")
+    .option("--replace", "replace an existing export", false)
+    .action(async (options: { output: string; replace: boolean }) => {
+      exitCode = await evidenceExportCommand(options.output, options.replace, context);
+    });
+
+  evidence.command("compact").action(async () => {
+    exitCode = await evidenceCompactCommand(context);
+  });
+
+  evidence
+    .command("erase")
+    .option("--confirm", "erase the reviewed evidence files", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { confirm: boolean; json: boolean }) => {
+      exitCode = await evidenceEraseCommand(options.confirm, options.json, context);
+    });
+
+  const govern = program
+    .command("govern")
+    .description("Review and apply reversible Skill lifecycle actions");
+
+  govern
+    .command("quarantine")
+    .requiredOption("--skill <id>")
+    .option("--confirm", "apply the reviewed quarantine", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { skill: string; confirm: boolean; json: boolean }) => {
+      exitCode = await governQuarantineCommand(
+        options.skill,
+        options.confirm,
+        options.json,
+        context
+      );
+    });
+
+  govern
+    .command("restore")
+    .requiredOption("--transaction <id>")
+    .option("--confirm", "apply the reviewed restore", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { transaction: string; confirm: boolean; json: boolean }) => {
+      exitCode = await governRestoreCommand(
+        options.transaction,
+        options.confirm,
+        options.json,
+        context
+      );
+    });
+
+  govern
+    .command("history")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await governHistoryCommand(options.json, context);
+    });
+
   integrate
     .command("plan")
-    .requiredOption("--harness <id>", "codex or claude-code")
+    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--json", "JSON output", false)
     .action(async (options: { harness: string; json: boolean }) => {
       exitCode = await integratePlanCommand(options.harness, options.json, context);
@@ -92,6 +222,7 @@ export async function run(
     .requiredOption("--harness <id>")
     .requiredOption("--scope <scope>", "global or project")
     .option("--workspace <path>")
+    .option("--preflight <id>", "link an explicit Task Preflight recommendation")
     .option("--target-name <name>")
     .option("--replace", "replace a differing destination with backup", false)
     .option("--confirm", "confirm the reviewed installation", false)
@@ -101,6 +232,7 @@ export async function run(
       harness: string;
       scope: string;
       workspace?: string;
+      preflight?: string;
       targetName?: string;
       replace: boolean;
       confirm: boolean;
@@ -111,7 +243,7 @@ export async function run(
 
   integrate
     .command("apply")
-    .requiredOption("--harness <id>", "codex or claude-code")
+    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--confirm", "confirm the reviewed integration plan", false)
     .action(async (options: { harness: string; confirm: boolean }) => {
       exitCode = await integrateApplyCommand(options.harness, options.confirm, context);
@@ -119,7 +251,7 @@ export async function run(
 
   integrate
     .command("status")
-    .option("--harness <id>", "codex or claude-code")
+    .option("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--json", "JSON output", false)
     .action(async (options: { harness?: string; json: boolean }) => {
       exitCode = await integrateStatusCommand(options.harness, options.json, context);
@@ -127,7 +259,7 @@ export async function run(
 
   integrate
     .command("remove")
-    .requiredOption("--harness <id>", "codex or claude-code")
+    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--confirm", "confirm integration removal", false)
     .action(async (options: { harness: string; confirm: boolean }) => {
       exitCode = await integrateRemoveCommand(options.harness, options.confirm, context);

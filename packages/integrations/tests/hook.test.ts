@@ -6,7 +6,7 @@ const rawTask = "PRIVATE rotate customer encryption keys";
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     algorithmVersion: 2,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -35,6 +35,12 @@ function result(): PreflightResult {
         redundancyPenalty: 0,
         installPenalty: 0,
         contextTokens: 200,
+        features: {
+          taskCoverage: 0.8,
+          skillPrecision: 0.6,
+          nameMatch: true,
+          projectScopeFit: false
+        },
         decision: "use",
         reasons: [{ code: "TASK_TERM_MATCH", detail: rawTask }]
       },
@@ -56,6 +62,12 @@ function result(): PreflightResult {
         redundancyPenalty: 0,
         installPenalty: 0.08,
         contextTokens: 180,
+        features: {
+          taskCoverage: 0.5,
+          skillPrecision: 0.4,
+          nameMatch: false,
+          projectScopeFit: false
+        },
         decision: "install",
         source: {
           sourceId: "fixture",
@@ -146,4 +158,43 @@ it("parses native input and fails open for invalid input or analysis errors", as
     stdin: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: rawTask, cwd: "/tmp" }),
     analyze: async () => { throw new Error("state unavailable"); }
   })).toEqual({});
+});
+
+it("records a content-free delivery without changing prompt output when evidence fails", async () => {
+  const deliveries: unknown[] = [];
+  const output = await runPromptHook({
+    harness: "codex",
+    stdin: JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      prompt: rawTask,
+      cwd: "/private/customer/project",
+      session_id: "raw-session",
+      turn_id: "raw-turn",
+      transcript_path: "/private/transcript.jsonl"
+    }),
+    analyze: async () => result(),
+    privacy: {
+      key: (namespace) => `hmac-sha256:${(namespace === "session" ? "a" : "b").repeat(64)}`
+    },
+    now: () => new Date("2026-07-03T00:01:00.000Z"),
+    id: () => "delivery-1",
+    onDelivery: async (event) => {
+      deliveries.push(event);
+      throw new Error("journal unavailable");
+    }
+  });
+  expect(output.hookSpecificOutput?.additionalContext).toContain("security-review");
+  expect(deliveries).toHaveLength(1);
+  expect(deliveries[0]).toEqual({
+    schemaVersion: 1,
+    id: "delivery-1",
+    createdAt: "2026-07-03T00:01:00.000Z",
+    kind: "preflight-delivered",
+    harness: "codex",
+    preflightId: "run-1",
+    algorithmVersion: 2,
+    sessionKey: `hmac-sha256:${"a".repeat(64)}`,
+    turnKey: `hmac-sha256:${"b".repeat(64)}`
+  });
+  expect(JSON.stringify(deliveries)).not.toMatch(/PRIVATE|raw-session|raw-turn|transcript|customer/);
 });

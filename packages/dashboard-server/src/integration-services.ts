@@ -1,6 +1,7 @@
 import {
   applyIntegrationPlan,
   installCompanionSkill,
+  integrationCapabilities,
   integrationHarnessSchema,
   integrationStatus,
   planIntegration,
@@ -12,7 +13,7 @@ import {
   type IntegrationStatus
 } from "@skill-steward/integrations";
 
-const harnesses: IntegrationHarness[] = ["codex", "claude-code"];
+const harnesses: IntegrationHarness[] = ["codex", "claude-code", "github-copilot"];
 
 export type IntegrationServiceErrorCode =
   | "INVALID_INTEGRATION_HARNESS"
@@ -30,6 +31,7 @@ export class IntegrationServiceError extends Error {
 
 export interface IntegrationServices {
   list(): Promise<IntegrationStatus[]>;
+  capabilities(): typeof integrationCapabilities;
   plan(harness: string): Promise<IntegrationPlan>;
   apply(harness: string): Promise<IntegrationStatus>;
   remove(harness: string): Promise<IntegrationStatus>;
@@ -70,6 +72,7 @@ export function createIntegrationServices(
   };
 
   return {
+    capabilities: () => integrationCapabilities,
     async list() {
       return Promise.all(harnesses.map((harness) => integrationStatus(harness, configOptions)));
     },

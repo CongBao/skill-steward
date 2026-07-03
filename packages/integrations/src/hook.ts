@@ -3,11 +3,16 @@ import {
   type PreflightResult
 } from "@skill-steward/preflight";
 import {
-  integrationHarnessSchema,
+  promptInjectionHarnessSchema,
   promptHookInputSchema,
   type IntegrationHarness,
   type PromptHookOutput
 } from "./domain.js";
+import {
+  normalizePromptDelivery,
+  type LifecyclePrivacy
+} from "./lifecycle.js";
+import type { EvidenceEvent } from "@skill-steward/evidence";
 
 export interface RenderPromptHookInput {
   harness: IntegrationHarness;
@@ -51,7 +56,7 @@ function outputFor(context: string): PromptHookOutput {
 }
 
 export function renderPromptHook(input: RenderPromptHookInput): PromptHookOutput {
-  integrationHarnessSchema.parse(input.harness);
+  promptInjectionHarnessSchema.parse(input.harness);
   const result = preflightResultSchema.parse(input.result);
   const maxBytes = input.maxBytes ?? 2_048;
   if (!Number.isInteger(maxBytes) || maxBytes < 1) return {};
@@ -83,6 +88,10 @@ export interface RunPromptHookInput {
   harness: IntegrationHarness;
   stdin: string;
   maxBytes?: number;
+  privacy?: LifecyclePrivacy;
+  now?: () => Date;
+  id?: () => string;
+  onDelivery?(event: EvidenceEvent): Promise<void> | void;
   analyze(input: {
     task: string;
     cwd: string;
@@ -94,18 +103,34 @@ export async function runPromptHook(
   input: RunPromptHookInput
 ): Promise<PromptHookOutput> {
   try {
-    const harness = integrationHarnessSchema.parse(input.harness);
+    const harness = promptInjectionHarnessSchema.parse(input.harness);
     const payload = promptHookInputSchema.parse(JSON.parse(input.stdin));
     const result = await input.analyze({
       task: payload.prompt,
       cwd: payload.cwd,
       harness
     });
-    return renderPromptHook({
+    const output = renderPromptHook({
       harness,
       result,
       ...(input.maxBytes ? { maxBytes: input.maxBytes } : {})
     });
+    if (input.onDelivery) {
+      try {
+        await input.onDelivery(normalizePromptDelivery({
+          harness,
+          payload,
+          preflightId: result.id,
+          algorithmVersion: result.algorithmVersion,
+          ...(input.privacy ? { privacy: input.privacy } : {}),
+          ...(input.now ? { now: input.now } : {}),
+          ...(input.id ? { id: input.id } : {})
+        }));
+      } catch {
+        // Recommendation injection remains fail-open if evidence cannot be recorded.
+      }
+    }
+    return output;
   } catch {
     return {};
   }

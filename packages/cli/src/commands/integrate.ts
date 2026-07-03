@@ -16,7 +16,7 @@ import {
 } from "@skill-steward/integrations";
 import type { CliContext } from "../context.js";
 
-const allHarnesses = ["codex", "claude-code"] as const;
+const allHarnesses = ["codex", "claude-code", "github-copilot"] as const;
 
 function packagedSkillDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));

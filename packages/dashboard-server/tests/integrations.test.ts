@@ -39,8 +39,21 @@ describe("Harness integration routes", () => {
     expect(listed.statusCode).toBe(200);
     expect(listed.json().data).toEqual([
       expect.objectContaining({ harness: "codex", status: "not-installed" }),
-      expect.objectContaining({ harness: "claude-code", status: "not-installed" })
+      expect.objectContaining({ harness: "claude-code", status: "not-installed" }),
+      expect.objectContaining({ harness: "github-copilot", status: "not-installed" })
     ]);
+    const capabilities = await app.inject({
+      method: "GET",
+      url: "/api/v1/integrations/capabilities"
+    });
+    expect(capabilities.statusCode).toBe(200);
+    expect(capabilities.json().data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        harness: "github-copilot",
+        mode: "observe-only",
+        promptInjection: false
+      })
+    ]));
     expect((await app.inject({ method: "POST", url: "/api/v1/integrations/codex/plan" })).statusCode).toBe(401);
     expect((await app.inject({
       method: "POST",

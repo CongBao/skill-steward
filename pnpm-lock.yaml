@@ -90,6 +90,12 @@ importers:
       '@skill-steward/engine':
         specifier: workspace:*
         version: link:../engine
+      '@skill-steward/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@skill-steward/governance':
+        specifier: workspace:*
+        version: link:../governance
       '@skill-steward/insights':
         specifier: workspace:*
         version: link:../insights
@@ -120,6 +126,12 @@ importers:
       '@skill-steward/engine':
         specifier: workspace:*
         version: link:../engine
+      '@skill-steward/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@skill-steward/governance':
+        specifier: workspace:*
+        version: link:../governance
       '@skill-steward/insights':
         specifier: workspace:*
         version: link:../insights
@@ -148,6 +160,12 @@ importers:
         specifier: ^3.25.67
         version: 3.25.76
 
+  packages/evidence:
+    dependencies:
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
   packages/insights:
     dependencies:
       '@skill-steward/engine':
@@ -168,6 +186,9 @@ importers:
 
   packages/integrations:
     dependencies:
+      '@skill-steward/evidence':
+        specifier: workspace:*
+        version: link:../evidence
       '@skill-steward/installer':
         specifier: workspace:*
         version: link:../installer
@@ -177,6 +198,18 @@ importers:
       '@skill-steward/store':
         specifier: workspace:*
         version: link:../store
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
+  packages/governance:
+    dependencies:
+      '@skill-steward/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@skill-steward/installer':
+        specifier: workspace:*
+        version: link:../installer
       zod:
         specifier: ^3.25.67
         version: 3.25.76
@@ -207,6 +240,9 @@ importers:
       '@skill-steward/engine':
         specifier: workspace:*
         version: link:../engine
+      '@skill-steward/evidence':
+        specifier: workspace:*
+        version: link:../evidence
       '@skill-steward/preflight':
         specifier: workspace:*
         version: link:../preflight

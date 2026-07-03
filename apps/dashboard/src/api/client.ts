@@ -121,6 +121,14 @@ export interface InspectionResult {
   expiresAt: number;
   source: Record<string, unknown>;
   candidates: InstallCandidate[];
+  provenance?: InstallationProvenance;
+}
+
+export interface InstallationProvenance {
+  preflightId: string;
+  candidateId: string;
+  sourceId: string;
+  sourceRevision: string;
 }
 
 export interface InstallationPlanResult {
@@ -130,6 +138,7 @@ export interface InstallationPlanResult {
   destination: string;
   expectedDestinationFingerprint?: string | null;
   changes: Array<{ operation: "backup" | "create"; path: string }>;
+  provenance?: InstallationProvenance;
 }
 
 export interface InstallationTransaction {
@@ -137,6 +146,7 @@ export interface InstallationTransaction {
   status: "installed" | "rolled-back";
   destination?: string;
   backupDirectory?: string | null;
+  provenance?: InstallationProvenance;
 }
 
 export type PreflightReasonCode =
@@ -170,6 +180,12 @@ export interface PreflightCandidate {
   redundancyPenalty: number;
   installPenalty: number;
   contextTokens: number;
+  features: {
+    taskCoverage: number;
+    skillPrecision: number;
+    nameMatch: boolean;
+    projectScopeFit: boolean;
+  };
   decision: "use" | "install" | "excluded";
   source?: {
     sourceId: string;
@@ -182,7 +198,7 @@ export interface PreflightCandidate {
 }
 
 export interface PreflightResult {
-  schemaVersion: 2;
+  schemaVersion: 3;
   algorithmVersion: 2;
   id: string;
   generatedAt: string;
@@ -283,13 +299,17 @@ export function refreshCatalog(): Promise<CatalogSnapshot> {
   return apiRequest("/api/v1/catalog/refresh", { method: "POST" });
 }
 
-export function inspectCatalogCandidate(id: string): Promise<InspectionResult & { catalogCandidateId: string }> {
+export function inspectCatalogCandidate(
+  id: string,
+  preflightId?: string
+): Promise<InspectionResult & { catalogCandidateId: string }> {
   return apiRequest(`/api/v1/catalog/candidates/${encodeURIComponent(id)}/inspect-installation`, {
-    method: "POST"
+    method: "POST",
+    ...(preflightId ? { body: JSON.stringify({ preflightId }) } : {})
   });
 }
 
-export type IntegrationHarness = "codex" | "claude-code";
+export type IntegrationHarness = "codex" | "claude-code" | "github-copilot";
 export type IntegrationStatusValue = "not-installed" | "installed" | "needs-trust" | "drifted" | "invalid";
 
 export interface IntegrationStatus {
@@ -310,6 +330,23 @@ export interface IntegrationPlan {
 
 export function fetchIntegrations(): Promise<IntegrationStatus[]> {
   return apiRequest("/api/v1/integrations");
+}
+
+export interface IntegrationCapability {
+  harness: IntegrationHarness;
+  displayName: string;
+  mode: "recommend-and-observe" | "observe-only";
+  promptInjection: boolean;
+  observation: boolean;
+  turnLifecycle: boolean;
+  sessionLifecycle: boolean;
+  events: string[];
+  installScopes: Array<"global" | "project">;
+  validationStatus: "fixture-tested";
+}
+
+export function fetchIntegrationCapabilities(): Promise<IntegrationCapability[]> {
+  return apiRequest("/api/v1/integrations/capabilities");
 }
 
 export function planHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationPlan> {
@@ -373,5 +410,197 @@ export function labelFinding(
   return apiRequest(`/api/v1/findings/${encodeURIComponent(id)}/labels`, {
     method: "POST",
     body: JSON.stringify({ label })
+  });
+}
+
+export interface EvidenceMetric {
+  numerator: number;
+  denominator: number;
+  value: number | null;
+}
+
+export interface EvidenceMetrics {
+  feedbackRate: EvidenceMetric;
+  usefulRate: EvidenceMetric;
+  incompleteRate: EvidenceMetric;
+  incorrectRate: EvidenceMetric;
+  correctionPrecision: EvidenceMetric;
+  correctionRecall: EvidenceMetric;
+  correctionF1: EvidenceMetric;
+  installConversion: EvidenceMetric;
+}
+
+export interface EvidenceTotals {
+  preflights: number;
+  labeled: number;
+  portfolios: number;
+  events: number;
+}
+
+export interface EvidenceBreakdown {
+  key: string;
+  totals: EvidenceTotals;
+  metrics: EvidenceMetrics;
+}
+
+export interface EvidenceSummary {
+  schemaVersion: 1;
+  generatedAt: string;
+  period: { from: string | null; to: string | null };
+  totals: EvidenceTotals;
+  metrics: EvidenceMetrics;
+  lifecycleReasons: Partial<Record<"complete" | "error" | "abort" | "timeout" | "user-exit" | "other", number>>;
+  harnesses: EvidenceBreakdown[];
+  algorithms: EvidenceBreakdown[];
+  windows: { last7Days: EvidenceBreakdown; last30Days: EvidenceBreakdown };
+  readiness: {
+    status: "insufficient-evidence" | "ready-for-calibration";
+    reasons: string[];
+  };
+}
+
+export type EvidenceMode = "minimal" | "learning";
+
+export interface EvidencePolicy {
+  schemaVersion: 1;
+  mode: EvidenceMode;
+  retentionDays: number;
+  maxEvents: number;
+}
+
+export interface EvidencePolicyPlan {
+  schemaVersion: 1;
+  id: string;
+  before: EvidencePolicy;
+  beforeFingerprint: string;
+  after: EvidencePolicy;
+  afterFingerprint: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface EvidenceErasePlan {
+  schemaVersion: 1;
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  paths: Array<{
+    kind: "preflights" | "events" | "salt";
+    path: string;
+    exists: boolean;
+    fingerprint: string | null;
+  }>;
+}
+
+export function fetchEvidenceSummary(): Promise<EvidenceSummary> {
+  return apiRequest("/api/v1/evidence/summary");
+}
+
+export function fetchEvidencePolicy(): Promise<EvidencePolicy> {
+  return apiRequest("/api/v1/evidence/policy");
+}
+
+export function planEvidencePolicy(change: Omit<EvidencePolicy, "schemaVersion">): Promise<EvidencePolicyPlan> {
+  return apiRequest("/api/v1/evidence/policy/plan", {
+    method: "POST",
+    body: JSON.stringify(change)
+  });
+}
+
+export function applyEvidencePolicy(planId: string): Promise<EvidencePolicy> {
+  return apiRequest("/api/v1/evidence/policy/apply", {
+    method: "POST",
+    body: JSON.stringify({ planId })
+  });
+}
+
+export function compactEvidence(): Promise<{ before: number; kept: number; removed: number }> {
+  return apiRequest("/api/v1/evidence/compact", { method: "POST" });
+}
+
+export function planEvidenceErase(): Promise<EvidenceErasePlan> {
+  return apiRequest("/api/v1/evidence/erase/plan", { method: "POST" });
+}
+
+export function applyEvidenceErase(planId: string): Promise<{ erased: true }> {
+  return apiRequest("/api/v1/evidence/erase/apply", {
+    method: "POST",
+    body: JSON.stringify({ planId })
+  });
+}
+
+export interface GovernanceAlias {
+  harness: string;
+  scope: "global" | "project" | "unknown";
+  rootPath: string;
+}
+
+export type GovernanceOperation =
+  | { operation: "copy-to-staging"; from: string; to: string }
+  | { operation: "verify-staging"; path: string; fingerprint: string }
+  | { operation: "move-active-to-rollback"; from: string; to: string }
+  | { operation: "commit-vault"; from: string; to: string }
+  | { operation: "restore-active"; from: string; to: string }
+  | { operation: "append-journal"; transactionId: string }
+  | { operation: "cleanup-rollback"; path: string }
+  | { operation: "cleanup-vault"; path: string };
+
+export interface GovernancePlan {
+  schemaVersion: 1;
+  id: string;
+  kind: "quarantine" | "restore";
+  sourceTransactionId?: string;
+  skillId: string;
+  activePath: string;
+  vaultPath: string;
+  stagingPath: string;
+  rollbackPath?: string;
+  sourceFingerprint: string;
+  expectedDestinationFingerprint: string | null;
+  visibleAliases: GovernanceAlias[];
+  operations: GovernanceOperation[];
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface GovernanceTransaction {
+  schemaVersion: 1;
+  id: string;
+  sourceTransactionId?: string;
+  action: "quarantine" | "restore";
+  status: "quarantined" | "restored" | "failed";
+  skillId: string;
+  originalPath: string;
+  vaultPath: string;
+  fingerprint: string;
+  visibleAliases: GovernanceAlias[];
+  createdAt: string;
+  failureBoundary?: "copy" | "verify" | "move" | "vault" | "journal" | "restore";
+}
+
+export interface GovernanceApplyResult {
+  transaction: GovernanceTransaction;
+  rescanRequired: true;
+  cleanupPending: boolean;
+}
+
+export type GovernancePlanRequest =
+  | { action: "quarantine"; skillId: string }
+  | { action: "restore"; transactionId: string };
+
+export function fetchGovernanceTransactions(): Promise<GovernanceTransaction[]> {
+  return apiRequest("/api/v1/governance/transactions");
+}
+
+export function planGovernance(request: GovernancePlanRequest): Promise<GovernancePlan> {
+  return apiRequest("/api/v1/governance/plans", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function applyGovernancePlan(planId: string): Promise<GovernanceApplyResult> {
+  return apiRequest(`/api/v1/governance/plans/${encodeURIComponent(planId)}/apply`, {
+    method: "POST"
   });
 }

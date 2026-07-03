@@ -9,12 +9,16 @@ import { apiFailure, apiSuccess } from "./api.js";
 import type { CatalogServices } from "./catalog-services.js";
 import type { InstallationServices } from "./installation-services.js";
 import type { IntegrationServices } from "./integration-services.js";
+import type { EvidenceServices } from "./evidence-services.js";
+import type { GovernanceServices } from "./governance-services.js";
 import { registerDashboardRoute } from "./routes/dashboard.js";
 import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerDetailRoutes } from "./routes/details.js";
 import { registerHistoryRoute } from "./routes/history.js";
 import { registerInstallationRoutes } from "./routes/installations.js";
 import { registerIntegrationRoutes } from "./routes/integrations.js";
+import { registerEvidenceRoutes } from "./routes/evidence.js";
+import { registerGovernanceRoutes } from "./routes/governance.js";
 import { registerLabelRoute } from "./routes/labels.js";
 import { registerPreflightRoutes } from "./routes/preflights.js";
 import { registerRootRoute } from "./routes/roots.js";
@@ -30,6 +34,8 @@ export interface CreateDashboardAppOptions {
   preflightServices?: PreflightServices;
   catalogServices?: CatalogServices;
   integrationServices?: IntegrationServices;
+  evidenceServices?: EvidenceServices;
+  governanceServices?: GovernanceServices;
   assetsDirectory?: string;
 }
 
@@ -95,6 +101,12 @@ export function createDashboardApp(
   }
   if (options.integrationServices) {
     registerIntegrationRoutes(app, options.integrationServices);
+  }
+  if (options.evidenceServices) {
+    registerEvidenceRoutes(app, options.evidenceServices);
+  }
+  if (options.governanceServices) {
+    registerGovernanceRoutes(app, options.governanceServices);
   }
 
   app.setErrorHandler(async (error: FastifyError, _request, reply) => {

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
-import { InstallerError } from "./domain.js";
+import {
+  installationProvenanceSchema,
+  InstallerError,
+  type InstallationProvenance
+} from "./domain.js";
 import { fingerprintDirectory } from "./manifest.js";
 
 export type ConflictAction = "cancel" | "rename" | "replace";
@@ -24,6 +28,7 @@ export interface InstallationPlan {
   changes: InstallationChange[];
   createdAt: number;
   expiresAt: number;
+  provenance?: InstallationProvenance;
 }
 
 export interface PlanInstallationInput {
@@ -33,6 +38,7 @@ export interface PlanInstallationInput {
   conflictAction?: ConflictAction;
   now?: number;
   ttlMs?: number;
+  provenance?: InstallationProvenance;
 }
 
 async function existingFingerprint(path: string): Promise<string | null> {
@@ -68,7 +74,10 @@ export async function planInstallation(
     expectedDestinationFingerprint,
     allowedActions: ["cancel", "rename", "replace"] as ConflictAction[],
     createdAt,
-    expiresAt: createdAt + (input.ttlMs ?? 5 * 60_000)
+    expiresAt: createdAt + (input.ttlMs ?? 5 * 60_000),
+    ...(input.provenance ? {
+      provenance: installationProvenanceSchema.parse(input.provenance)
+    } : {})
   };
 
   if (expectedDestinationFingerprint === null) {

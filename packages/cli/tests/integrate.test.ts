@@ -68,7 +68,7 @@ describe("integrate command", () => {
   });
 
   it("retains the shared Skill while another Harness is active", async () => {
-    for (const harness of ["codex", "claude-code"]) {
+    for (const harness of ["codex", "claude-code", "github-copilot"]) {
       expect(await run([
         "integrate", "apply", "--harness", harness, "--confirm"
       ], current.context)).toBe(0);
@@ -81,7 +81,17 @@ describe("integrate command", () => {
     expect(await run([
       "integrate", "remove", "--harness", "claude-code", "--confirm"
     ], current.context)).toBe(0);
+    expect(await exists(skillDirectory)).toBe(true);
+    expect(await run([
+      "integrate", "remove", "--harness", "github-copilot", "--confirm"
+    ], current.context)).toBe(0);
     expect(await exists(skillDirectory)).toBe(false);
+  });
+
+  it("reports all three native integration capability adapters by default", async () => {
+    expect(await run(["integrate", "status", "--json"], current.context)).toBe(0);
+    expect(JSON.parse(current.stdout.join("")).map(({ harness }: { harness: string }) => harness))
+      .toEqual(["codex", "claude-code", "github-copilot"]);
   });
 
   it("refuses a different existing companion Skill before changing Harness config", async () => {

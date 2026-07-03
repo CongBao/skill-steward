@@ -1,8 +1,11 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogInspection } from "@skill-steward/catalog";
-import type { InstallationSource } from "@skill-steward/installer";
+import type {
+  InstallationProvenance,
+  InstallationSource
+} from "@skill-steward/installer";
 import {
   writeCatalogSnapshot,
   writeCatalogSources
@@ -199,7 +202,7 @@ describe("catalog routes", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       useCandidateIds: ["security-installed"],
       installCandidateIds: ["testing-available"]
     });
@@ -238,13 +241,31 @@ describe("catalog routes", () => {
         compatibility: "unknown"
       }]
     });
+    await writeFile(join(stateDirectory, "preflights.json"), `${JSON.stringify({
+      schemaVersion: 3,
+      records: [{
+        schemaVersion: 3,
+        id: "run-1",
+        createdAt: "2026-07-03T00:00:00.000Z",
+        portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+        taskHash: `sha256:${"b".repeat(64)}`,
+        taskCharacterCount: 20,
+        taskTermCount: 3,
+        algorithmVersion: 2,
+        candidateIds: ["testing-available"],
+        useCandidateIds: [],
+        installCandidateIds: ["testing-available"]
+      }]
+    })}\n`, "utf8");
     const inspectInstallation = vi.fn(async (
-      gitSource: Extract<InstallationSource, { kind: "git" }>
+      gitSource: Extract<InstallationSource, { kind: "git" }>,
+      provenance?: InstallationProvenance
     ) => ({
       previewId: "preview-1",
       expiresAt: 10_000,
       source: gitSource,
-      candidates: [{ id: "root", relativePath: ".", name: "testing-review", fingerprint }]
+      candidates: [{ id: "root", relativePath: ".", name: "testing-review", fingerprint }],
+      ...(provenance ? { provenance } : {})
     }));
     const catalogServices = createCatalogServices({
       stateDirectory,
@@ -256,15 +277,32 @@ describe("catalog routes", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/v1/catalog/candidates/testing-available/inspect-installation",
-      headers: { "x-skill-steward-token": "token" }
+      headers: { "x-skill-steward-token": "token" },
+      payload: { preflightId: "run-1" }
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
       catalogCandidateId: "testing-available",
       previewId: "preview-1",
+      provenance: {
+        preflightId: "run-1",
+        candidateId: "testing-available",
+        sourceId: "fixture-catalog",
+        sourceRevision: "a".repeat(40)
+      },
       candidates: [expect.objectContaining({ id: "root", fingerprint })]
     });
-    expect(inspectInstallation).toHaveBeenCalledOnce();
+    expect(inspectInstallation).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        preflightId: "run-1",
+        candidateId: "testing-available",
+        sourceId: "fixture-catalog",
+        sourceRevision: "a".repeat(40)
+      }
+    );
+    await expect(catalogServices.inspectCandidate("testing-available", "missing"))
+      .rejects.toMatchObject({ code: "CATALOG_PROVENANCE_INVALID" });
 
     const driftedServices = createCatalogServices({
       stateDirectory,

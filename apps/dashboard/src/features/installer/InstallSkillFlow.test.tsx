@@ -11,7 +11,7 @@ function response(data: unknown) {
 
 beforeEach(() => {
   localStorage.clear();
-  vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/inspect")) {
       return response({
@@ -35,17 +35,66 @@ beforeEach(() => {
       });
     }
     if (url.endsWith("/plan")) {
+      const request = JSON.parse(String(init?.body ?? "{}"));
       return response({
         id: "plan-1",
         status: "ready",
         action: "create",
         destination: "/home/.claude/skills/review",
-        changes: [{ operation: "create", path: "/home/.claude/skills/review" }]
+        changes: [{ operation: "create", path: "/home/.claude/skills/review" }],
+        ...(request.previewId === "preflight-preview" ? {
+          provenance: {
+            preflightId: "run-1",
+            candidateId: "testing-available",
+            sourceId: "fixture-catalog",
+            sourceRevision: "a".repeat(40)
+          }
+        } : {})
       });
     }
     if (url.endsWith("/commit")) return response({ id: "tx-1", status: "installed" });
     throw new Error(`Unexpected URL ${url}`);
   }));
+});
+
+it("shows reviewed Task Preflight provenance before installation", async () => {
+  const user = userEvent.setup();
+  const queryClient = new QueryClient();
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PreferencesProvider><InstallSkillFlow
+        initialInspection={{
+          previewId: "preflight-preview",
+          expiresAt: Date.now() + 60_000,
+          source: { kind: "git" },
+          provenance: {
+            preflightId: "run-1",
+            candidateId: "testing-available",
+            sourceId: "fixture-catalog",
+            sourceRevision: "a".repeat(40)
+          },
+          candidates: [{
+            id: "candidate-1",
+            relativePath: ".",
+            name: "recommended-review",
+            description: "Recommended review",
+            fingerprint: `sha256:${"b".repeat(64)}`,
+            files: [],
+            estimatedTokens: 100,
+            scripts: [],
+            executables: [],
+            findings: []
+          }]
+        }}
+        onClose={vi.fn()}
+      /></PreferencesProvider>
+    </QueryClientProvider>
+  );
+
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(screen.getByRole("button", { name: "Review plan" }));
+  expect(await screen.findByText("Recommended by Task Preflight")).toBeVisible();
+  expect(screen.getByText("run-1")).toBeVisible();
 });
 
 it("reviews and explicitly confirms a public Git installation", async () => {

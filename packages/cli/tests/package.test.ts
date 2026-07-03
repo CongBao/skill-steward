@@ -17,7 +17,13 @@ it("packages the built dashboard alongside the CLI binary", async () => {
     )
   ).join("\n");
   expect(javascript).toContain("/api/v1/preflights");
+  expect(javascript).toContain("/api/v1/evidence/summary");
+  expect(javascript).toContain("/api/v1/governance/plans");
+  expect(javascript).toContain("/api/v1/integrations/capabilities");
   expect(javascript).toContain("Task preflight");
+  expect(javascript).toContain("Evidence and outcomes");
+  expect(javascript).toContain("No permanent delete");
+  expect(javascript).toContain("GitHub Copilot CLI");
 
   const companion = join(
     process.cwd(),
