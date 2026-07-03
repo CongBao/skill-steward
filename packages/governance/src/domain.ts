@@ -28,6 +28,7 @@ export const governancePlanSchema = z.object({
   kind: z.enum(["quarantine", "restore"]),
   sourceTransactionId: governancePlanIdSchema.optional(),
   skillId: z.string().min(1).max(256),
+  skillName: z.string().min(1).optional(),
   activePath: pathSchema,
   vaultPath: pathSchema,
   stagingPath: pathSchema,
@@ -43,6 +44,7 @@ export const governancePlanSchema = z.object({
 export const quarantinedSkillSchema = z.object({
   transactionId: governancePlanIdSchema,
   skillId: z.string().min(1).max(256),
+  skillName: z.string().min(1).optional(),
   originalPath: pathSchema,
   vaultPath: pathSchema,
   fingerprint: fingerprintSchema,

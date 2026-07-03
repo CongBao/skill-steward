@@ -28,11 +28,16 @@ function MetricCard({
   status?: SemanticStatus;
   icon: React.ReactNode;
 }) {
+  const { t } = useI18n();
+  const detail = t("evidence.metricDetail")
+    .replace("{numerator}", String(metric.numerator))
+    .replace("{denominator}", String(metric.denominator))
+    .replace("{label}", denominatorLabel);
   return (
     <KpiCard
       label={label}
       value={percentage(metric)}
-      detail={`${metric.numerator} of ${metric.denominator} ${denominatorLabel}`}
+      detail={detail}
       status={status}
       icon={icon}
     />
@@ -77,6 +82,15 @@ const reasonKeys: Record<string, TranslationKey> = {
   "Need 20 portfolio fingerprints": "evidence.reason.portfolios"
 };
 
+const lifecycleReasonKeys: Record<string, TranslationKey> = {
+  complete: "evidence.lifecycle.complete",
+  abort: "evidence.lifecycle.abort",
+  error: "evidence.lifecycle.error",
+  timeout: "evidence.lifecycle.timeout",
+  other: "evidence.lifecycle.other",
+  "user-exit": "evidence.lifecycle.userExit"
+};
+
 export function EvidencePage() {
   const { t } = useI18n();
   const query = useQuery({ queryKey: ["evidence", "summary"], queryFn: fetchEvidenceSummary });
@@ -118,7 +132,7 @@ export function EvidencePage() {
         </section>
         <section className="evidence-panel lifecycle-panel">
           <header><div><h2>{t("evidence.lifecycle")}</h2><p>{t("evidence.lifecycleCopy")}</p></div><span>{summary.totals.events}</span></header>
-          {lifecycle.length > 0 ? <div className="lifecycle-list">{lifecycle.map(([reason, count]) => <div key={reason}><span>{reason}</span><strong>{count}</strong></div>)}</div> : <p className="muted-copy">{t("evidence.noLifecycle")}</p>}
+          {lifecycle.length > 0 ? <div className="lifecycle-list">{lifecycle.map(([reason, count]) => <div key={reason}><span>{lifecycleReasonKeys[reason] ? t(lifecycleReasonKeys[reason]) : reason}</span><strong>{count}</strong></div>)}</div> : <p className="muted-copy">{t("evidence.noLifecycle")}</p>}
         </section>
       </section>
 

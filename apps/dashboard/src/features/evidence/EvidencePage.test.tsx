@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { DEFAULT_PREFERENCES, PREFERENCES_KEY, PreferencesProvider } from "../../theme/preferences.js";
 import { EvidencePage } from "./EvidencePage.js";
 
 const emptyMetric = { numerator: 0, denominator: 0, value: null };
@@ -34,14 +35,17 @@ const summary = {
 
 function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return <QueryClientProvider client={client}><PreferencesProvider>{children}</PreferencesProvider></QueryClientProvider>;
 }
 
 function respond(data: unknown) {
   return { ok: true, json: async () => ({ data, error: null, meta: { apiVersion: 1 } }) };
 }
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
 
 it("shows a useful empty state before any preflight evidence exists", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => respond({
@@ -59,7 +63,7 @@ it("shows a useful empty state before any preflight evidence exists", async () =
 
   render(<EvidencePage />, { wrapper });
   expect(await screen.findByRole("heading", { name: "No evidence yet" })).toBeVisible();
-  expect(screen.getByText(/Run task preflight from a connected harness/)).toBeVisible();
+  expect(screen.getByText(/Run task preflight here in the dashboard or from a connected Harness/)).toBeVisible();
 });
 
 it("shows explicit-label KPIs, proxy signals, and transparent denominators", async () => {
@@ -73,7 +77,7 @@ it("shows explicit-label KPIs, proxy signals, and transparent denominators", asy
   expect(screen.getByRole("article", { name: /Install conversion: 30%\. 3 of 10 recommendations/ })).toBeVisible();
   expect(screen.getByRole("img", { name: "7 and 30 day useful-label comparison" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Lifecycle signals" })).toBeVisible();
-  expect(screen.getByText("complete")).toBeVisible();
+  expect(screen.getByText("Complete")).toBeVisible();
   expect(screen.getByRole("heading", { name: "Harness breakdown" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Algorithm breakdown" })).toBeVisible();
   expect(screen.getByText(/Lifecycle events are weak operational proxies/)).toBeVisible();
@@ -88,6 +92,22 @@ it("marks a sufficiently diverse labeled dataset ready for calibration", async (
   render(<EvidencePage />, { wrapper });
   expect(await screen.findByText("Ready for calibration review")).toBeVisible();
   expect(screen.getByText(/No thresholds are changed automatically/)).toBeVisible();
+});
+
+it("localizes every supported lifecycle reason", async () => {
+  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({
+    ...DEFAULT_PREFERENCES,
+    locale: "zh-CN"
+  }));
+  vi.stubGlobal("fetch", vi.fn(async () => respond({
+    ...summary,
+    lifecycleReasons: { complete: 18, error: 2, abort: 1, timeout: 3, other: 4 }
+  })));
+
+  render(<EvidencePage />, { wrapper });
+
+  expect(await screen.findByText("超时")).toBeVisible();
+  expect(screen.getByText("其他")).toBeVisible();
 });
 
 it("does not render content-shaped fields even if a contaminated transport fixture adds them", async () => {

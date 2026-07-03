@@ -117,7 +117,7 @@ for (let index = 0; index < 120; index += 1) {
     taskHash: fingerprint(`anonymous-task-${index}`),
     taskCharacterCount: 48 + (index % 32),
     taskTermCount: 7 + (index % 8),
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     harness,
     candidateIds: candidates,
     useCandidateIds: ["security-review"],
@@ -185,7 +185,7 @@ for (let index = 0; index < 120; index += 1) {
     kind: "preflight-delivered",
     harness,
     preflightId: id,
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     sessionKey: pseudonym(`session-${index % 36}`),
     turnKey: pseudonym(`turn-${index}`)
   });

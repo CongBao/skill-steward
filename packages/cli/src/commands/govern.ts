@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import {
   scanPortfolio,
   standardRoots
@@ -18,6 +19,7 @@ import {
   writeLatestReport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
+import { terminalSafeText } from "../terminal.js";
 
 class GovernCommandError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -28,20 +30,20 @@ class GovernCommandError extends Error {
 
 function errorText(error: unknown): string {
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    return `${error.code}: ${error.message}`;
+    return terminalSafeText(`${error.code}: ${error.message}`);
   }
-  return error instanceof Error ? error.message : String(error);
+  return terminalSafeText(error instanceof Error ? error.message : String(error));
 }
 
 function printPlan(plan: GovernancePlan, json: boolean, context: CliContext): void {
   context.stdout(json
     ? `${JSON.stringify(plan, null, 2)}\n`
     : [
-        `Governance plan: ${plan.kind} ${plan.skillId}`,
-        `Active: ${plan.activePath}`,
-        `Vault: ${plan.vaultPath}`,
-        `Fingerprint: ${plan.sourceFingerprint}`,
-        ...plan.operations.map(({ operation }) => `- ${operation}`),
+        `Governance plan: ${plan.kind} ${terminalSafeText(plan.skillName ?? basename(plan.activePath))}`,
+        `Active: ${terminalSafeText(plan.activePath)}`,
+        `Vault: ${terminalSafeText(plan.vaultPath)}`,
+        `Fingerprint: ${terminalSafeText(plan.sourceFingerprint)}`,
+        ...plan.operations.map(({ operation }) => `- ${terminalSafeText(operation)}`),
         "Rerun with --confirm to apply.",
         ""
       ].join("\n")
@@ -105,7 +107,7 @@ export async function governQuarantineCommand(
     await recordAction("quarantine", result.transaction.id, skill.id, context);
     context.stdout(json
       ? `${JSON.stringify(result, null, 2)}\n`
-      : `Quarantined '${skill.name}' (${result.transaction.id}).\n`
+      : `Quarantined '${terminalSafeText(skill.name)}' (${terminalSafeText(result.transaction.id)}).\n`
     );
     return 0;
   } catch (error) {
@@ -147,7 +149,7 @@ export async function governRestoreCommand(
     await recordAction("restore", result.transaction.id, result.transaction.skillId, context);
     context.stdout(json
       ? `${JSON.stringify(result, null, 2)}\n`
-      : `Restored Skill '${result.transaction.skillId}' (${result.transaction.id}).\n`
+      : `Restored Skill '${terminalSafeText(result.transaction.skillName ?? basename(result.transaction.originalPath))}' (${terminalSafeText(result.transaction.id)}).\n`
     );
     return 0;
   } catch (error) {
@@ -164,8 +166,8 @@ export async function governHistoryCommand(
     const transactions = await readGovernanceTransactions(context.stateDir);
     context.stdout(json
       ? `${JSON.stringify(transactions, null, 2)}\n`
-      : `${transactions.map(({ id, action, status, skillId }) =>
-          `${id}: ${action} ${skillId} (${status})`
+      : `${transactions.map(({ id, action, status, originalPath, skillName }) =>
+          `${terminalSafeText(id)}: ${action} ${terminalSafeText(skillName ?? basename(originalPath))} (${status})`
         ).join("\n")}${transactions.length ? "\n" : "No governance transactions.\n"}`
     );
     return 0;

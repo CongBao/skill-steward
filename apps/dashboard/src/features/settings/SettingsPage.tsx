@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Check } from "lucide-react";
-import { fetchRoots } from "../../api/client.js";
+import { fetchDashboard, fetchRoots } from "../../api/client.js";
 import { KpiCard } from "../../components/KpiCard.js";
+import { formatKpiValue } from "../../components/kpiFormatting.js";
 import { PageHeader } from "../../components/PageHeader.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 import {
@@ -19,6 +20,7 @@ export function SettingsPage() {
   const { locale, t } = useI18n();
   const { preferences, update } = usePreferences();
   const roots = useQuery({ queryKey: ["roots"], queryFn: fetchRoots });
+  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const toggle = (id: string) => {
     const enabled = preferences.enabledKpis.includes(id);
     update({
@@ -42,6 +44,7 @@ export function SettingsPage() {
   });
   const label = (id: string) => t(`kpi.${id}` as TranslationKey);
   const selected = preferences.kpiOrder.filter((id) => preferences.enabledKpis.includes(id));
+  const kpisById = new Map((dashboard.data?.kpis ?? []).map((kpi) => [kpi.id, kpi]));
 
   return (
     <><PageHeader title={t("page.settings.title")} description={t("page.settings.description")} actions={<button className="button" onClick={restore}>{t("settings.restore")}</button>} />
@@ -51,7 +54,25 @@ export function SettingsPage() {
         <DataPolicyPanel />
         <CatalogSourcesPanel />
         <section className="settings-card"><header><div><h2>{t("settings.kpis")}</h2><span className="recommended-badge">{t("settings.recommended")}</span></div></header><label className="count-control">{t("settings.visibleCount")}<input aria-label={t("settings.visibleCount")} type="number" min="3" max="16" value={preferences.kpiCount} onChange={(event) => update({ kpiCount: Math.max(3, Math.min(16, Number(event.target.value) || 3)) })} /></label><h3>{t("settings.selected")}</h3><div className="selected-kpis">{selected.map((id, index) => <div key={id}><span>{label(id)}</span><button aria-label={`${t("settings.moveUp")} ${label(id)}`} disabled={!index} onClick={() => move(id, -1)}><ArrowUp size={14} /></button><button aria-label={`${t("settings.moveDown")} ${label(id)}`} disabled={index === selected.length - 1} onClick={() => move(id, 1)}><ArrowDown size={14} /></button></div>)}</div><h3>{t("settings.catalog")}</h3><div className="kpi-catalog">{KPI_IDS.map((id) => <label key={id} data-enabled={preferences.enabledKpis.includes(id)}><input type="checkbox" checked={preferences.enabledKpis.includes(id)} onChange={() => toggle(id)} aria-label={label(id)} /><span className="catalog-check">{preferences.enabledKpis.includes(id) ? <Check size={12} /> : null}</span>{label(id)}</label>)}</div></section>
-      </div><aside className="settings-preview"><section className="settings-card sticky"><header><h2>{t("settings.preview")}</h2><span>{preferences.kpiCount}</span></header><div className="preview-grid">{selected.slice(0, preferences.kpiCount).map((id, index) => <KpiCard key={id} label={label(id)} value={index === 0 ? "92" : "—"} status={index === 0 ? "positive" : "neutral"} />)}</div></section><section className="settings-card roots-card"><header><h2>{t("settings.roots")}</h2><span>{roots.data?.length ?? 0}</span></header><p>{t("settings.localOnly")}</p><div className="root-summary">{(roots.data ?? []).slice(0, 6).map((root) => <div key={`${root.scope}:${root.path}`}><span data-available={root.available} /> <code>{root.path}</code></div>)}</div></section></aside></div>
+      </div><aside className="settings-preview"><section className="settings-card sticky"><header><h2>{t("settings.preview")}</h2><span>{preferences.kpiCount}</span></header><div className="preview-grid">{selected.slice(0, preferences.kpiCount).map((id) => {
+        const storedKpi = kpisById.get(id);
+        const validHealthTimestamps = new Set(
+          (dashboard.data?.history ?? [])
+            .filter(({ skillCount }) => skillCount > 0)
+            .map(({ generatedAt }) => generatedAt)
+        );
+        const kpi = id === "health-score" && dashboard.data?.latest?.skillCount === 0
+          ? undefined
+          : id === "health-trend" && storedKpi && Array.isArray(storedKpi.value)
+            ? (() => {
+                const value = storedKpi.value.filter(({ generatedAt }) =>
+                  validHealthTimestamps.has(generatedAt)
+                );
+                return value.length > 0 ? { ...storedKpi, value } : undefined;
+              })()
+            : storedKpi;
+        return <KpiCard key={id} label={label(id)} value={formatKpiValue(kpi, locale)} status={kpi?.status ?? "neutral"} />;
+      })}</div></section><section className="settings-card roots-card"><header><h2>{t("settings.roots")}</h2><span>{roots.data?.length ?? 0}</span></header><p>{t("settings.localOnly")}</p><div className="root-summary">{(roots.data ?? []).slice(0, 6).map((root) => <div key={`${root.scope}:${root.path}`}><span data-available={root.available} /> <code>{root.path}</code></div>)}</div></section></aside></div>
     </>
   );
 }

@@ -61,10 +61,10 @@ it("reviews every quarantine operation before applying a recoverable action", as
   expect(await screen.findByText("Exact operation plan")).toBeVisible();
   expect(screen.getAllByText(skill.path).length).toBeGreaterThan(1);
   expect(screen.getAllByText("/state/quarantine/govern-plan-1/review").length).toBeGreaterThan(1);
-  expect(screen.getByText("copy to staging")).toBeVisible();
-  expect(screen.getByText("verify staging")).toBeVisible();
-  expect(screen.getByText("commit vault")).toBeVisible();
-  expect(screen.getByText("codex · global")).toBeVisible();
+  expect(screen.getByText("Copy to staging")).toBeVisible();
+  expect(screen.getByText("Verify staging")).toBeVisible();
+  expect(screen.getByText("Commit private vault copy")).toBeVisible();
+  expect(screen.getByText("codex · Global")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Apply reviewed quarantine" }));
   await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
   expect(fetchMock).toHaveBeenCalledWith(
@@ -94,6 +94,7 @@ it("reviews the exact restore destination and source quarantine", async () => {
     action: "quarantine" as const,
     status: "quarantined" as const,
     skillId: skill.id,
+    skillName: "review-display-name",
     originalPath: skill.path,
     vaultPath: "/state/quarantine/quarantine-1/review",
     fingerprint: skill.fingerprint,
@@ -122,8 +123,9 @@ it("reviews the exact restore destination and source quarantine", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const user = userEvent.setup();
   render(<QueryClientProvider client={client}><GovernanceDialog action={{ kind: "restore", transaction }} onComplete={vi.fn()} /></QueryClientProvider>);
+  expect(screen.getByText("Restore: review-display-name")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Review restore plan" }));
-  expect(await screen.findByText("restore active")).toBeVisible();
+  expect(await screen.findByText("Restore active copy")).toBeVisible();
   expect(screen.getAllByText(skill.path).length).toBeGreaterThan(1);
   expect(screen.getByRole("button", { name: "Apply reviewed restore" })).toBeVisible();
 });

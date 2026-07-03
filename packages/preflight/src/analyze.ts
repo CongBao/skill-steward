@@ -22,6 +22,7 @@ interface ScoredCandidate {
   candidate: NormalizedPreflightCandidate;
   routeTerms: Set<string>;
   matchedTaskTerms: Set<string>;
+  negativeTaskTerms: Set<string>;
   relevance: number;
   adjustedRelevance: number;
   taskCoverage: number;
@@ -86,38 +87,133 @@ function highestSeverity(findings: Finding[]): Severity | null {
 }
 
 function matchesName(
-  normalizedTask: string,
   taskTerms: Set<string>,
   candidate: NormalizedPreflightCandidate
 ): boolean {
-  const normalizedName = normalizeTask(candidate.name)
-    .toLowerCase()
-    .replace(/[-_]+/g, " ");
-  if (
-    normalizedTask.includes(normalizedName) ||
-    normalizedTask.includes(normalizedName.replaceAll(" ", "-"))
-  ) {
-    return true;
-  }
   const nameTerms = tokenize(candidate.name.replace(/[-_]+/g, " ")).terms;
   return nameTerms.length > 0 && nameTerms.every((term) => taskTerms.has(term));
+}
+
+const GENERIC_NEGATIVE_ROUTE_TERMS = new Set([
+  "change",
+  "code",
+  "document",
+  "file",
+  "general",
+  "generation",
+  "task",
+  "work"
+]);
+
+const CJK_DISPLAY_STOP_WORDS = new Set([
+  "的",
+  "了",
+  "和",
+  "与",
+  "及",
+  "并",
+  "将",
+  "把",
+  "为",
+  "在",
+  "对",
+  "中",
+  "用",
+  "让",
+  "请"
+]);
+
+function chineseDisplayTerms(value: string): string[] {
+  const terms: string[] = [];
+  let pendingSingles = "";
+  const flushSingles = () => {
+    if ([...pendingSingles].length >= 2) terms.push(pendingSingles);
+    pendingSingles = "";
+  };
+
+  for (const part of new Intl.Segmenter("zh-CN", { granularity: "word" }).segment(value)) {
+    if (!part.isWordLike) continue;
+    const length = [...part.segment].length;
+    if (length === 1) {
+      if (CJK_DISPLAY_STOP_WORDS.has(part.segment)) {
+        flushSingles();
+      } else {
+        pendingSingles += part.segment;
+      }
+      continue;
+    }
+    flushSingles();
+    terms.push(part.segment);
+  }
+  flushSingles();
+  return terms;
+}
+
+function displayCapabilityGaps(task: string, coveredTerms: Set<string>): string[] {
+  const gaps: string[] = [];
+  const seen = new Set<string>();
+  const add = (term: string) => {
+    if (seen.has(term)) return;
+    seen.add(term);
+    gaps.push(term);
+  };
+
+  for (const match of task.toLowerCase().matchAll(
+    /[a-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]+/gu
+  )) {
+    const segment = match[0];
+    const displayTerms = /^[a-z0-9]+$/u.test(segment)
+      ? [segment]
+      : chineseDisplayTerms(segment);
+    for (const displayTerm of displayTerms) {
+      const normalized = tokenize(displayTerm).terms;
+      if (normalized.length > 0 && normalized.some((term) => !coveredTerms.has(term))) {
+        add(displayTerm);
+      }
+    }
+  }
+  return gaps.slice(0, PREFLIGHT_CONFIG.maxCapabilityGaps);
+}
+
+function negativeTaskMatch(
+  taskTerms: Set<string>,
+  description: string
+): Set<string> {
+  const matched = new Set<string>();
+  const positiveDescriptionTerms = new Set(tokenize(description.replace(
+    /(?:do\s+not|don't)\s+use(?:\s+this\s+skill)?\s+(?:for|when)\s+[^.!?\n]+/giu,
+    " "
+  )).terms);
+  for (const clause of description.matchAll(
+    /(?:do\s+not|don't)\s+use(?:\s+this\s+skill)?\s+(?:for|when)\s+([^.!?\n]+)/giu
+  )) {
+    const clauseMatches = tokenize(clause[1] ?? "").terms
+      .filter((term) => taskTerms.has(term) && !positiveDescriptionTerms.has(term));
+    const hasSpecificMatch = clauseMatches.some(
+      (term) => !GENERIC_NEGATIVE_ROUTE_TERMS.has(term)
+    );
+    if (hasSpecificMatch || clauseMatches.length >= 2) {
+      clauseMatches.forEach((term) => matched.add(term));
+    }
+  }
+  return matched;
 }
 
 function scoreCandidates(
   task: string,
   normalizedCandidates: NormalizedPreflightCandidate[]
-): { candidates: ScoredCandidate[]; taskTerms: Set<string>; taskTermOrder: string[] } {
+): { candidates: ScoredCandidate[]; taskTerms: Set<string> } {
   const tokenizedTask = tokenize(task);
   const taskTerms = new Set(tokenizedTask.terms);
-  const normalizedTask = normalizeTask(task).toLowerCase();
   const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
     const routeTerms = new Set(
       tokenize(`${candidate.name.replace(/[-_]+/g, " ")} ${candidate.description}`).terms
     );
     const matchedTaskTerms = intersection(taskTerms, routeTerms);
+    const negativeTaskTerms = negativeTaskMatch(taskTerms, candidate.description);
     const taskCoverage = ratio(matchedTaskTerms.size, taskTerms.size);
     const skillPrecision = ratio(matchedTaskTerms.size, routeTerms.size);
-    const nameMatch = matchesName(normalizedTask, taskTerms, candidate);
+    const nameMatch = matchesName(taskTerms, candidate);
     const projectScopeFit = candidate.scope === "project";
     const relevance = clamp(
       taskCoverage * PREFLIGHT_CONFIG.taskCoverageWeight +
@@ -175,11 +271,18 @@ function scoreCandidates(
         detail: "The candidate does not declare compatibility with the target Harness."
       });
     }
+    if (negativeTaskTerms.size > 0) {
+      initialReasons.push({
+        code: "NEGATIVE_TRIGGER",
+        detail: `The Skill routing description explicitly excludes: ${[...negativeTaskTerms].slice(0, 6).join(", ")}.`
+      });
+    }
 
     return {
       candidate,
       routeTerms,
       matchedTaskTerms,
+      negativeTaskTerms,
       relevance,
       adjustedRelevance,
       taskCoverage,
@@ -188,14 +291,17 @@ function scoreCandidates(
       installPenalty,
       nameMatch,
       projectScopeFit,
-      plausible: candidate.harnessCompatible && !critical &&
-        (nameMatch || adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold),
+      plausible: candidate.harnessCompatible && !critical && negativeTaskTerms.size === 0 &&
+        (nameMatch || (
+          matchedTaskTerms.size >= PREFLIGHT_CONFIG.minimumMatchedTerms &&
+          adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold
+        )),
       critical,
       initialReasons
     };
   });
 
-  return { candidates, taskTerms, taskTermOrder: tokenizedTask.terms };
+  return { candidates, taskTerms };
 }
 
 function compareCandidates(left: ScoredCandidate, right: ScoredCandidate): number {
@@ -411,7 +517,7 @@ export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult 
     includeAvailable: request.includeAvailable,
     maxSkills: request.maxSkills
   });
-  const { candidates, taskTerms, taskTermOrder } = scoreCandidates(
+  const { candidates, taskTerms } = scoreCandidates(
     normalizedTask,
     normalizedCandidates
   );
@@ -450,9 +556,7 @@ export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult 
     installCandidateIds,
     candidates: presented,
     conflicts,
-    capabilityGaps: taskTermOrder
-      .filter((term) => !projectedTerms.has(term))
-      .slice(0, PREFLIGHT_CONFIG.maxCapabilityGaps),
+    capabilityGaps: displayCapabilityGaps(normalizedTask, projectedTerms),
     installedCoverage: stableNumber(ratio(installedTerms.size, taskTerms.size)),
     projectedCoverage: stableNumber(ratio(projectedTerms.size, taskTerms.size)),
     selectedContextTokens,

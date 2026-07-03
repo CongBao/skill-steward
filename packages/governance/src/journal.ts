@@ -17,6 +17,7 @@ export const governanceTransactionSchema = z.object({
   action: z.enum(["quarantine", "restore"]),
   status: z.enum(["quarantined", "restored", "failed"]),
   skillId: z.string().min(1).max(256),
+  skillName: z.string().min(1).optional(),
   originalPath: z.string().min(1),
   vaultPath: z.string().min(1),
   fingerprint: fingerprintSchema,
@@ -78,6 +79,7 @@ export function quarantinedSkillFromTransaction(
   return {
     transactionId: parsed.id,
     skillId: parsed.skillId,
+    ...(parsed.skillName ? { skillName: parsed.skillName } : {}),
     originalPath: parsed.originalPath,
     vaultPath: parsed.vaultPath,
     fingerprint: parsed.fingerprint,

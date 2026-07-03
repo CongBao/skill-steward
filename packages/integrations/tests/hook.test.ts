@@ -7,7 +7,7 @@ const rawTask = "PRIVATE rotate customer encryption keys";
 function result(): PreflightResult {
   return {
     schemaVersion: 3,
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -192,7 +192,7 @@ it("records a content-free delivery without changing prompt output when evidence
     kind: "preflight-delivered",
     harness: "codex",
     preflightId: "run-1",
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     sessionKey: `hmac-sha256:${"a".repeat(64)}`,
     turnKey: `hmac-sha256:${"b".repeat(64)}`
   });

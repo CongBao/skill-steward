@@ -7,7 +7,7 @@ import {
 import { z } from "zod";
 
 export const PREFLIGHT_SCHEMA_VERSION = 3 as const;
-export const PREFLIGHT_ALGORITHM_VERSION = 2 as const;
+export const PREFLIGHT_ALGORITHM_VERSION = 3 as const;
 
 export const preflightReasonCodeSchema = z.enum([
   "TASK_TERM_MATCH",
@@ -19,7 +19,8 @@ export const preflightReasonCodeSchema = z.enum([
   "PORTFOLIO_RISK",
   "INSTALL_REQUIRED",
   "CRITICAL_RISK",
-  "HARNESS_INCOMPATIBLE"
+  "HARNESS_INCOMPATIBLE",
+  "NEGATIVE_TRIGGER"
 ]);
 
 export const preflightReasonSchema = z.object({

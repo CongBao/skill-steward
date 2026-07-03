@@ -5,6 +5,7 @@ import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
   analyzePreflight,
   preflightRequestSchema,
+  type PreflightReasonCode,
   type PreflightResult
 } from "@skill-steward/preflight";
 import {
@@ -14,6 +15,7 @@ import {
   writeLatestReport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
+import { terminalSafeText } from "../terminal.js";
 
 export interface PreflightCommandOptions {
   task?: string;
@@ -53,23 +55,59 @@ function percentage(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+const reasonLabels: Record<PreflightReasonCode, string> = {
+  TASK_TERM_MATCH: "Task match",
+  NAME_MATCH: "Name match",
+  PROJECT_SCOPE_FIT: "Project fit",
+  UNIQUE_COVERAGE: "Unique value",
+  REDUNDANT_WITH_SELECTED: "Redundant",
+  LOW_RELEVANCE: "Low relevance",
+  PORTFOLIO_RISK: "Portfolio risk",
+  INSTALL_REQUIRED: "Install required",
+  CRITICAL_RISK: "Critical risk",
+  HARNESS_INCOMPATIBLE: "Harness mismatch",
+  NEGATIVE_TRIGGER: "Explicit exclusion"
+};
+
+function renderReason(code: PreflightReasonCode, detail: string): string {
+  return `  ${reasonLabels[code]}: ${terminalSafeText(detail)}`;
+}
+
+const exclusionReasonPriority: readonly PreflightReasonCode[] = [
+  "NEGATIVE_TRIGGER",
+  "CRITICAL_RISK",
+  "HARNESS_INCOMPATIBLE",
+  "REDUNDANT_WITH_SELECTED",
+  "LOW_RELEVANCE"
+];
+
+function exclusionReason(
+  candidate: PreflightResult["candidates"][number]
+): string {
+  for (const code of exclusionReasonPriority) {
+    const reason = candidate.reasons.find((item) => item.code === code);
+    if (reason) return reason.detail;
+  }
+  return candidate.reasons.at(-1)?.detail ?? "lower marginal value";
+}
+
 export function renderPreflightHuman(result: PreflightResult): string {
   const selected = result.candidates.filter(({ decision }) => decision === "use");
   const install = result.candidates.filter(({ decision }) => decision === "install");
   const excluded = result.candidates.filter(
     ({ decision }) => decision === "excluded"
   );
-  const lines = ["Task Preflight", "", "Use now:"];
+  const lines = ["Task Preflight", `Run ID: ${result.id}`, "", "Use now:"];
   if (selected.length === 0) {
     lines.push("- none matched the deterministic relevance threshold");
   } else {
     for (const candidate of selected) {
       lines.push(
-        `- ${candidate.name} — relevance ${percentage(candidate.relevance)}, ` +
+        `- ${terminalSafeText(candidate.name)} — relevance ${percentage(candidate.relevance)}, ` +
           `${candidate.contextTokens} estimated tokens`
       );
       for (const reason of candidate.reasons) {
-        lines.push(`  ${reason.code}: ${reason.detail}`);
+        lines.push(renderReason(reason.code, reason.detail));
       }
     }
   }
@@ -80,25 +118,27 @@ export function renderPreflightHuman(result: PreflightResult): string {
   } else {
     for (const candidate of install) {
       lines.push(
-        `- ${candidate.name} — relevance ${percentage(candidate.relevance)}, ` +
+        `- ${terminalSafeText(candidate.name)} — relevance ${percentage(candidate.relevance)}, ` +
         `${candidate.contextTokens} estimated tokens`
       );
       if (candidate.source) {
         lines.push(
-          `  source ${candidate.source.sourceId} [${candidate.source.trust}], ` +
-          `revision ${candidate.source.revision.slice(0, 12)}, ${candidate.compatibility}`
+          `  source ${terminalSafeText(candidate.source.sourceId)} [${candidate.source.trust}], ` +
+          `revision ${terminalSafeText(candidate.source.revision.slice(0, 12))}, ${candidate.compatibility}`
         );
       }
       if (candidate.highestSeverity) {
         lines.push(`  highest finding ${candidate.highestSeverity}`);
       }
-      for (const reason of candidate.reasons) lines.push(`  ${reason.code}: ${reason.detail}`);
+      for (const reason of candidate.reasons) {
+        lines.push(renderReason(reason.code, reason.detail));
+      }
     }
   }
 
   lines.push("", "Capability gaps:");
   lines.push(result.capabilityGaps.length
-    ? `- ${result.capabilityGaps.join(", ")}`
+    ? `- ${result.capabilityGaps.map(terminalSafeText).join(", ")}`
     : "- none");
 
   lines.push("", "Conflicts:");
@@ -106,7 +146,7 @@ export function renderPreflightHuman(result: PreflightResult): string {
     lines.push("- none");
   } else {
     for (const conflict of result.conflicts) {
-      lines.push(`- ${conflict.code}: ${conflict.summary}`);
+      lines.push(`- ${terminalSafeText(conflict.code)}: ${terminalSafeText(conflict.summary)}`);
     }
   }
 
@@ -114,9 +154,15 @@ export function renderPreflightHuman(result: PreflightResult): string {
   if (excluded.length === 0) {
     lines.push("- none");
   } else {
-    for (const candidate of excluded) {
-      const reason = candidate.reasons.at(-1);
-      lines.push(`- ${candidate.name}: ${reason?.detail ?? "lower marginal value"}`);
+    const shown = excluded.slice(0, 5);
+    for (const candidate of shown) {
+      lines.push(`- ${terminalSafeText(candidate.name)}: ${terminalSafeText(exclusionReason(candidate))}`);
+    }
+    if (shown.length < excluded.length) {
+      lines.push(
+        `- ${shown.length} shown, ${excluded.length - shown.length} more omitted; ` +
+        "use --json for full details"
+      );
     }
   }
 
@@ -126,6 +172,9 @@ export function renderPreflightHuman(result: PreflightResult): string {
     `Installed coverage: ${percentage(result.installedCoverage)}`,
     `Projected coverage: ${percentage(result.projectedCoverage)}`,
     `Estimated context saved: ${result.estimatedContextSaved} tokens`,
+    "",
+    "Record feedback:",
+    `skill-steward evidence feedback --preflight ${result.id} --label useful`,
     ""
   );
   return lines.join("\n");
@@ -174,7 +223,7 @@ export async function preflightCommand(
     return 0;
   } catch (error) {
     context.stderr(
-      `${error instanceof Error ? error.message : String(error)}\n`
+      `${terminalSafeText(error instanceof Error ? error.message : String(error))}\n`
     );
     return 1;
   }

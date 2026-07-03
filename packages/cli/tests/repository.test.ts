@@ -3,8 +3,18 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(process.cwd(), "../..");
-const englishScreenshots = ["evidence-light-en.png", "governance-dark-en.png"];
-const chineseScreenshots = ["evidence-light-zh-CN.png", "governance-dark-zh-CN.png"];
+const englishScreenshots = [
+  "overview-light-en.png",
+  "preflight-discovery-light-en.png",
+  "evidence-light-en.png",
+  "governance-dark-en.png"
+];
+const chineseScreenshots = [
+  "overview-light-zh-CN.png",
+  "preflight-discovery-light-zh-CN.png",
+  "evidence-light-zh-CN.png",
+  "governance-dark-zh-CN.png"
+];
 const required = [
   "LICENSE",
   "README.zh-CN.md",
@@ -21,6 +31,7 @@ const required = [
   ".github/pull_request_template.md",
   ".github/workflows/ci.yml",
   "docs/architecture.md",
+  "docs/product-review-2026-07-03.md",
   ...englishScreenshots.map((name) => `docs/images/${name}`),
   ...chineseScreenshots.map((name) => `docs/images/${name}`)
 ];
@@ -45,10 +56,10 @@ describe("open-source repository", () => {
   it("ships a substantive README with valid local links and real screenshots", async () => {
     const readme = await readFile(join(root, "README.md"), "utf8");
     for (const heading of [
-      "## Why Skill Steward",
+      "## Three jobs",
       "## Screenshots",
       "## Installation",
-      "## Quick start",
+      "## First use",
       "## Task preflight",
       "## Evidence and data policy",
       "## Reversible governance",
@@ -64,9 +75,18 @@ describe("open-source repository", () => {
     expect(readme).toContain("[简体中文](README.zh-CN.md)");
     expect(readme).not.toContain("not a design mockup or a real user's portfolio");
     expect(readme).not.toContain("OpenSpec");
+    expect(readme).toContain(
+      "Know which Agent Skills you have, which ones a task needs, and change them safely."
+    );
+    expect(readme).toContain(
+      "a local companion for Codex, Claude Code, GitHub Copilot, and other coding Harnesses"
+    );
+    expect(readme).toContain("It is not a Harness");
+    expect(readme.indexOf("## Three jobs")).toBeLessThan(readme.indexOf("## Screenshots"));
+    expect(readme.indexOf("## Screenshots")).toBeLessThan(readme.indexOf("## First use"));
     expect(readme).toContain("skill-steward preflight");
     expect(readme).toContain("raw task text is never written to disk");
-    expect(readme).toContain("cross-Harness control plane");
+    expect(readme).not.toContain("cross-Harness control plane");
     expect(readme).toContain("Use now");
     expect(readme).toContain("Consider installing");
     expect(readme).toContain("Codex and Claude Code `UserPromptSubmit` and completion Hooks");
@@ -94,10 +114,10 @@ describe("open-source repository", () => {
   it("ships a complete Chinese README with mutual language navigation", async () => {
     const chineseReadme = await readFile(join(root, "README.zh-CN.md"), "utf8");
     for (const heading of [
-      "## 为什么选择 Skill Steward",
+      "## 它主要做三件事",
       "## 界面截图",
       "## 安装",
-      "## 快速开始",
+      "## 第一次使用",
       "## 任务预检",
       "## 证据与数据策略",
       "## 可恢复治理",
@@ -113,15 +133,24 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("[English](README.md)");
     expect(chineseReadme).not.toContain("并非设计稿");
     expect(chineseReadme).not.toContain("OpenSpec");
+    expect(chineseReadme).toContain("先看清、再选择、最后安全地改变你的 Agent Skills。");
+    expect(chineseReadme).toContain("Codex、Claude Code、GitHub Copilot");
+    expect(chineseReadme).toContain("它不是 Harness");
+    expect(chineseReadme.indexOf("## 它主要做三件事")).toBeLessThan(
+      chineseReadme.indexOf("## 界面截图")
+    );
+    expect(chineseReadme.indexOf("## 界面截图")).toBeLessThan(
+      chineseReadme.indexOf("## 第一次使用")
+    );
     expect(chineseReadme).toContain("skill-steward preflight");
     expect(chineseReadme).toContain("原始任务文本不会写入磁盘");
-    expect(chineseReadme).toContain("跨 Harness 控制平面");
+    expect(chineseReadme).not.toContain("跨 Harness 控制平面");
     expect(chineseReadme).toContain("立即使用");
     expect(chineseReadme).toContain("建议安装");
     expect(chineseReadme).toContain("Codex 和 Claude Code 的 `UserPromptSubmit` 与结束 Hook");
     expect(chineseReadme).toContain("任务提交时不访问网络");
     expect(chineseReadme).toContain("绝不会自动安装推荐项");
-    expect(chineseReadme).toContain("任务时外部发现");
+    expect(chineseReadme).toContain("任务开始前发现外部候选项");
     expect(chineseReadme).toContain("原生工作流集成");
     expect(chineseReadme).toContain("跨 Harness 分析");
     expect(chineseReadme).toContain("可逆安装");
@@ -149,10 +178,19 @@ describe("open-source repository", () => {
     }
   });
 
+  it("rebuilds workspace dependencies before creating a CLI package", async () => {
+    const packageJson = JSON.parse(
+      await readFile(join(root, "packages/cli/package.json"), "utf8")
+    ) as { scripts?: Record<string, string> };
+
+    expect(packageJson.scripts?.prepack).toContain('skill-steward^...');
+    expect(packageJson.scripts?.prepack).toContain("pnpm build");
+  });
+
   it("keeps internal planning references out of the public documentation tree", async () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
-    expect(changelog).toContain("## [0.5.0-alpha.1]");
+    expect(changelog).toContain("## [0.5.0-alpha.2]");
     expect(changelog).toContain("privacy-safe recommendation evidence");
     expect(changelog).toContain("reversible quarantine and restore");
     const architecture = await readFile(join(root, "docs/architecture.md"), "utf8");
@@ -165,6 +203,8 @@ describe("open-source repository", () => {
     expect(architecture).toContain("evidence-events.jsonl");
     expect(architecture).toContain("governance.jsonl");
     expect(architecture).toContain("observe-only");
+    expect(architecture).toContain("Preflight algorithm v3");
+    expect(architecture).toContain("explicit CLI feedback command");
     const internalEntries = await readdir(join(root, "docs/superpowers"), {
       recursive: true,
       withFileTypes: true
@@ -173,5 +213,47 @@ describe("open-source repository", () => {
       throw error;
     });
     expect(internalEntries.filter((entry) => entry.isFile())).toEqual([]);
+  });
+
+  it("records the real product review, evidence, priorities, and accepted gaps", async () => {
+    const review = await readFile(join(root, "docs/product-review-2026-07-03.md"), "utf8");
+    for (const evidence of [
+      "global 0.4.0-alpha.1",
+      "repository 0.5.0-alpha.1",
+      "clean first run",
+      "25-Skill portfolio",
+      "17 available candidates",
+      "Codex, Claude Code, and GitHub Copilot CLI",
+      "quarantine and restore",
+      "720 px",
+      "1600 px",
+      "866 px",
+      "1100 px",
+      "1280 px"
+    ]) {
+      expect(review).toContain(evidence);
+    }
+    for (const finding of [
+      "empty scanned portfolio reported health 100",
+      "PDF task selected docx",
+      "this / does / missing",
+      "one-word project-scope false positive",
+      "findings omitted the affected Skill",
+      "governance output exposed hashes",
+      "synthetic KPI value 92",
+      "no CLI path for Preflight feedback",
+      "native plugin Skill blind spot",
+      "lifecycle completion is not task success"
+    ]) {
+      expect(review).toContain(finding);
+    }
+    expect(review).toContain("## Changes implemented after the baseline");
+    expect(review).toContain("## Accepted future gaps");
+    expect(review).toContain("## Product scores");
+    expect(review).toContain("## Repeat-use verdict");
+    expect(review).toContain("### P0");
+    expect(review).toContain("### P1");
+    expect(review).toContain("### P2");
+    expect(review).toContain("### P3");
   });
 });

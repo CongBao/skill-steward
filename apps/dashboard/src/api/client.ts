@@ -159,6 +159,7 @@ export type PreflightReasonCode =
   | "PORTFOLIO_RISK"
   | "INSTALL_REQUIRED"
   | "CRITICAL_RISK"
+  | "NEGATIVE_TRIGGER"
   | "HARNESS_INCOMPATIBLE";
 
 export interface PreflightCandidate {
@@ -199,7 +200,7 @@ export interface PreflightCandidate {
 
 export interface PreflightResult {
   schemaVersion: 3;
-  algorithmVersion: 2;
+  algorithmVersion: 3;
   id: string;
   generatedAt: string;
   portfolioFingerprint: string;
@@ -551,6 +552,7 @@ export interface GovernancePlan {
   kind: "quarantine" | "restore";
   sourceTransactionId?: string;
   skillId: string;
+  skillName?: string;
   activePath: string;
   vaultPath: string;
   stagingPath: string;
@@ -570,6 +572,7 @@ export interface GovernanceTransaction {
   action: "quarantine" | "restore";
   status: "quarantined" | "restored" | "failed";
   skillId: string;
+  skillName?: string;
   originalPath: string;
   vaultPath: string;
   fingerprint: string;

@@ -18,11 +18,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: mkdir -p artifacts
+      - name: Pack from a clean checkout
+        run: pnpm --filter skill-steward pack --pack-destination artifacts
       - name: Build
         run: pnpm build
       - name: Typecheck
         run: pnpm typecheck
       - name: Test
         run: pnpm test
-      - run: mkdir -p artifacts
-      - run: pnpm --filter skill-steward pack --pack-destination artifacts
