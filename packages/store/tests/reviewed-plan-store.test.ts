@@ -523,8 +523,8 @@ describe("reviewed plan store", () => {
     }));
     pause.release();
 
-    expect(["claimed", "REVIEWED_PLAN_NOT_FOUND"]).toContain(claimOutcome);
-    await expect(cleaning).resolves.toBe(1);
+    expect(claimOutcome).toBe("claimed");
+    await expect(cleaning).resolves.toBe(0);
     await expect(claimReviewedPlan(stateDir, {
       id,
       kind: "installation",
@@ -532,11 +532,11 @@ describe("reviewed plan store", () => {
     })).resolves.toMatchObject({ payload: { generation: "new" } });
   });
 
-  it("preserves owned live data and a new plan when no-clobber restore conflicts", async () => {
-    const stateDir = await state("steward-reviewed-cleanup-restore-conflict-");
-    const id = "restore-conflict";
+  it("never hides a live pending plan from its first concurrent claim", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-live-claim-");
+    const id = "live-claim";
     await writeReviewedPlan(stateDir, envelope(id, "installation", {
-      payload: { generation: "old-live" }
+      payload: { generation: "live" }
     }));
     const pause = pauseCleanupRead(id);
     const cleaning = cleanupExpiredReviewedPlans(
@@ -545,25 +545,129 @@ describe("reviewed plan store", () => {
     );
     await pause.reached;
 
-    await claimReviewedPlan(stateDir, {
+    const claimOutcome = await claimReviewedPlan(stateDir, {
       id,
       kind: "installation",
       now: new Date("2026-07-03T00:01:00.000Z")
-    }).catch(() => undefined);
-    await writeReviewedPlan(stateDir, envelope(id, "installation", {
-      payload: { generation: "new-live" }
-    }));
+    }).then(
+      (plan) => plan.payload,
+      (error: unknown) => error instanceof Error && "code" in error
+        ? String(error.code)
+        : "unknown"
+    );
     pause.release();
 
-    await expect(cleaning).rejects.toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
-    const names = await readdir(join(stateDir, "reviewed-plans"));
-    expect(names).toContain(`${id}.json`);
-    expect(names.filter((name) => name.endsWith(".cleanup"))).toHaveLength(1);
+    await expect(cleaning).resolves.toBe(0);
+    expect(claimOutcome).toEqual({ generation: "live" });
+    expect(await readdir(join(stateDir, "reviewed-plans"))).toEqual([]);
+  });
+
+  it("restores a stale live cleanup artifact when no pending plan exists", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-live-residue-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const id = "stale-live";
+    const owned = join(directory, `.${id}.123-${residueUuid}.cleanup`);
+    await writeFile(owned, `${JSON.stringify(envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z",
+      payload: { generation: "recovered" }
+    }))}\n`, { mode: 0o600 });
+    const stale = new Date("2026-07-03T01:00:00.000Z");
+    await utimes(owned, stale, stale);
+
+    await expect(cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T03:00:00.000Z")
+    )).resolves.toBe(0);
     await expect(claimReviewedPlan(stateDir, {
       id,
       kind: "installation",
-      now: new Date("2026-07-03T00:01:00.000Z")
-    })).resolves.toMatchObject({ payload: { generation: "new-live" } });
+      now: new Date("2026-07-03T03:00:00.000Z")
+    })).resolves.toMatchObject({ payload: { generation: "recovered" } });
+  });
+
+  it("keeps stale live cleanup data when a newer pending plan blocks restore", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-newer-conflict-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const id = "newer-conflict";
+    const owned = join(directory, `.${id}.123-${residueUuid}.cleanup`);
+    await writeFile(owned, `${JSON.stringify(envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z",
+      payload: { generation: "old-owned" }
+    }))}\n`, { mode: 0o600 });
+    const stale = new Date("2026-07-03T01:00:00.000Z");
+    await utimes(owned, stale, stale);
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z",
+      payload: { generation: "new-pending" }
+    }));
+
+    await expect(cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T03:00:00.000Z")
+    )).rejects.toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+    await expect(readFile(owned, "utf8")).resolves.toContain("old-owned");
+    await expect(claimReviewedPlan(stateDir, {
+      id,
+      kind: "installation",
+      now: new Date("2026-07-03T03:00:00.000Z")
+    })).resolves.toMatchObject({ payload: { generation: "new-pending" } });
+  });
+
+  it.each(["EACCES", "EIO"] as const)(
+    "preserves stale cleanup data when reading it fails with %s",
+    async (code) => {
+      const stateDir = await state(`steward-reviewed-cleanup-owned-${code.toLowerCase()}-`);
+      const directory = join(stateDir, "reviewed-plans");
+      await mkdir(directory, { mode: 0o700 });
+      const id = `owned-${code.toLowerCase()}`;
+      const owned = join(directory, `.${id}.123-${residueUuid}.cleanup`);
+      await writeFile(owned, `${JSON.stringify(envelope(id, "installation", {
+        expiresAt: "2026-07-03T05:00:00.000Z"
+      }))}\n`, { mode: 0o600 });
+      const stale = new Date("2026-07-03T01:00:00.000Z");
+      await utimes(owned, stale, stale);
+      fileSystemObservation.cleanupReadFailure = { id, code };
+
+      let failure: unknown;
+      try {
+        await cleanupExpiredReviewedPlans(
+          stateDir,
+          new Date("2026-07-03T03:00:00.000Z")
+        );
+      } catch (error) {
+        failure = error;
+      } finally {
+        fileSystemObservation.cleanupReadFailure = undefined;
+      }
+
+      expect(failure).toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+      await expect(readFile(owned, "utf8")).resolves.toContain(id);
+    }
+  );
+
+  it("deletes stale cleanup artifacts only after validating expired or invalid data", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-owned-removable-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const expired = join(directory, `.owned-expired.123-${residueUuid}.cleanup`);
+    const invalid = join(directory, `.owned-invalid.123-${residueUuid}.cleanup`);
+    await writeFile(expired, `${JSON.stringify(envelope("owned-expired", "installation", {
+      expiresAt: "2026-07-03T02:00:00.000Z"
+    }))}\n`, { mode: 0o600 });
+    await writeFile(invalid, "invalid", { mode: 0o600 });
+    const stale = new Date("2026-07-03T01:00:00.000Z");
+    await Promise.all([
+      utimes(expired, stale, stale),
+      utimes(invalid, stale, stale)
+    ]);
+
+    await expect(cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T03:00:00.000Z")
+    )).resolves.toBe(2);
+    expect(await readdir(directory)).toEqual([]);
   });
 
   it("removes only stale strict crash residues after a one-hour grace window", async () => {
@@ -635,9 +739,9 @@ describe("reviewed plan store", () => {
 
     expect(removed).toBe(1000);
     expect(fileSystemObservation.cleanupUsedStreamingDirectory).toBe(true);
-    expect(fileSystemObservation.cleanupInspectedPaths.length).toBeLessThanOrEqual(501);
+    expect(fileSystemObservation.cleanupInspectedPaths.length).toBeLessThanOrEqual(1002);
     expect(fileSystemObservation.cleanupInspectedPaths.every((path) =>
-      path.endsWith(".cleanup")
+      path.endsWith(".json") || path.endsWith(".cleanup")
     )).toBe(true);
     const remaining = await readdir(directory);
     expect(remaining.filter((name) =>

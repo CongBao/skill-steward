@@ -426,9 +426,10 @@ export async function cleanupExpiredReviewedPlans(
     let inspected = 0;
     for await (const entry of await opendir(directory)) {
       const pendingMatch = pendingPlanNamePattern.exec(entry.name);
-      const isCrashResidue = temporaryNamePattern.test(entry.name)
-        || claimedNamePattern.test(entry.name)
-        || cleanupNamePattern.test(entry.name);
+      const cleanupMatch = cleanupNamePattern.exec(entry.name);
+      const isDisposableCrashResidue = temporaryNamePattern.test(entry.name)
+        || claimedNamePattern.test(entry.name);
+      const isCrashResidue = isDisposableCrashResidue || cleanupMatch !== null;
       if (!pendingMatch && !isCrashResidue) continue;
       inspected += 1;
       const path = resolve(directory, entry.name);
@@ -441,9 +442,13 @@ export async function cleanupExpiredReviewedPlans(
           if (
             metadata !== undefined
             && now - metadata.mtimeMs > CRASH_RESIDUE_GRACE_MS
-            && await removeFile(path)
           ) {
-            removed += 1;
+            const cleanupId = cleanupMatch?.[1];
+            if (cleanupId !== undefined) {
+              if (await cleanupStaleOwnedPlan(path, cleanupId, now)) removed += 1;
+            } else if (isDisposableCrashResidue && await removeFile(path)) {
+              removed += 1;
+            }
           }
         }
       }
@@ -460,7 +465,15 @@ async function cleanupPendingPlan(
   id: string,
   now: number
 ): Promise<boolean> {
-  if (await inspectPlanFile(pending) === "missing") return false;
+  let initialAssessment: StoredPlanAssessment;
+  try {
+    initialAssessment = await assessStoredPlan(pending, id, now);
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return false;
+    throw error;
+  }
+  if (initialAssessment === "live") return false;
+
   const owned = cleanupPath(dirname(pending), id);
   try {
     await rename(pending, owned);
@@ -469,13 +482,26 @@ async function cleanupPendingPlan(
     throw error;
   }
 
-  let source: string;
+  let ownedAssessment: StoredPlanAssessment;
   try {
-    source = await readRegularFile(owned);
+    ownedAssessment = await assessStoredPlan(owned, id, now);
   } catch (error) {
     await restoreOwnedPlan(owned, pending);
     throw error;
   }
+  if (ownedAssessment === "removable") return removeFile(owned);
+  await restoreOwnedPlan(owned, pending);
+  return false;
+}
+
+type StoredPlanAssessment = "live" | "removable";
+
+async function assessStoredPlan(
+  path: string,
+  id: string,
+  now: number
+): Promise<StoredPlanAssessment> {
+  const source = await readRegularFile(path);
   let envelope: ReviewedPlanEnvelope;
   try {
     envelope = parseEnvelope(JSON.parse(source) as unknown);
@@ -487,15 +513,23 @@ async function cleanupPendingPlan(
         && error.code === "REVIEWED_PLAN_INVALID"
       )
     ) {
-      return removeFile(owned);
+      return "removable";
     }
-    await restoreOwnedPlan(owned, pending);
     throw error;
   }
-  if (envelope.id !== id || Date.parse(envelope.expiresAt) <= now) {
-    return removeFile(owned);
-  }
-  await restoreOwnedPlan(owned, pending);
+  return envelope.id !== id || Date.parse(envelope.expiresAt) <= now
+    ? "removable"
+    : "live";
+}
+
+async function cleanupStaleOwnedPlan(
+  owned: string,
+  id: string,
+  now: number
+): Promise<boolean> {
+  const assessment = await assessStoredPlan(owned, id, now);
+  if (assessment === "removable") return removeFile(owned);
+  await restoreOwnedPlan(owned, resolve(dirname(owned), `${id}.json`));
   return false;
 }
 
