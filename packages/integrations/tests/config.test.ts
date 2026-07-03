@@ -285,6 +285,29 @@ describe.each(["codex", "claude-code", "github-copilot"] as const)(
         status: harness === "codex" ? "needs-trust" : "installed"
       });
     });
+
+    it("preserves external bytes written while the removed record is pending", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-rollback-drift-`));
+      const options = { home, stateDirectory: join(home, "state") };
+      const plan = await planIntegration(harness, options);
+      await applyIntegrationPlan(plan, options);
+      const appendFailure = new Error("removed record was not committed");
+      const external = '{"external":"during-rollback"}\n';
+
+      const failure = await rollbackIntegrationPlan(plan, options, {
+        appendRecord: async () => {
+          await writeFile(plan.targetPath, external, "utf8");
+          throw appendFailure;
+        }
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+      expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+      const causes = ((failure as Error).cause as AggregateError).errors;
+      expect(causes[0]).toBe(appendFailure);
+      expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
+      expect(await readFile(plan.targetPath, "utf8")).toBe(external);
+    });
   }
 );
 
@@ -310,6 +333,30 @@ describe.each(["codex", "claude-code"] as const)(
       });
       expect(JSON.parse(await readFile(plan.targetPath, "utf8"))).toEqual(plan.afterConfig);
       await expect(access(plan.backupPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("preserves external bytes written after the backup was restored", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-rollback-backup-drift-`));
+      const options = { home, stateDirectory: join(home, "state") };
+      await seed(home, harness);
+      const plan = await planIntegration(harness, options);
+      await applyIntegrationPlan(plan, options);
+      const appendFailure = new Error("removed record was not committed");
+      const external = '{"external":"after-backup-restore"}\n';
+
+      const failure = await rollbackIntegrationPlan(plan, options, {
+        appendRecord: async () => {
+          await writeFile(plan.targetPath, external, "utf8");
+          throw appendFailure;
+        }
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+      expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+      const causes = ((failure as Error).cause as AggregateError).errors;
+      expect(causes[0]).toBe(appendFailure);
+      expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
+      expect(await readFile(plan.targetPath, "utf8")).toBe(external);
     });
   }
 );
@@ -384,14 +431,10 @@ it("preserves journal and rollback failures in one cause chain", async () => {
   };
   const plan = await planIntegration("codex", options);
   const journalFailure = new Error("journal failed");
+  const external = '{"changedDuringJournal":true,"external":"preserve-exactly"}\n';
   const failure = await applyIntegrationPlan(plan, options, {
     appendRecord: async () => {
-      const applied = JSON.parse(await readFile(plan.targetPath, "utf8"));
-      await writeFile(
-        plan.targetPath,
-        `${JSON.stringify({ ...applied, changedDuringJournal: true })}\n`,
-        "utf8"
-      );
+      await writeFile(plan.targetPath, external, "utf8");
       throw journalFailure;
     }
   }).catch((error: unknown) => error);
@@ -401,7 +444,7 @@ it("preserves journal and rollback failures in one cause chain", async () => {
   const causes = ((failure as Error).cause as AggregateError).errors;
   expect(causes[0]).toBe(journalFailure);
   expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
-  expect(await readFile(plan.targetPath, "utf8")).toContain("changedDuringJournal");
+  expect(await readFile(plan.targetPath, "utf8")).toBe(external);
 });
 
 it("does not roll back configuration when journal commit is uncertain", async () => {
@@ -574,6 +617,29 @@ describe.each(["codex", "claude-code", "github-copilot"] as const)(
       } else {
         expect(await readFile(path, "utf8")).not.toContain("skill-steward hook");
       }
+    });
+
+    it("preserves external bytes written while the removed record is pending", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-remove-drift-`));
+      const options = { home, stateDirectory: join(home, "state") };
+      await applyIntegrationPlan(await planIntegration(harness, options), options);
+      const path = installedTarget(home);
+      const appendFailure = new Error("removed record was not committed");
+      const external = '{"external":"during-remove"}\n';
+
+      const failure = await removeIntegration(harness, options, {
+        appendRecord: async () => {
+          await writeFile(path, external, "utf8");
+          throw appendFailure;
+        }
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+      expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+      const causes = ((failure as Error).cause as AggregateError).errors;
+      expect(causes[0]).toBe(appendFailure);
+      expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
+      expect(await readFile(path, "utf8")).toBe(external);
     });
   }
 );

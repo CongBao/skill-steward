@@ -54,6 +54,14 @@ const integrateApplyDefaults: IntegrateApplyDependencies = {
   removeCompanion: removeManagedCompanionSkill
 };
 
+export interface IntegrateRemoveDependencies {
+  remove: typeof removeIntegration;
+}
+
+const integrateRemoveDefaults: IntegrateRemoveDependencies = {
+  remove: removeIntegration
+};
+
 class IntegrateCommandError extends Error {
   constructor(public readonly code: string, message: string, options?: ErrorOptions) {
     super(message, options);
@@ -312,12 +320,14 @@ export async function integrateStatusCommand(
 export async function integrateRemoveCommand(
   inputHarness: string,
   confirm: boolean,
-  context: CliContext
+  context: CliContext,
+  dependencyOverrides: Partial<IntegrateRemoveDependencies> = {}
 ): Promise<number> {
+  const dependencies = { ...integrateRemoveDefaults, ...dependencyOverrides };
   try {
     if (!confirm) throw new Error("Integration removal requires --confirm");
     const harness = integrationHarnessSchema.parse(inputHarness);
-    const record = await removeIntegration(harness, configOptions(context));
+    const record = await dependencies.remove(harness, configOptions(context));
     await removeSharedSkillIfUnused(context);
     context.stdout(`Removed ${harness} integration (${record.id}).\n`);
     return 0;

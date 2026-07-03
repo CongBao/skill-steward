@@ -3,12 +3,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   applyIntegrationPlan,
+  removeIntegration,
   rollbackIntegrationPlan
 } from "@skill-steward/integrations";
 import { readLatestReport } from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
-import { integrateApplyCommand } from "../src/commands/integrate.js";
+import {
+  integrateApplyCommand,
+  integrateRemoveCommand
+} from "../src/commands/integrate.js";
 import { run } from "../src/main.js";
 
 async function exists(path: string): Promise<boolean> {
@@ -281,6 +285,7 @@ describe("integrate command", () => {
     const plan = await preview("codex");
     await writeFile(join(current.context.stateDir, "latest-report.json"), "not-json", "utf8");
     const appendFailure = new Error("removed record was not committed");
+    const external = '{"external":"during-cli-rollback"}\n';
     let cleanupCalled = false;
 
     expect(await integrateApplyCommand({
@@ -291,7 +296,16 @@ describe("integrate command", () => {
       rollbackPlan: (reviewedPlan, options) => rollbackIntegrationPlan(
         reviewedPlan,
         options,
-        { appendRecord: async () => { throw appendFailure; } }
+        {
+          appendRecord: async () => {
+            await writeFile(
+              (reviewedPlan as { targetPath: string }).targetPath,
+              external,
+              "utf8"
+            );
+            throw appendFailure;
+          }
+        }
       ),
       removeCompanion: async () => {
         cleanupCalled = true;
@@ -300,11 +314,31 @@ describe("integrate command", () => {
     })).toBe(1);
     expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
     expect(await readFile(join(current.home, ".codex", "hooks.json"), "utf8"))
-      .toContain("skill-steward hook prompt --harness codex");
+      .toBe(external);
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);
     expect(cleanupCalled).toBe(false);
+  });
+
+  it("preserves external drift and companion when removal journaling fails", async () => {
+    expect(await apply((await preview("codex")).id)).toBe(0);
+    const external = '{"external":"during-cli-remove"}\n';
+    const appendFailure = new Error("removed record was not committed");
+
+    expect(await integrateRemoveCommand("codex", true, current.context, {
+      remove: (harness, options) => removeIntegration(harness, options, {
+        appendRecord: async () => {
+          await writeFile(join(current.home, ".codex", "hooks.json"), external, "utf8");
+          throw appendFailure;
+        }
+      })
+    })).toBe(1);
+    expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
+    expect(await readFile(join(current.home, ".codex", "hooks.json"), "utf8")).toBe(external);
+    expect(await exists(join(
+      current.home, ".agents", "skills", "skill-steward-preflight"
+    ))).toBe(true);
   });
 
   it("preserves a pre-existing companion and integration during failed readiness", async () => {

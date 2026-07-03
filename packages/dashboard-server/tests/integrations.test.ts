@@ -5,6 +5,7 @@ import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
   applyIntegrationPlan,
   IntegrationError,
+  removeIntegration,
   removeManagedCompanionSkill,
   rollbackIntegrationPlan
 } from "@skill-steward/integrations";
@@ -46,6 +47,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
   let domainFailureAfterCommit: Error | undefined;
   let uncertainJournalCommit = false;
   let rollbackJournalFailure = false;
+  let removalJournalDrift = false;
   let companionCleanupFailure = false;
   let readinessCalls = 0;
   let idIndex = 0;
@@ -82,7 +84,30 @@ async function fixture(ids: string[] = ["integration-record"]) {
       plan,
       options,
       rollbackJournalFailure
-        ? { appendRecord: async () => { throw new Error("removed record was not committed"); } }
+        ? {
+            appendRecord: async () => {
+              await writeFile(
+                (plan as { targetPath: string }).targetPath,
+                '{"external":"during-dashboard-rollback"}\n'
+              );
+              throw new Error("removed record was not committed");
+            }
+          }
+        : {}
+    ),
+    removePlan: (harness, options) => removeIntegration(
+      harness,
+      options,
+      removalJournalDrift
+        ? {
+            appendRecord: async () => {
+              await writeFile(
+                join(home, ".codex", "hooks.json"),
+                '{"external":"during-dashboard-remove"}\n'
+              );
+              throw new Error("removed record was not committed");
+            }
+          }
         : {}
     ),
     removeCompanion: async (options) => companionCleanupFailure
@@ -114,6 +139,9 @@ async function fixture(ids: string[] = ["integration-record"]) {
     },
     failRollbackJournal() {
       rollbackJournalFailure = true;
+    },
+    driftRemovalJournal() {
+      removalJournalDrift = true;
     },
     failCompanionCleanup() {
       companionCleanupFailure = true;
@@ -481,7 +509,36 @@ describe("Harness integration routes", () => {
     expect(failed.statusCode).toBe(409);
     expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
-      .toContain("skill-steward hook prompt --harness codex");
+      .toBe('{"external":"during-dashboard-rollback"}\n');
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .resolves.toBeUndefined();
+  });
+
+  it("preserves external drift and companion when removal journaling fails", async () => {
+    const { app, home, driftRemovalJournal } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    const planned = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    });
+    expect((await applyRequest(
+      app,
+      "codex",
+      planned.json().data.id,
+      headers
+    )).statusCode).toBe(200);
+    driftRemovalJournal();
+
+    const failed = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/integrations/codex",
+      headers
+    });
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+    expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
+      .toBe('{"external":"during-dashboard-remove"}\n');
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
       .resolves.toBeUndefined();
   });

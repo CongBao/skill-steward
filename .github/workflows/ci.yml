@@ -27,3 +27,20 @@ jobs:
         run: pnpm typecheck
       - name: Test
         run: pnpm test
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Windows integration journal smoke
+        run: pnpm --filter @skill-steward/store exec vitest run tests/integration-store.windows.test.ts
+      - name: Build CLI
+        run: pnpm build
+      - name: Run packaged CLI help
+        run: node packages/cli/dist/main.js --help

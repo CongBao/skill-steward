@@ -57,12 +57,14 @@ export interface IntegrationServiceOptions {
 export interface IntegrationServiceDependencies {
   applyPlan: typeof applyIntegrationPlan;
   rollbackPlan: typeof rollbackIntegrationPlan;
+  removePlan: typeof removeIntegration;
   removeCompanion: typeof removeManagedCompanionSkill;
 }
 
 const integrationServiceDefaults: IntegrationServiceDependencies = {
   applyPlan: applyIntegrationPlan,
   rollbackPlan: rollbackIntegrationPlan,
+  removePlan: removeIntegration,
   removeCompanion: removeManagedCompanionSkill
 };
 
@@ -200,7 +202,7 @@ export function createIntegrationServices(
     async remove(value) {
       const harness = parseHarness(value);
       prunePlans();
-      await removeIntegration(harness, configOptions);
+      await dependencies.removePlan(harness, configOptions);
       for (const [id, plan] of plans) {
         if (plan.harness === harness) plans.delete(id);
       }

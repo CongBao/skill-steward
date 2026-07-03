@@ -354,6 +354,21 @@ async function readConfig(targetPath: string): Promise<{
   }
 }
 
+async function requireExactTargetState(input: {
+  targetPath: string;
+  expectedExists: boolean;
+  expectedFingerprint: string;
+  message: string;
+}): Promise<void> {
+  const current = await readConfig(input.targetPath);
+  if (
+    current.exists !== input.expectedExists
+    || current.fingerprint !== input.expectedFingerprint
+  ) {
+    throw new IntegrationError("INTEGRATION_DRIFTED", input.message);
+  }
+}
+
 type ManagedEvent = "UserPromptSubmit" | "Stop" | "SessionEnd";
 
 function managedEvents(harness: IntegrationHarness): ManagedEvent[] {
@@ -791,6 +806,12 @@ export async function rollbackIntegrationPlan(
   } catch (error) {
     if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
     try {
+      await requireExactTargetState({
+        targetPath: plan.targetPath,
+        expectedExists: plan.expectedBeforeFingerprint !== hash(""),
+        expectedFingerprint: plan.expectedBeforeFingerprint,
+        message: "Harness configuration changed while integration rollback was journaling"
+      });
       await atomicWrite(plan.targetPath, stableJson(plan.afterConfig), options.home);
     } catch (compensationError) {
       throw new IntegrationError(
@@ -945,6 +966,12 @@ export async function removeIntegration(
     } catch (error) {
       if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
       try {
+        await requireExactTargetState({
+          targetPath,
+          expectedExists: harness !== "github-copilot",
+          expectedFingerprint: record.afterFingerprint,
+          message: "Harness configuration changed while integration removal was journaling"
+        });
         await atomicWrite(targetPath, before.source, options.home);
       } catch (rollbackError) {
         throw new IntegrationError(
