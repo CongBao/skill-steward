@@ -18,6 +18,22 @@ async function storedPlan(stateDir: string, id: string): Promise<Record<string, 
   )) as Record<string, unknown>;
 }
 
+type PlanIdentityField = "id" | "createdAt" | "expiresAt";
+
+async function tamperPayloadIdentity(
+  stateDir: string,
+  id: string,
+  field: PlanIdentityField
+): Promise<void> {
+  const path = join(stateDir, "reviewed-plans", `${id}.json`);
+  const envelope = await storedPlan(stateDir, id);
+  const payload = envelope.payload as Record<string, unknown>;
+  payload[field] = field === "id"
+    ? `${String(payload[field])}-tampered`
+    : new Date(Date.parse(String(payload[field])) - 60_000).toISOString();
+  await writeFile(path, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+}
+
 async function fixture() {
   const base = await realpath(await mkdtemp(join(tmpdir(), "steward-cli-govern-")));
   const home = join(base, "home");
@@ -134,8 +150,18 @@ describe("govern command", () => {
       kind: "governance",
       payload: { kind: "restore", sourceTransactionId: transaction.id }
     });
+    await tamperPayloadIdentity(current.stateDir, restorePlan.planId, "id");
     expect(await run([
       "govern", "restore", "--plan", restorePlan.planId, "--confirm", "--json"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+    await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(await run(restore, current.context)).toBe(0);
+    const replacementRestorePlan = JSON.parse(current.stdout.splice(0).join(""));
+    expect(await run([
+      "govern", "restore", "--plan", replacementRestorePlan.planId, "--confirm", "--json"
     ], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
       transaction: {
@@ -232,12 +258,21 @@ describe("govern command", () => {
   it("refuses missing confirmation inputs and ambiguous governance apply options", async () => {
     for (const args of [
       ["govern", "quarantine", "--confirm"],
-      ["govern", "restore", "--confirm"],
+      ["govern", "restore", "--confirm"]
+    ]) {
+      expect(await run(args, current.context)).toBe(1);
+      expect(current.stderr.splice(0).join("")).toMatch(/preview/i);
+      await expect(access(current.activePath)).resolves.toBeUndefined();
+    }
+
+    for (const args of [
       ["govern", "quarantine", "--plan", "missing"],
       ["govern", "restore", "--plan", "missing"]
     ]) {
       expect(await run(args, current.context)).toBe(1);
-      expect(current.stderr.splice(0).join("")).toMatch(/preview|--confirm/i);
+      const error = current.stderr.splice(0).join("");
+      expect(error).toMatch(/--confirm/i);
+      expect(error).not.toMatch(/new preview|fresh reviewed plan|preview command again/i);
       await expect(access(current.activePath)).resolves.toBeUndefined();
     }
 
@@ -251,13 +286,32 @@ describe("govern command", () => {
       "--confirm",
       "--skill", current.parsed.id
     ], current.context)).toBe(1);
-    expect(current.stderr.splice(0).join("")).toMatch(/ambiguous/i);
+    const ambiguousError = current.stderr.splice(0).join("");
+    expect(ambiguousError).toMatch(/ambiguous/i);
+    expect(ambiguousError).not.toMatch(/new preview|fresh reviewed plan|preview command again/i);
     await expect(access(current.activePath)).resolves.toBeUndefined();
 
     expect(await run([
       "govern", "quarantine", "--plan", preview.planId, "--confirm", "--json"
     ], current.context)).toBe(0);
     await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects every quarantine payload identity mismatch before mutation", async () => {
+    for (const field of ["id", "createdAt", "expiresAt"] as const) {
+      expect(await run([
+        "govern", "quarantine", "--skill", current.parsed.id, "--json"
+      ], current.context)).toBe(0);
+      const preview = JSON.parse(current.stdout.splice(0).join(""));
+      await tamperPayloadIdentity(current.stateDir, preview.planId, field);
+
+      expect(await run([
+        "govern", "quarantine", "--plan", preview.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+      await expect(access(current.activePath)).resolves.toBeUndefined();
+    }
   });
 
   it("preserves governance drift checks for a claimed exact plan", async () => {

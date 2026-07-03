@@ -24,6 +24,10 @@ import {
   writeLatestReport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
+import {
+  matchesReviewedPlanIdentity,
+  reviewedPlanRetryHint
+} from "../reviewed-plan.js";
 import { terminalSafeText } from "../terminal.js";
 
 class GovernCommandError extends Error {
@@ -35,10 +39,9 @@ class GovernCommandError extends Error {
 
 function errorText(error: unknown): string {
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    const retry = error.code.startsWith("REVIEWED_PLAN_")
-      ? " Run the preview command again to create a fresh reviewed plan."
-      : "";
-    return terminalSafeText(`${error.code}: ${error.message}${retry}`);
+    return terminalSafeText(
+      `${error.code}: ${error.message}${reviewedPlanRetryHint(error.code)}`
+    );
   }
   return terminalSafeText(error instanceof Error ? error.message : String(error));
 }
@@ -117,7 +120,7 @@ export async function governQuarantineCommand(
       if (!options.confirm) {
         throw new GovernCommandError(
           "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
-          "Use --confirm with the reviewed plan ID, or run a new preview"
+          "Use --confirm with the reviewed plan ID"
         );
       }
       if (options.skill !== undefined) {
@@ -132,10 +135,14 @@ export async function governQuarantineCommand(
         now
       });
       const parsed = governancePlanSchema.safeParse(envelope.payload);
-      if (!parsed.success || parsed.data.kind !== "quarantine") {
+      if (
+        !parsed.success
+        || parsed.data.kind !== "quarantine"
+        || !matchesReviewedPlanIdentity(envelope, parsed.data)
+      ) {
         throw new GovernCommandError(
           "REVIEWED_PLAN_INVALID",
-          "Stored governance payload is not a quarantine plan"
+          "Stored governance payload is not a valid quarantine plan"
         );
       }
       const plan = parsed.data;
@@ -201,7 +208,7 @@ export async function governRestoreCommand(
       if (!options.confirm) {
         throw new GovernCommandError(
           "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
-          "Use --confirm with the reviewed plan ID, or run a new preview"
+          "Use --confirm with the reviewed plan ID"
         );
       }
       if (options.transaction !== undefined) {
@@ -216,10 +223,14 @@ export async function governRestoreCommand(
         now
       });
       const parsed = governancePlanSchema.safeParse(envelope.payload);
-      if (!parsed.success || parsed.data.kind !== "restore") {
+      if (
+        !parsed.success
+        || parsed.data.kind !== "restore"
+        || !matchesReviewedPlanIdentity(envelope, parsed.data)
+      ) {
         throw new GovernCommandError(
           "REVIEWED_PLAN_INVALID",
-          "Stored governance payload is not a restore plan"
+          "Stored governance payload is not a valid restore plan"
         );
       }
       const plan = parsed.data;

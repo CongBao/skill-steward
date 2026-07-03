@@ -22,6 +22,22 @@ async function storedPlan(stateDir: string, id: string): Promise<Record<string, 
   )) as Record<string, unknown>;
 }
 
+type PlanIdentityField = "id" | "createdAt" | "expiresAt";
+
+async function tamperPayloadIdentity(
+  stateDir: string,
+  id: string,
+  field: PlanIdentityField
+): Promise<void> {
+  const path = join(stateDir, "reviewed-plans", `${id}.json`);
+  const envelope = await storedPlan(stateDir, id);
+  const payload = envelope.payload as Record<string, unknown>;
+  payload[field] = field === "id"
+    ? `${String(payload[field])}-tampered`
+    : new Date(Date.parse(String(payload[field])) - 60_000).toISOString();
+  await writeFile(path, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+}
+
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), "steward-cli-evidence-"));
   const stateDir = join(base, "state");
@@ -148,6 +164,21 @@ describe("evidence command", () => {
     expect(current.stderr.splice(0).join("")).toMatch(/REVIEWED_PLAN_NOT_FOUND.*preview/is);
   });
 
+  it("shows every exact evidence policy change in human preview output", async () => {
+    expect(await run([
+      "evidence", "policy", "set",
+      "--mode", "minimal",
+      "--retention-days", "45",
+      "--max-events", "1000"
+    ], current.context)).toBe(0);
+
+    expect(current.stdout.splice(0).join("")).toContain([
+      "Mode: minimal -> minimal",
+      "Retention days: 30 -> 45",
+      "Max events: 5000 -> 1000"
+    ].join("\n"));
+  });
+
   it("summarizes, exports, compacts, and erases only scoped evidence", async () => {
     await seedEvidence(current.stateDir);
     await writeFile(join(current.stateDir, "evidence-salt"), Buffer.alloc(32, 7), { mode: 0o600 });
@@ -204,12 +235,20 @@ describe("evidence command", () => {
   it("refuses missing confirmation inputs and ambiguous evidence apply options", async () => {
     for (const args of [
       ["evidence", "policy", "set", "--confirm"],
-      ["evidence", "erase", "--confirm"],
+      ["evidence", "erase", "--confirm"]
+    ]) {
+      expect(await run(args, current.context)).toBe(1);
+      expect(current.stderr.splice(0).join("")).toMatch(/preview/i);
+    }
+
+    for (const args of [
       ["evidence", "policy", "set", "--plan", "missing"],
       ["evidence", "erase", "--plan", "missing"]
     ]) {
       expect(await run(args, current.context)).toBe(1);
-      expect(current.stderr.splice(0).join("")).toMatch(/preview|--confirm/i);
+      const error = current.stderr.splice(0).join("");
+      expect(error).toMatch(/--confirm/i);
+      expect(error).not.toMatch(/new preview|fresh reviewed plan|preview command again/i);
     }
 
     expect(await run([
@@ -226,8 +265,51 @@ describe("evidence command", () => {
       "--confirm",
       "--mode", "minimal"
     ], current.context)).toBe(1);
-    expect(current.stderr.splice(0).join("")).toMatch(/ambiguous/i);
+    const ambiguousError = current.stderr.splice(0).join("");
+    expect(ambiguousError).toMatch(/ambiguous/i);
+    expect(ambiguousError).not.toMatch(/new preview|fresh reviewed plan|preview command again/i);
     expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
+
+    expect(await run([
+      "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(0);
+    expect((await readEvidencePolicy(current.stateDir)).mode).toBe("learning");
+  });
+
+  it("rejects evidence payload identity tampering before mutation", async () => {
+    for (const field of ["id", "createdAt", "expiresAt"] as const) {
+      expect(await run([
+        "evidence", "policy", "set",
+        "--mode", "learning",
+        "--retention-days", "45",
+        "--max-events", "1000",
+        "--json"
+      ], current.context)).toBe(0);
+      const preview = JSON.parse(current.stdout.splice(0).join(""));
+      await tamperPayloadIdentity(current.stateDir, preview.planId, field);
+
+      expect(await run([
+        "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+      expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
+    }
+
+    await seedEvidence(current.stateDir);
+    for (const field of ["id", "createdAt", "expiresAt"] as const) {
+      expect(await run(["evidence", "erase", "--json"], current.context)).toBe(0);
+      const preview = JSON.parse(current.stdout.splice(0).join(""));
+      await tamperPayloadIdentity(current.stateDir, preview.planId, field);
+
+      expect(await run([
+        "evidence", "erase", "--plan", preview.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+      await expect(access(join(current.stateDir, "preflights.json"))).resolves.toBeUndefined();
+      await expect(access(join(current.stateDir, "evidence-events.jsonl"))).resolves.toBeUndefined();
+    }
   });
 
   it("refuses wrong-kind and expired evidence plans without mutation", async () => {

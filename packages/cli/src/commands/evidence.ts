@@ -25,13 +25,14 @@ import {
   writeEvidenceExport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
+import {
+  matchesReviewedPlanIdentity,
+  reviewedPlanRetryHint
+} from "../reviewed-plan.js";
 
 function errorText(error: unknown): string {
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    const retry = error.code.startsWith("REVIEWED_PLAN_")
-      ? " Run the preview command again to create a fresh reviewed plan."
-      : "";
-    return `${error.code}: ${error.message}${retry}`;
+    return `${error.code}: ${error.message}${reviewedPlanRetryHint(error.code)}`;
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -129,7 +130,7 @@ export async function evidencePolicySetCommand(
       if (!options.confirm) {
         throw new EvidenceReviewedPlanError(
           "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
-          "Use --confirm with the reviewed plan ID, or run a new preview"
+          "Use --confirm with the reviewed plan ID"
         );
       }
       if (hasRequest) {
@@ -144,10 +145,10 @@ export async function evidencePolicySetCommand(
         now
       });
       const parsed = evidencePolicyPlanSchema.safeParse(envelope.payload);
-      if (!parsed.success) {
+      if (!parsed.success || !matchesReviewedPlanIdentity(envelope, parsed.data)) {
         throw new EvidenceReviewedPlanError(
           "REVIEWED_PLAN_INVALID",
-          "Stored evidence policy payload is invalid"
+          "Stored evidence policy payload or identity is invalid"
         );
       }
       const policy = await applyEvidencePolicyPlan(context.stateDir, parsed.data, { now });
@@ -194,7 +195,10 @@ export async function evidencePolicySetCommand(
     context.stdout(options.json
       ? `${JSON.stringify({ ...plan, planId: plan.id, applyCommand }, null, 2)}\n`
       : [
-          `Evidence policy plan: ${plan.before.mode} -> ${plan.after.mode}`,
+          "Evidence policy plan:",
+          `Mode: ${plan.before.mode} -> ${plan.after.mode}`,
+          `Retention days: ${plan.before.retentionDays} -> ${plan.after.retentionDays}`,
+          `Max events: ${plan.before.maxEvents} -> ${plan.after.maxEvents}`,
           `Plan ID: ${plan.id}`,
           `Expires: ${plan.expiresAt}`,
           `Apply: ${applyCommand}`,
@@ -321,7 +325,7 @@ export async function evidenceEraseCommand(
       if (!options.confirm) {
         throw new EvidenceReviewedPlanError(
           "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
-          "Use --confirm with the reviewed plan ID, or run a new preview"
+          "Use --confirm with the reviewed plan ID"
         );
       }
       const envelope = await claimReviewedPlan(context.stateDir, {
@@ -330,10 +334,10 @@ export async function evidenceEraseCommand(
         now
       });
       const parsed = evidenceErasePlanSchema.safeParse(envelope.payload);
-      if (!parsed.success) {
+      if (!parsed.success || !matchesReviewedPlanIdentity(envelope, parsed.data)) {
         throw new EvidenceReviewedPlanError(
           "REVIEWED_PLAN_INVALID",
-          "Stored evidence erase payload is invalid"
+          "Stored evidence erase payload or identity is invalid"
         );
       }
       await applyEvidenceErasePlan(context.stateDir, parsed.data, { now });
