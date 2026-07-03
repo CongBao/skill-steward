@@ -292,8 +292,14 @@ describe("evidence command", () => {
         "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
       ], current.context)).toBe(1);
       expect(current.stderr.splice(0).join(""))
-        .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+        .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
       expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
+
+      expect(await run([
+        "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
     }
 
     await seedEvidence(current.stateDir);
@@ -306,9 +312,15 @@ describe("evidence command", () => {
         "evidence", "erase", "--plan", preview.planId, "--confirm"
       ], current.context)).toBe(1);
       expect(current.stderr.splice(0).join(""))
-        .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+        .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
       await expect(access(join(current.stateDir, "preflights.json"))).resolves.toBeUndefined();
       await expect(access(join(current.stateDir, "evidence-events.jsonl"))).resolves.toBeUndefined();
+
+      expect(await run([
+        "evidence", "erase", "--plan", preview.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
     }
   });
 

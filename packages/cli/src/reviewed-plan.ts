@@ -36,12 +36,23 @@ function errorCode(error: unknown): string | undefined {
 
 function consumedReviewedPlanError(error: unknown): Error {
   const code = errorCode(error);
-  if (code !== undefined && reviewedPlanRetryHint(code) !== "") {
-    return error as Error;
-  }
   const message = error instanceof Error ? error.message : String(error);
+  const consumed = "This reviewed plan has been consumed.";
+  const freshPreview = "Run the preview command again to create a fresh reviewed plan.";
+  const additions = [
+    ...(message.includes(consumed) ? [] : [consumed]),
+    ...(
+      (code !== undefined && reviewedPlanRetryHint(code) !== "")
+      || message.includes(freshPreview)
+        ? []
+        : [freshPreview]
+    )
+  ];
+  if (additions.length === 0 && error instanceof Error) return error;
+
   const wrapped = new Error(
-    `${message} This reviewed plan has been consumed. Run the preview command again to create a fresh reviewed plan.`
+    `${message}${additions.length > 0 ? ` ${additions.join(" ")}` : ""}`,
+    { cause: error }
   );
   wrapped.name = error instanceof Error ? error.name : "ReviewedPlanApplyError";
   if (code !== undefined) {

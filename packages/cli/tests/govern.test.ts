@@ -169,8 +169,14 @@ describe("govern command", () => {
       "govern", "restore", "--plan", restorePlan.planId, "--confirm", "--json"
     ], current.context)).toBe(1);
     expect(current.stderr.splice(0).join(""))
-      .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+      .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
     await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(await run([
+      "govern", "restore", "--plan", restorePlan.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
 
     expect(await run(restore, current.context)).toBe(0);
     const replacementRestorePlan = JSON.parse(current.stdout.splice(0).join(""));
@@ -325,8 +331,14 @@ describe("govern command", () => {
         "govern", "quarantine", "--plan", preview.planId, "--confirm"
       ], current.context)).toBe(1);
       expect(current.stderr.splice(0).join(""))
-        .toMatch(/REVIEWED_PLAN_INVALID.*fresh reviewed plan/is);
+        .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
       await expect(access(current.activePath)).resolves.toBeUndefined();
+
+      expect(await run([
+        "govern", "quarantine", "--plan", preview.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
     }
   });
 
