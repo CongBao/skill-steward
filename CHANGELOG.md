@@ -17,6 +17,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 ### Changed
 
 - Preflight algorithm v4 routes Simplified- and Traditional-Chinese tasks with word-level concepts and filters generic workflow language, preventing unrelated Skills from matching through common single characters while preserving explainable deterministic scoring. Evidence uses a distinct numeric identity when the Node ICU/CLDR/Unicode segmentation runtime differs from the verified reference.
+- The Evidence dashboard lifecycle badge now counts only lifecycle reasons, rather than all delivery and lifecycle events, so an empty lifecycle panel cannot display a contradictory non-zero total.
 
 ### Distribution
 

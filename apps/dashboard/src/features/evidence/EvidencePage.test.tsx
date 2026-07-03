@@ -68,7 +68,7 @@ it("shows a useful empty state before any preflight evidence exists", async () =
 
 it("shows explicit-label KPIs, proxy signals, and transparent denominators", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => respond(summary)));
-  render(<EvidencePage />, { wrapper });
+  const { container } = render(<EvidencePage />, { wrapper });
 
   expect(await screen.findByText("More evidence needed")).toBeVisible();
   expect(screen.getByRole("article", { name: /Feedback rate: 60%\. 12 of 20 preflights/ })).toBeVisible();
@@ -77,6 +77,7 @@ it("shows explicit-label KPIs, proxy signals, and transparent denominators", asy
   expect(screen.getByRole("article", { name: /Install conversion: 30%\. 3 of 10 recommendations/ })).toBeVisible();
   expect(screen.getByRole("img", { name: "7 and 30 day useful-label comparison" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Lifecycle signals" })).toBeVisible();
+  expect(container.querySelector(".lifecycle-panel header > span")).toHaveTextContent("21");
   expect(screen.getByText("Complete")).toBeVisible();
   expect(screen.getByRole("heading", { name: "Harness breakdown" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Algorithm breakdown" })).toBeVisible();
