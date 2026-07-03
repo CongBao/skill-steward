@@ -275,10 +275,18 @@ export async function run(
 
   integrate
     .command("apply")
-    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
+    .description("Apply one exact reviewed integration plan")
+    .option("--plan <id>", "reviewed integration plan ID")
+    .option("--harness <id>", "not accepted with reviewed-plan apply")
     .option("--confirm", "confirm the reviewed integration plan", false)
-    .action(async (options: { harness: string; confirm: boolean }) => {
-      exitCode = await integrateApplyCommand(options.harness, options.confirm, context);
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      plan?: string;
+      harness?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await integrateApplyCommand(options, context);
     });
 
   integrate

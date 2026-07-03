@@ -7,6 +7,7 @@ import {
   planIntegration,
   removeIntegration,
   removeManagedCompanionSkill,
+  rollbackIntegrationPlan,
   type IntegrationConfigOptions,
   type IntegrationHarness,
   type IntegrationPlan,
@@ -17,7 +18,9 @@ const harnesses: IntegrationHarness[] = ["codex", "claude-code", "github-copilot
 
 export type IntegrationServiceErrorCode =
   | "INVALID_INTEGRATION_HARNESS"
-  | "INTEGRATION_PLAN_REQUIRED";
+  | "INTEGRATION_PLAN_REQUIRED"
+  | "INTEGRATION_READINESS_FAILED"
+  | "INTEGRATION_ROLLBACK_FAILED";
 
 export class IntegrationServiceError extends Error {
   constructor(
@@ -41,6 +44,7 @@ export interface IntegrationServiceOptions {
   home: string;
   stateDirectory: string;
   companionSkillDirectory: string;
+  afterApply: () => Promise<void>;
   now?: () => Date;
   id?: () => string;
 }
@@ -91,12 +95,47 @@ export function createIntegrationServices(
           "Review the current integration plan before applying it"
         );
       }
+      plans.delete(harness);
       const installed = await installCompanionSkill(companionOptions);
+      let applied = false;
       try {
         await applyIntegrationPlan(plan, configOptions);
-        plans.delete(harness);
+        applied = true;
+        try {
+          await options.afterApply();
+        } catch (readinessError) {
+          const failures: string[] = [];
+          if (plan.changes.length > 0) {
+            try {
+              await rollbackIntegrationPlan(plan, configOptions);
+            } catch (error) {
+              failures.push(error instanceof Error ? error.message : String(error));
+            }
+          }
+          if (installed.created && failures.length === 0) {
+            try {
+              if (!await removeManagedCompanionSkill(companionOptions)) {
+                failures.push("Companion Skill changed before rollback");
+              }
+            } catch (error) {
+              failures.push(error instanceof Error ? error.message : String(error));
+            }
+          }
+          if (failures.length > 0) {
+            throw new IntegrationServiceError(
+              "INTEGRATION_ROLLBACK_FAILED",
+              `The initial readiness scan failed and rollback was incomplete: ${failures.join("; ")}`
+            );
+          }
+          throw new IntegrationServiceError(
+            "INTEGRATION_READINESS_FAILED",
+            "The initial readiness scan failed; artifacts created by this apply were rolled back"
+          );
+        }
       } catch (error) {
-        if (installed.created) await removeManagedCompanionSkill(companionOptions);
+        if (!applied && installed.created) {
+          await removeManagedCompanionSkill(companionOptions);
+        }
         throw error;
       }
       return integrationStatus(harness, configOptions);

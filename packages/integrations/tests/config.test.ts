@@ -4,9 +4,11 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   applyIntegrationPlan,
+  integrationPlanSchema,
   integrationStatus,
   planIntegration,
-  removeIntegration
+  removeIntegration,
+  rollbackIntegrationPlan
 } from "../src/config.js";
 
 function target(home: string, harness: "codex" | "claude-code"): string {
@@ -120,6 +122,124 @@ it("produces an idempotent plan without a phantom backup", async () => {
   const second = await planIntegration("claude-code", options);
   expect(second.changes).toEqual([]);
   expect(second.backupPath).toBeUndefined();
+});
+
+it("rolls back an applied plan to exact reviewed bytes or a missing target", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-exact-rollback-"));
+  const stateDirectory = join(home, "state");
+  const path = await seed(home, "codex");
+  const original = await readFile(path, "utf8");
+  const options = {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z")
+  };
+  const plan = await planIntegration("codex", options);
+  await applyIntegrationPlan(plan, options);
+  await rollbackIntegrationPlan(plan, options);
+  expect(await readFile(path, "utf8")).toBe(original);
+
+  const cleanHome = await mkdtemp(join(tmpdir(), "steward-delete-rollback-"));
+  const cleanOptions = { ...options, home: cleanHome, stateDirectory: join(cleanHome, "state") };
+  const cleanPlan = await planIntegration("codex", cleanOptions);
+  await applyIntegrationPlan(cleanPlan, cleanOptions);
+  await rollbackIntegrationPlan(cleanPlan, cleanOptions);
+  await expect(access(target(cleanHome, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("restores configuration when the post-apply journal cannot commit", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-journal-rollback-"));
+  const stateDirectory = join(home, "state");
+  const plan = await planIntegration("codex", {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z")
+  });
+  await mkdir(join(stateDirectory, "integrations.json"), { recursive: true });
+
+  await expect(applyIntegrationPlan(plan, {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z")
+  })).rejects.toBeDefined();
+  await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("creates a strict ten-minute plan and refuses expired plans before writing", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-expired-config-"));
+  const stateDirectory = join(home, "state");
+  const path = await seed(home, "codex");
+  const before = await readFile(path, "utf8");
+  const plan = await planIntegration("codex", {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z"),
+    id: () => "integration-expiry"
+  });
+
+  expect(plan.expiresAt).toBe("2026-07-03T00:10:00.000Z");
+  expect(integrationPlanSchema.safeParse({ ...plan, unexpected: true }).success).toBe(false);
+  await expect(applyIntegrationPlan(plan, {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:10:00.000Z")
+  })).rejects.toMatchObject({ code: "INTEGRATION_PLAN_EXPIRED" });
+  expect(await readFile(path, "utf8")).toBe(before);
+});
+
+it("rejects tampered plan paths, changes, fingerprints, and non-JSON config", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-strict-plan-"));
+  const stateDirectory = join(home, "state");
+  await seed(home, "codex");
+  const options = {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z"),
+    id: () => "integration-strict"
+  };
+  const plan = await planIntegration("codex", options);
+  const accessorConfig = Object.defineProperty({}, "computed", {
+    enumerable: true,
+    get: () => "not plain JSON"
+  });
+  expect(integrationPlanSchema.safeParse({
+    ...plan,
+    afterConfig: accessorConfig
+  }).success).toBe(false);
+  const wrongTarget = join(home, ".claude", "settings.json");
+  const wrongTargetPlan = {
+    ...plan,
+    targetPath: wrongTarget,
+    backupPath: plan.backupPath!.replace(plan.targetPath, wrongTarget),
+    changes: [
+      { operation: "backup" as const, path: wrongTarget },
+      { operation: "write" as const, path: wrongTarget }
+    ]
+  };
+  expect(integrationPlanSchema.safeParse(wrongTargetPlan).success).toBe(true);
+  await expect(applyIntegrationPlan(wrongTargetPlan, options)).rejects.toMatchObject({
+    code: "INTEGRATION_UNSAFE_PATH"
+  });
+
+  for (const tampered of [
+    { ...plan, changes: [{ operation: "write", path: join(home, "elsewhere.json") }] },
+    { ...plan, afterFingerprint: "sha256:not-a-fingerprint" },
+    { ...plan, installedEntryFingerprint: plan.afterFingerprint },
+    { ...plan, afterConfig: { invalid: undefined } }
+  ]) {
+    await expect(applyIntegrationPlan(tampered, options)).rejects.toMatchObject({
+      code: expect.stringMatching(/^INTEGRATION_/)
+    });
+  }
+
+  const cleanHome = await mkdtemp(join(tmpdir(), "steward-strict-clean-"));
+  const cleanOptions = { ...options, home: cleanHome, stateDirectory: join(cleanHome, "state") };
+  const cleanPlan = await planIntegration("codex", cleanOptions);
+  const hiddenWrite = { ...cleanPlan, changes: [] };
+  expect(integrationPlanSchema.safeParse(hiddenWrite).success).toBe(true);
+  await expect(applyIntegrationPlan(hiddenWrite, cleanOptions)).rejects.toMatchObject({
+    code: "INTEGRATION_DRIFTED"
+  });
 });
 
 it("manages only the dedicated Copilot Hook file and removes it only without drift", async () => {

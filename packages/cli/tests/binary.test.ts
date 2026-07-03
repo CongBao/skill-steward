@@ -44,6 +44,12 @@ describe("built CLI", () => {
     expect(stdout).toMatch(/Recommend a minimal set of Skills for a\s+task/);
     expect(stdout).toContain("hook");
     expect(stdout).toContain("integrate");
+    const applyHelp = (await execFileAsync(
+      process.execPath,
+      [binary, "integrate", "apply", "--help"]
+    )).stdout;
+    expect(applyHelp).toContain("--plan <id>");
+    expect(applyHelp).toContain("--confirm");
   });
 
   it("runs as an ESM executable", async () => {
@@ -165,8 +171,16 @@ describe("built CLI", () => {
     expect(stateText).not.toContain(rawTask);
 
     for (const harness of ["codex", "claude-code", "github-copilot"]) {
-      await execFileAsync(process.execPath, [binary, "integrate", "plan", "--harness", harness], { cwd: workspace, env });
-      await execFileAsync(process.execPath, [binary, "integrate", "apply", "--harness", harness, "--confirm"], { cwd: workspace, env });
+      const preview = JSON.parse((await execFileAsync(
+        process.execPath,
+        [binary, "integrate", "plan", "--harness", harness, "--json"],
+        { cwd: workspace, env }
+      )).stdout) as { id: string };
+      await execFileAsync(
+        process.execPath,
+        [binary, "integrate", "apply", "--plan", preview.id, "--confirm"],
+        { cwd: workspace, env }
+      );
     }
     await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
