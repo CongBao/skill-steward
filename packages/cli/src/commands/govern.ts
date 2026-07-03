@@ -25,6 +25,7 @@ import {
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
 import {
+  applyClaimedReviewedPlan,
   matchesReviewedPlanIdentity,
   reviewedPlanRetryHint
 } from "../reviewed-plan.js";
@@ -89,6 +90,39 @@ async function rescan(context: CliContext): Promise<void> {
   await writeLatestReport(context.stateDir, report);
 }
 
+interface PortfolioRefreshWarning {
+  code: "PORTFOLIO_REFRESH_FAILED";
+  message: string;
+  recoveryCommand: "skill-steward scan";
+}
+
+type PortfolioRefreshResult = {
+  refresh:
+    | { status: "completed" }
+    | { status: "failed"; recoveryCommand: "skill-steward scan" };
+  warnings: PortfolioRefreshWarning[];
+};
+
+async function refreshAfterCommit(context: CliContext): Promise<PortfolioRefreshResult> {
+  try {
+    await rescan(context);
+    return { refresh: { status: "completed" }, warnings: [] };
+  } catch {
+    const warning: PortfolioRefreshWarning = {
+      code: "PORTFOLIO_REFRESH_FAILED",
+      message: "The governance action committed, but the portfolio report was not refreshed.",
+      recoveryCommand: "skill-steward scan"
+    };
+    context.stderr(
+      `${warning.code}: ${warning.message} Run: ${warning.recoveryCommand}\n`
+    );
+    return {
+      refresh: { status: "failed", recoveryCommand: warning.recoveryCommand },
+      warnings: [warning]
+    };
+  }
+}
+
 async function recordAction(
   action: "quarantine" | "restore",
   actionId: string,
@@ -134,27 +168,39 @@ export async function governQuarantineCommand(
         kind: "governance",
         now
       });
-      const parsed = governancePlanSchema.safeParse(envelope.payload);
-      if (
-        !parsed.success
-        || parsed.data.kind !== "quarantine"
-        || !matchesReviewedPlanIdentity(envelope, parsed.data)
-      ) {
-        throw new GovernCommandError(
-          "REVIEWED_PLAN_INVALID",
-          "Stored governance payload is not a valid quarantine plan"
-        );
-      }
-      const plan = parsed.data;
-      const result = await applyQuarantinePlan(plan, {
-        stateDirectory: context.stateDir,
-        ...(context.now ? { now: context.now } : {})
+      const { plan, result } = await applyClaimedReviewedPlan(async () => {
+        const parsed = governancePlanSchema.safeParse(envelope.payload);
+        if (
+          !parsed.success
+          || parsed.data.kind !== "quarantine"
+          || !matchesReviewedPlanIdentity(envelope, parsed.data)
+        ) {
+          throw new GovernCommandError(
+            "REVIEWED_PLAN_INVALID",
+            "Stored governance payload is not a valid quarantine plan"
+          );
+        }
+        return {
+          plan: parsed.data,
+          result: await applyQuarantinePlan(parsed.data, {
+            stateDirectory: context.stateDir,
+            ...(context.now ? { now: context.now } : {})
+          })
+        };
       });
-      await rescan(context);
+      const refreshResult = await refreshAfterCommit(context);
       await recordAction("quarantine", result.transaction.id, plan.skillId, context);
       context.stdout(options.json
-        ? `${JSON.stringify({ ...result, planId: envelope.id }, null, 2)}\n`
-        : `Quarantined '${terminalSafeText(plan.skillName ?? basename(plan.activePath))}' (${terminalSafeText(result.transaction.id)}).\n`
+        ? `${JSON.stringify({
+            ...result,
+            planId: envelope.id,
+            ...refreshResult
+          }, null, 2)}\n`
+        : [
+            `Quarantined '${terminalSafeText(plan.skillName ?? basename(plan.activePath))}' (${terminalSafeText(result.transaction.id)}).`,
+            `Plan ID: ${envelope.id}`,
+            ""
+          ].join("\n")
       );
       return 0;
     }
@@ -222,27 +268,38 @@ export async function governRestoreCommand(
         kind: "governance",
         now
       });
-      const parsed = governancePlanSchema.safeParse(envelope.payload);
-      if (
-        !parsed.success
-        || parsed.data.kind !== "restore"
-        || !matchesReviewedPlanIdentity(envelope, parsed.data)
-      ) {
-        throw new GovernCommandError(
-          "REVIEWED_PLAN_INVALID",
-          "Stored governance payload is not a valid restore plan"
-        );
-      }
-      const plan = parsed.data;
-      const result = await applyRestorePlan(plan, {
-        stateDirectory: context.stateDir,
-        ...(context.now ? { now: context.now } : {})
+      const { result } = await applyClaimedReviewedPlan(async () => {
+        const parsed = governancePlanSchema.safeParse(envelope.payload);
+        if (
+          !parsed.success
+          || parsed.data.kind !== "restore"
+          || !matchesReviewedPlanIdentity(envelope, parsed.data)
+        ) {
+          throw new GovernCommandError(
+            "REVIEWED_PLAN_INVALID",
+            "Stored governance payload is not a valid restore plan"
+          );
+        }
+        return {
+          result: await applyRestorePlan(parsed.data, {
+            stateDirectory: context.stateDir,
+            ...(context.now ? { now: context.now } : {})
+          })
+        };
       });
-      await rescan(context);
+      const refreshResult = await refreshAfterCommit(context);
       await recordAction("restore", result.transaction.id, result.transaction.skillId, context);
       context.stdout(options.json
-        ? `${JSON.stringify({ ...result, planId: envelope.id }, null, 2)}\n`
-        : `Restored Skill '${terminalSafeText(result.transaction.skillName ?? basename(result.transaction.originalPath))}' (${terminalSafeText(result.transaction.id)}).\n`
+        ? `${JSON.stringify({
+            ...result,
+            planId: envelope.id,
+            ...refreshResult
+          }, null, 2)}\n`
+        : [
+            `Restored Skill '${terminalSafeText(result.transaction.skillName ?? basename(result.transaction.originalPath))}' (${terminalSafeText(result.transaction.id)}).`,
+            `Plan ID: ${envelope.id}`,
+            ""
+          ].join("\n")
       );
       return 0;
     }

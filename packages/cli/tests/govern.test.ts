@@ -1,4 +1,12 @@
-import { access, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  unlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSkill } from "@skill-steward/engine";
@@ -32,6 +40,12 @@ async function tamperPayloadIdentity(
     ? `${String(payload[field])}-tampered`
     : new Date(Date.parse(String(payload[field])) - 60_000).toISOString();
   await writeFile(path, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+}
+
+async function makeLatestReportUnwritable(stateDir: string): Promise<void> {
+  const path = join(stateDir, "latest-report.json");
+  await unlink(path);
+  await mkdir(path);
 }
 
 async function fixture() {
@@ -195,8 +209,9 @@ describe("govern command", () => {
       "govern", "quarantine", "--plan", quarantinePlanId as string, "--confirm"
     ], current.context)).toBe(0);
     const quarantineOutput = current.stdout.splice(0).join("");
-    const quarantineTransactionId = quarantineOutput.match(/^Quarantined 'review' \(([^)]+)\)\.\n$/)?.[1];
+    const quarantineTransactionId = quarantineOutput.match(/^Quarantined 'review' \(([^)]+)\)\./m)?.[1];
     expect(quarantineTransactionId).toBeTruthy();
+    expect(quarantineOutput).toMatch(/^Plan ID: \S+$/m);
 
     expect(await run(["govern", "history"], current.context)).toBe(0);
     expect(current.stdout.splice(0).join("").trim().split("\n")).toContain(
@@ -217,8 +232,9 @@ describe("govern command", () => {
       "govern", "restore", "--plan", restorePlanId as string, "--confirm"
     ], current.context)).toBe(0);
     const restoreOutput = current.stdout.splice(0).join("");
-    const restoreTransactionId = restoreOutput.match(/^Restored Skill 'review' \(([^)]+)\)\.\n$/)?.[1];
+    const restoreTransactionId = restoreOutput.match(/^Restored Skill 'review' \(([^)]+)\)\./m)?.[1];
     expect(restoreTransactionId).toBeTruthy();
+    expect(restoreOutput).toMatch(/^Plan ID: \S+$/m);
 
     expect(await run(["govern", "history"], current.context)).toBe(0);
     expect(current.stdout.splice(0).join("").trim().split("\n")).toEqual(expect.arrayContaining([
@@ -314,6 +330,59 @@ describe("govern command", () => {
     }
   });
 
+  it("reports a committed quarantine when the post-commit JSON refresh fails", async () => {
+    expect(await run([
+      "govern", "quarantine", "--skill", current.parsed.id, "--json"
+    ], current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    await makeLatestReportUnwritable(current.stateDir);
+
+    expect(await run([
+      "govern", "quarantine", "--plan", preview.planId, "--confirm", "--json"
+    ], current.context)).toBe(0);
+    const output = JSON.parse(current.stdout.splice(0).join(""));
+    expect(output).toMatchObject({
+      planId: preview.planId,
+      transaction: { action: "quarantine", status: "quarantined" },
+      refresh: { status: "failed", recoveryCommand: "skill-steward scan" },
+      warnings: [{
+        code: "PORTFOLIO_REFRESH_FAILED",
+        recoveryCommand: "skill-steward scan"
+      }]
+    });
+    expect(current.stdout).toEqual([]);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/PORTFOLIO_REFRESH_FAILED.*skill-steward scan/is);
+    await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reports a committed restore when the post-commit human refresh fails", async () => {
+    expect(await run([
+      "govern", "quarantine", "--skill", current.parsed.id, "--json"
+    ], current.context)).toBe(0);
+    const quarantinePlan = JSON.parse(current.stdout.splice(0).join(""));
+    expect(await run([
+      "govern", "quarantine", "--plan", quarantinePlan.planId, "--confirm", "--json"
+    ], current.context)).toBe(0);
+    const quarantine = JSON.parse(current.stdout.splice(0).join(""));
+
+    expect(await run([
+      "govern", "restore", "--transaction", quarantine.transaction.id, "--json"
+    ], current.context)).toBe(0);
+    const restorePlan = JSON.parse(current.stdout.splice(0).join(""));
+    await makeLatestReportUnwritable(current.stateDir);
+
+    expect(await run([
+      "govern", "restore", "--plan", restorePlan.planId, "--confirm"
+    ], current.context)).toBe(0);
+    const output = current.stdout.splice(0).join("");
+    expect(output).toMatch(/^Restored Skill 'review' \([^)]+\)\./m);
+    expect(output).toContain(`Plan ID: ${restorePlan.planId}`);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/PORTFOLIO_REFRESH_FAILED.*skill-steward scan/is);
+    await expect(access(current.activePath)).resolves.toBeUndefined();
+  });
+
   it("preserves governance drift checks for a claimed exact plan", async () => {
     expect(await run([
       "govern", "quarantine", "--skill", current.parsed.id, "--json"
@@ -330,7 +399,14 @@ describe("govern command", () => {
     expect(await run([
       "govern", "quarantine", "--plan", preview.planId, "--confirm"
     ], current.context)).toBe(1);
-    expect(current.stderr.splice(0).join("")).toMatch(/SOURCE_DRIFT|fingerprint/i);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/SOURCE_DRIFT.*consumed.*fresh reviewed plan/is);
     await expect(access(current.activePath)).resolves.toBeUndefined();
+
+    expect(await run([
+      "govern", "quarantine", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
   });
 });

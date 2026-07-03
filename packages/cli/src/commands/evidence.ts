@@ -26,15 +26,19 @@ import {
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
 import {
+  applyClaimedReviewedPlan,
   matchesReviewedPlanIdentity,
   reviewedPlanRetryHint
 } from "../reviewed-plan.js";
+import { terminalSafeText } from "../terminal.js";
 
 function errorText(error: unknown): string {
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    return `${error.code}: ${error.message}${reviewedPlanRetryHint(error.code)}`;
+    return terminalSafeText(
+      `${error.code}: ${error.message}${reviewedPlanRetryHint(error.code)}`
+    );
   }
-  return error instanceof Error ? error.message : String(error);
+  return terminalSafeText(error instanceof Error ? error.message : String(error));
 }
 
 class EvidenceReviewedPlanError extends Error {
@@ -144,14 +148,16 @@ export async function evidencePolicySetCommand(
         kind: "evidence-policy",
         now
       });
-      const parsed = evidencePolicyPlanSchema.safeParse(envelope.payload);
-      if (!parsed.success || !matchesReviewedPlanIdentity(envelope, parsed.data)) {
-        throw new EvidenceReviewedPlanError(
-          "REVIEWED_PLAN_INVALID",
-          "Stored evidence policy payload or identity is invalid"
-        );
-      }
-      const policy = await applyEvidencePolicyPlan(context.stateDir, parsed.data, { now });
+      const policy = await applyClaimedReviewedPlan(async () => {
+        const parsed = evidencePolicyPlanSchema.safeParse(envelope.payload);
+        if (!parsed.success || !matchesReviewedPlanIdentity(envelope, parsed.data)) {
+          throw new EvidenceReviewedPlanError(
+            "REVIEWED_PLAN_INVALID",
+            "Stored evidence policy payload or identity is invalid"
+          );
+        }
+        return applyEvidencePolicyPlan(context.stateDir, parsed.data, { now });
+      });
       context.stdout(options.json
         ? `${JSON.stringify({ ...policy, planId: envelope.id }, null, 2)}\n`
         : `Evidence policy updated to ${policy.mode} (plan ${envelope.id}).\n`
@@ -226,7 +232,7 @@ export async function evidenceSummaryCommand(
       : [
           `Evidence: ${summary.totals.labeled}/${summary.totals.preflights} labeled preflights`,
           `Readiness: ${summary.readiness.status}`,
-          ...summary.readiness.reasons.map((reason) => `- ${reason}`),
+          ...summary.readiness.reasons.map((reason) => `- ${terminalSafeText(reason)}`),
           ""
         ].join("\n")
     );
@@ -275,7 +281,7 @@ export async function evidenceFeedbackCommand(
           preflightId: options.preflight,
           ...feedback
         }, null, 2)}\n`
-      : `Feedback recorded for Preflight ${options.preflight}.\n`
+      : `Feedback recorded for Preflight ${terminalSafeText(options.preflight)}.\n`
     );
     return 0;
   } catch (error) {
@@ -292,7 +298,7 @@ export async function evidenceExportCommand(
   try {
     const path = resolve(context.cwd, output);
     await writeEvidenceExport(path, await readLocalEvidenceDataset(context.stateDir), { replace });
-    context.stdout(`Evidence exported to ${path}.\n`);
+    context.stdout(`Evidence exported to ${terminalSafeText(path)}.\n`);
     return 0;
   } catch (error) {
     context.stderr(`${errorText(error)}\n`);
@@ -333,14 +339,16 @@ export async function evidenceEraseCommand(
         kind: "evidence-erase",
         now
       });
-      const parsed = evidenceErasePlanSchema.safeParse(envelope.payload);
-      if (!parsed.success || !matchesReviewedPlanIdentity(envelope, parsed.data)) {
-        throw new EvidenceReviewedPlanError(
-          "REVIEWED_PLAN_INVALID",
-          "Stored evidence erase payload or identity is invalid"
-        );
-      }
-      await applyEvidenceErasePlan(context.stateDir, parsed.data, { now });
+      await applyClaimedReviewedPlan(async () => {
+        const parsed = evidenceErasePlanSchema.safeParse(envelope.payload);
+        if (!parsed.success || !matchesReviewedPlanIdentity(envelope, parsed.data)) {
+          throw new EvidenceReviewedPlanError(
+            "REVIEWED_PLAN_INVALID",
+            "Stored evidence erase payload or identity is invalid"
+          );
+        }
+        await applyEvidenceErasePlan(context.stateDir, parsed.data, { now });
+      });
       context.stdout(options.json
         ? `${JSON.stringify({ erased: true, planId: envelope.id }, null, 2)}\n`
         : `Local evidence records and salt erased (plan ${envelope.id}).\n`
@@ -370,7 +378,7 @@ export async function evidenceEraseCommand(
       ? `${JSON.stringify({ ...plan, planId: plan.id, applyCommand }, null, 2)}\n`
       : [
           ...plan.paths.map(({ kind, path, exists }) =>
-            `- ${kind}: ${path} (${exists ? "present" : "absent"})`
+            `- ${kind}: ${terminalSafeText(path)} (${exists ? "present" : "absent"})`
           ),
           `Plan ID: ${plan.id}`,
           `Expires: ${plan.expiresAt}`,

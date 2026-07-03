@@ -343,6 +343,87 @@ describe("evidence command", () => {
     expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
   });
 
+  it("explains that a policy drift failure consumed the reviewed plan", async () => {
+    expect(await run([
+      "evidence", "policy", "set",
+      "--mode", "learning",
+      "--retention-days", "45",
+      "--max-events", "1000",
+      "--json"
+    ], current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    await writeFile(join(current.stateDir, "evidence-policy.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      mode: "learning",
+      retentionDays: 60,
+      maxEvents: 2_000
+    }, null, 2)}\n`, "utf8");
+
+    expect(await run([
+      "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/POLICY_DRIFT.*consumed.*fresh reviewed plan/is);
+
+    expect(await run([
+      "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+  });
+
+  it("explains that an erase drift failure consumed the reviewed plan", async () => {
+    await seedEvidence(current.stateDir);
+    expect(await run(["evidence", "erase", "--json"], current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    const preflights = join(current.stateDir, "preflights.json");
+    await writeFile(preflights, `${await readFile(preflights, "utf8")} `, "utf8");
+
+    expect(await run([
+      "evidence", "erase", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/EVIDENCE_ERASE_DRIFT.*consumed.*fresh reviewed plan/is);
+    await expect(access(preflights)).resolves.toBeUndefined();
+
+    expect(await run([
+      "evidence", "erase", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+  });
+
+  it("escapes terminal controls in evidence human paths and errors", async () => {
+    const unsafeState = join(current.base, "state\u001b[2J\nspoof");
+    await mkdir(unsafeState);
+    current.context.stateDir = unsafeState;
+
+    expect(await run(["evidence", "erase"], current.context)).toBe(0);
+    const eraseOutput = current.stdout.splice(0).join("");
+    expect(eraseOutput).not.toContain("\u001b");
+    expect(eraseOutput).toContain("state\\u{001b}[2J\\u{000a}spoof");
+
+    const unsafeOutput = join(current.base, "export\u001b[2J\nrecord.json");
+    expect(await run([
+      "evidence", "export", "--output", unsafeOutput
+    ], current.context)).toBe(0);
+    const exportOutput = current.stdout.splice(0).join("");
+    expect(exportOutput).not.toContain("\u001b");
+    expect(exportOutput).toContain("export\\u{001b}[2J\\u{000a}record.json");
+
+    const missingUnsafeOutput = join(
+      current.base,
+      "missing\u001b[2J\nparent",
+      "record.json"
+    );
+    expect(await run([
+      "evidence", "export", "--output", missingUnsafeOutput
+    ], current.context)).toBe(1);
+    const error = current.stderr.splice(0).join("");
+    expect(error).not.toContain("\u001b");
+    expect(error).toContain("missing\\u{001b}[2J\\u{000a}parent");
+  });
+
   it("records explicit Preflight feedback from the CLI", async () => {
     await seedEvidence(current.stateDir);
 

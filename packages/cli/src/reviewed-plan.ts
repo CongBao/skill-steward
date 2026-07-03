@@ -25,3 +25,37 @@ export function reviewedPlanRetryHint(code: string): string {
     ? " Run the preview command again to create a fresh reviewed plan."
     : "";
 }
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error
+    && "code" in error
+    && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+function consumedReviewedPlanError(error: unknown): Error {
+  const code = errorCode(error);
+  if (code !== undefined && reviewedPlanRetryHint(code) !== "") {
+    return error as Error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const wrapped = new Error(
+    `${message} This reviewed plan has been consumed. Run the preview command again to create a fresh reviewed plan.`
+  );
+  wrapped.name = error instanceof Error ? error.name : "ReviewedPlanApplyError";
+  if (code !== undefined) {
+    Object.defineProperty(wrapped, "code", { value: code, enumerable: true });
+  }
+  return wrapped;
+}
+
+export async function applyClaimedReviewedPlan<T>(
+  apply: () => Promise<T>
+): Promise<T> {
+  try {
+    return await apply();
+  } catch (error) {
+    throw consumedReviewedPlanError(error);
+  }
+}
