@@ -92,7 +92,7 @@ skill-steward preflight \
 skill-steward dashboard
 ```
 
-This first path is read-only. When you later choose an installation, policy, governance, or integration change, stop at the preview and apply only the exact command it prints; no mutation is required to evaluate the portfolio or recommendations.
+This first path is read-only. When you later choose an installation, policy, governance, or managed integration setup, stop at the preview and apply only the exact command it prints; no mutation is required to evaluate the portfolio or recommendations.
 
 For a headless inventory or report:
 
@@ -194,7 +194,7 @@ skill-steward integrate apply --plan <id> --confirm
 
 Each preview persists the exact configuration and backup paths. Apply accepts only the emitted plan ID. It then runs an initial scan and saves a cached portfolio before reporting the integration ready, so the first prompt Hook does not depend on a prior manual scan. If the readiness scan fails, Skill Steward rolls back the configuration and companion Skill created by that apply when safe; an incomplete rollback is reported rather than hidden.
 
-Integration mutations are serialized across CLI and dashboard processes. A busy attempt stops without changing Harness files and does not consume the reviewed plan, so the same plan can be retried after the active mutation finishes. Unrelated settings and Hooks are preserved, and removal stops if managed configuration has changed externally:
+Integration mutations are serialized across CLI and dashboard processes. A busy integration apply stops without changing Harness files and does not consume its reviewed plan, so the same plan can be retried after the active mutation finishes. A busy removal stops before changing files. Unrelated settings and Hooks are preserved, and removal stops if managed configuration has changed externally:
 
 ```bash
 skill-steward integrate remove --harness codex --confirm
@@ -276,7 +276,7 @@ Codex, Claude Code, and GitHub Copilot already own the execution environment and
 - Persisted evidence excludes task text, extracted terms, descriptions, reasons, URLs, local paths, transcripts, assistant content, tool data, and raw Harness IDs.
 - Sanitized export and API responses never include the private HMAC salt.
 - Installation-source scripts, package managers, build commands, repository Hooks, and submodules are not executed.
-- CLI mutations apply private, expiring, single-use plan IDs; confirmation never regenerates a plan from request arguments.
+- Installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore use private, expiring, single-use plan IDs; confirmation never regenerates a plan from request arguments.
 - Integration apply uses a cross-process mutation lease and persists a cached portfolio before reporting ready.
 - Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
 - Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.

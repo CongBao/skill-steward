@@ -10,10 +10,10 @@ Run each row from a clean checkout. Manual mutation journeys must use a disposab
 
 | Area | Executable check | Expected result |
 |---|---|---|
-| Public contract and CLI version | `pnpm --filter skill-steward test -- tests/repository.test.ts tests/binary.test.ts` | Both READMEs use `--plan <id> --confirm`, help exposes the same syntax, and the binary reports `0.5.0-alpha.3`. |
-| Exact reviewed plans | `pnpm --filter skill-steward test -- tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts` | Plans survive a new process, apply the inspected payload once, stop on drift, and require a fresh preview after claim. |
-| Integration readiness and serialization | `pnpm --filter skill-steward test -- tests/integrate.test.ts tests/integrate-process.test.ts` | Apply writes an initial cached portfolio; a failed readiness scan rolls back safe new artifacts; a busy caller does not consume its plan. |
-| Package trust | `pnpm --filter skill-steward test -- tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs` | Package `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and the locked `runtime-audit.json` agree; real npm and pnpm tarballs pass exact-tree verification. |
+| Public contract and CLI version | `CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts` | Both READMEs use `--plan <id> --confirm`, help exposes the same syntax, and the binary reports `0.5.0-alpha.3`. |
+| Exact reviewed plans | `CI=true pnpm --filter skill-steward exec vitest run tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts` | Plans survive a new process, apply the inspected payload once, stop on drift, and require a fresh preview after claim. |
+| Integration readiness and serialization | `CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts` | Apply writes an initial cached portfolio; a failed readiness scan rolls back safe new artifacts; a busy caller does not consume its plan. |
+| Package trust | `CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs` | Package `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and the locked `runtime-audit.json` agree; real npm and pnpm tarballs pass exact-tree verification. |
 | Full repository | `CI=true pnpm check` | Every workspace builds, typechecks, and passes its test suite without writing private task content. |
 
 ## Build and first run
@@ -124,7 +124,7 @@ The packaged test suite runs the full cached path without touching the real home
 ```bash
 CI=true pnpm --filter @skill-steward/integrations build
 CI=true pnpm --filter @skill-steward/dashboard-server build
-CI=true pnpm --filter skill-steward test -- tests/binary.test.ts
+CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts
 ```
 
 It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, applies all three integration adapters, verifies the shared Skill and configuration, checks drift refusal, and removes managed entries while preserving unrelated configuration.
@@ -135,8 +135,8 @@ Build both artifact forms and run the same verifier used in CI:
 
 ```bash
 mkdir -p artifacts/npm artifacts/pnpm
-(cd packages/cli && npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm)
 pnpm --filter skill-steward pack --pack-destination artifacts/pnpm
+(cd packages/cli && npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm)
 node packages/cli/tests/verify-packed-artifact.mjs artifacts/npm/skill-steward-*.tgz
 node packages/cli/tests/verify-packed-artifact.mjs artifacts/pnpm/skill-steward-*.tgz
 ```

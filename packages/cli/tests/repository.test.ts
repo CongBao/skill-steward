@@ -121,6 +121,15 @@ describe("open-source repository", () => {
     expect(readme).toContain("runtime-audit.json");
     expect(readme).toMatch(/real npm and pnpm tarballs/i);
     expect(readme).toContain("Status: active alpha");
+    expect(readme).toContain("managed integration setup");
+    expect(readme).not.toContain("or integration change");
+    expect(readme).toMatch(
+      /A busy integration apply[^.]*does not consume its reviewed plan/i
+    );
+    expect(readme).toMatch(/A busy removal[^.]*before changing files/i);
+    expect(readme).toMatch(
+      /Installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore use private, expiring, single-use plan IDs/
+    );
     expect(readme).not.toContain("Managed native prompt Hooks are available only for Codex and Claude Code");
     expect(readme).not.toMatch(/status:\s*beta|beta-ready|complete native plugin (?:coverage|inventory)|universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
@@ -196,6 +205,12 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("runtime-audit.json");
     expect(chineseReadme).toMatch(/npm 和 pnpm[^。]*真实 tarball/);
     expect(chineseReadme).toContain("当前状态：活跃 Alpha");
+    expect(chineseReadme).toContain("新增 Harness 集成");
+    expect(chineseReadme).toMatch(/新增集成遇到忙碌[^。]*不会消耗[^。]*计划/);
+    expect(chineseReadme).toMatch(/移除集成遇到忙碌[^。]*改写配置之前停止/);
+    expect(chineseReadme).toMatch(
+      /安装、集成应用、证据策略、证据清除、隔离和恢复计划都保存在私有目录/
+    );
     expect(chineseReadme).not.toContain("托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code");
     expect(chineseReadme).not.toMatch(/当前状态：\s*Beta|Beta 就绪|完整(?:的)?原生插件(?:覆盖|盘点)|通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);
     for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
@@ -231,6 +246,11 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain("local-first");
     expect(packageReadme).toContain("reversible");
     expect(packageReadme).toContain("--plan <id> --confirm");
+    expect(packageReadme).toContain("integration apply");
+    expect(packageReadme).toContain(
+      "skill-steward integrate remove --harness <id> --confirm"
+    );
+    expect(packageReadme).not.toMatch(/contract applies to integration,/);
     expect(packageReadme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(packageReadme).toContain("runtime-audit.json");
     expect(packageReadme).toMatch(/real npm and pnpm tarballs/i);
@@ -282,6 +302,9 @@ describe("open-source repository", () => {
     expect(changelog).not.toContain("OpenSpec");
     expect(changelog).toContain("## [0.5.0-alpha.3] - 2026-07-03");
     expect(changelog).toMatch(/exact, single-use reviewed plans/i);
+    expect(changelog).toMatch(
+      /CLI installation, governance, integration apply, evidence-policy, and evidence-erasure/
+    );
     expect(changelog).toMatch(/initial portfolio scan/i);
     expect(changelog).toMatch(/npm and pnpm tarballs/i);
     expect(changelog).toContain("## [0.5.0-alpha.2]");
@@ -306,6 +329,17 @@ describe("open-source repository", () => {
     expect(architecture).toMatch(/raw evidence[^.]*attribution/i);
     expect(architecture).toContain("THIRD_PARTY_NOTICES.txt");
     expect(architecture).toContain("runtime-audit.json");
+    expect(architecture).toMatch(
+      /New apply and remove records are written to `integration-records\/`/
+    );
+    expect(architecture).toMatch(
+      /Integration apply acquires `integration-mutation\.lease` before claiming a reviewed plan/
+    );
+    expect(architecture).toMatch(
+      /Integration remove acquires the same lease before changing managed files/
+    );
+    expect(architecture).not.toMatch(/record fingerprints in `integrations\.json`/);
+    expect(architecture).toMatch(/CLI installation, integration apply, evidence-policy/);
     expect(architecture).not.toMatch(/OpenSpec|Superpowers/);
 
     const alphaTesting = await readFile(join(root, "docs/alpha-testing.md"), "utf8");
@@ -319,6 +353,21 @@ describe("open-source repository", () => {
     expect(alphaTesting).toMatch(/npm and pnpm tarballs/i);
     expect(alphaTesting).toMatch(/same operating-system user/i);
     expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);
+    for (const command of [
+      "CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts",
+      "CI=true pnpm --filter skill-steward exec vitest run tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts",
+      "CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts",
+      "CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs",
+      "CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts"
+    ]) {
+      expect(alphaTesting).toContain(command);
+    }
+    expect(alphaTesting).not.toContain("pnpm --filter skill-steward test -- tests/");
+    expect(alphaTesting.indexOf(
+      "pnpm --filter skill-steward pack --pack-destination artifacts/pnpm"
+    )).toBeLessThan(alphaTesting.indexOf(
+      "npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm"
+    ));
 
     const gitignore = await readFile(join(root, ".gitignore"), "utf8");
     for (const privateDirectory of [

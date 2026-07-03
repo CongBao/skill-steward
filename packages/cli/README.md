@@ -42,7 +42,11 @@ Mutation previews print a copyable apply command. Use the emitted ID rather than
 skill-steward install --plan <id> --confirm
 ```
 
-The same `--plan <id> --confirm` contract applies to integration, evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use.
+The same `--plan <id> --confirm` contract applies to integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use. Integration removal remains an explicit Harness-scoped action:
+
+```bash
+skill-steward integrate remove --harness <id> --confirm
+```
 
 ## Package trust
 
