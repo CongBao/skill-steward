@@ -244,23 +244,25 @@ export async function run(
   program
     .command("install")
     .description("Plan or apply installation of a catalog recommendation")
-    .requiredOption("--catalog-candidate <id>")
-    .requiredOption("--harness <id>")
-    .requiredOption("--scope <scope>", "global or project")
+    .option("--catalog-candidate <id>")
+    .option("--harness <id>")
+    .option("--scope <scope>", "global or project")
     .option("--workspace <path>")
     .option("--preflight <id>", "link an explicit Task Preflight recommendation")
     .option("--target-name <name>")
     .option("--replace", "replace a differing destination with backup", false)
+    .option("--plan <id>", "apply an exact reviewed installation plan")
     .option("--confirm", "confirm the reviewed installation", false)
     .option("--json", "JSON output", false)
     .action(async (options: {
-      catalogCandidate: string;
-      harness: string;
-      scope: string;
+      catalogCandidate?: string;
+      harness?: string;
+      scope?: string;
       workspace?: string;
       preflight?: string;
       targetName?: string;
       replace: boolean;
+      plan?: string;
       confirm: boolean;
       json: boolean;
     }) => {

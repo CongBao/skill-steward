@@ -1,6 +1,16 @@
-import { mkdtemp } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installationSourceSchema } from "../src/domain.js";
 import { StagingRegistry } from "../src/staging.js";
@@ -58,6 +68,145 @@ describe("StagingRegistry", () => {
 
     await expect(registry.resolve(preview.id)).rejects.toMatchObject({
       code: "PREVIEW_EXPIRED"
+    });
+    await expect(access(preview.directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("persists private strict metadata for another registry instance", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-persistent-staging-"));
+    const first = new StagingRegistry({
+      stateDirectory,
+      now: () => 1_000,
+      id: () => "preview-cross-process"
+    });
+    const preview = await first.create({ ttlMs: 60_000 });
+    const metadataPath = join(preview.directory, "preview.json");
+
+    expect(JSON.parse(await readFile(metadataPath, "utf8"))).toEqual({
+      version: 1,
+      id: "preview-cross-process",
+      createdAt: 1_000,
+      expiresAt: 61_000
+    });
+    expect((await stat(join(stateDirectory, "staging"))).mode & 0o777).toBe(0o700);
+    expect((await stat(preview.directory)).mode & 0o777).toBe(0o700);
+    expect((await stat(metadataPath)).mode & 0o777).toBe(0o600);
+
+    const second = new StagingRegistry({ stateDirectory, now: () => 2_000 });
+    await expect(second.resolve(preview.id)).resolves.toEqual(preview);
+    await second.expire(preview.id);
+    await expect(access(preview.directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("expires a persisted preview from a new instance after its deadline", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-persistent-expiry-"));
+    const preview = await new StagingRegistry({
+      stateDirectory,
+      now: () => 10,
+      id: () => "preview-expired"
+    }).create({ ttlMs: 10 });
+
+    const later = new StagingRegistry({ stateDirectory, now: () => 21 });
+    await expect(later.resolve(preview.id)).rejects.toMatchObject({
+      code: "PREVIEW_EXPIRED"
+    });
+    await expect(access(preview.directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects unsafe ids without touching paths outside staging", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-unsafe-staging-id-"));
+    const outside = join(dirname(stateDirectory), "steward-staging-outside-sentinel");
+    await writeFile(outside, "keep", "utf8");
+    const registry = new StagingRegistry({
+      stateDirectory,
+      id: () => "../../steward-staging-outside-sentinel"
+    });
+
+    await expect(registry.create({ ttlMs: 100 })).rejects.toMatchObject({
+      code: "INVALID_PREVIEW_ID"
+    });
+    await expect(registry.resolve("../steward-staging-outside-sentinel")).rejects.toMatchObject({
+      code: "INVALID_PREVIEW_ID"
+    });
+    await expect(registry.expire("../steward-staging-outside-sentinel")).rejects.toMatchObject({
+      code: "INVALID_PREVIEW_ID"
+    });
+    await expect(readFile(outside, "utf8")).resolves.toBe("keep");
+    await rm(outside);
+  });
+
+  it.each(["root", "preview", "metadata"] as const)(
+    "refuses a symlinked %s path and preserves its target",
+    async (kind) => {
+      const base = await mkdtemp(join(tmpdir(), `steward-symlink-${kind}-`));
+      const stateDirectory = join(base, "state");
+      const stagingRoot = join(stateDirectory, "staging");
+      const previewDirectory = join(stagingRoot, "preview-link");
+      const target = join(base, "target");
+      await mkdir(stateDirectory);
+      await mkdir(target);
+      await writeFile(join(target, "sentinel"), "keep", "utf8");
+
+      if (kind === "root") {
+        await symlink(target, stagingRoot);
+      } else {
+        await mkdir(stagingRoot);
+        if (kind === "preview") {
+          await symlink(target, previewDirectory);
+        } else {
+          await mkdir(previewDirectory);
+          await writeFile(join(target, "metadata"), JSON.stringify({
+            version: 1,
+            id: "preview-link",
+            createdAt: 1,
+            expiresAt: 10
+          }));
+          await symlink(join(target, "metadata"), join(previewDirectory, "preview.json"));
+        }
+      }
+
+      const registry = new StagingRegistry({ stateDirectory, now: () => 2 });
+      await expect(registry.resolve("preview-link")).rejects.toMatchObject({
+        code: "UNSAFE_PREVIEW_STATE"
+      });
+      await expect(registry.expire("preview-link")).rejects.toMatchObject({
+        code: "UNSAFE_PREVIEW_STATE"
+      });
+      await expect(readFile(join(target, "sentinel"), "utf8")).resolves.toBe("keep");
+    }
+  );
+
+  it("refuses tampered, non-file, and identity-mismatched metadata", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-tampered-staging-"));
+    const registry = new StagingRegistry({
+      stateDirectory,
+      now: () => 1,
+      id: () => "preview-tampered"
+    });
+    const preview = await registry.create({ ttlMs: 100 });
+    const metadataPath = join(preview.directory, "preview.json");
+    await writeFile(metadataPath, JSON.stringify({
+      version: 1,
+      id: "different-preview",
+      createdAt: 1,
+      expiresAt: 101,
+      directory: "/tmp/untrusted"
+    }), "utf8");
+
+    const fresh = new StagingRegistry({ stateDirectory, now: () => 2 });
+    await expect(fresh.resolve(preview.id)).rejects.toMatchObject({
+      code: "INVALID_PREVIEW_METADATA"
+    });
+    await expect(fresh.expire(preview.id)).rejects.toMatchObject({
+      code: "INVALID_PREVIEW_METADATA"
+    });
+    await expect(access(preview.directory)).resolves.toBeUndefined();
+
+    await rm(metadataPath);
+    await mkdir(metadataPath);
+    expect((await lstat(metadataPath)).isDirectory()).toBe(true);
+    await expect(fresh.resolve(preview.id)).rejects.toMatchObject({
+      code: "UNSAFE_PREVIEW_STATE"
     });
   });
 });

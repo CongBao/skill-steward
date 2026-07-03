@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fingerprintDirectory } from "../src/manifest.js";
-import { planInstallation } from "../src/planner.js";
+import {
+  installationPlanSchema,
+  planInstallation
+} from "../src/planner.js";
 
 async function skill(directory: string, body: string): Promise<string> {
   await mkdir(directory, { recursive: true });
@@ -74,5 +77,72 @@ describe("planInstallation", () => {
         destination: join(root, "target")
       })
     ).rejects.toMatchObject({ code: "SOURCE_DRIFT" });
+  });
+
+  it("strictly parses a complete installation plan at the trust boundary", () => {
+    const source = "/private/tmp/staging/preview/source";
+    const destination = "/Users/example/.agents/skills/review";
+    const sourceFingerprint = `sha256:${"a".repeat(64)}`;
+    const plan = {
+      id: "48fd7ba6-3ab0-4d20-98ca-b20a1519ce5d",
+      status: "ready",
+      action: "replace",
+      source,
+      sourceFingerprint,
+      destination,
+      expectedDestinationFingerprint: `sha256:${"b".repeat(64)}`,
+      allowedActions: ["cancel", "rename", "replace"],
+      changes: [
+        { operation: "backup", path: destination },
+        { operation: "create", path: destination }
+      ],
+      createdAt: 1_000,
+      expiresAt: 61_000,
+      provenance: {
+        preflightId: "run-1",
+        candidateId: "review-candidate",
+        sourceId: "public-catalog",
+        sourceRevision: "c".repeat(40)
+      }
+    };
+
+    expect(installationPlanSchema.parse(plan)).toEqual(plan);
+  });
+
+  it.each([
+    ["extra field", { unexpected: true }],
+    ["relative source", { source: "../../outside" }],
+    ["invalid fingerprint", { sourceFingerprint: "sha256:not-a-fingerprint" }],
+    ["invalid time order", { expiresAt: 1_000 }],
+    ["inconsistent action", { action: "none" }],
+    ["inconsistent change path", {
+      changes: [{ operation: "create", path: "/tmp/another-target" }]
+    }],
+    ["invalid provenance", {
+      provenance: {
+        preflightId: "run-1",
+        candidateId: "review-candidate",
+        sourceId: "public-catalog",
+        sourceRevision: "not-a-revision"
+      }
+    }]
+  ])("rejects %s in a reviewed installation plan", (_label, override) => {
+    const destination = "/Users/example/.agents/skills/review";
+    const base = {
+      id: "48fd7ba6-3ab0-4d20-98ca-b20a1519ce5d",
+      status: "ready",
+      action: "create",
+      source: "/private/tmp/staging/preview/source",
+      sourceFingerprint: `sha256:${"a".repeat(64)}`,
+      destination,
+      expectedDestinationFingerprint: null,
+      allowedActions: ["cancel", "rename", "replace"],
+      changes: [{ operation: "create", path: destination }],
+      createdAt: 1_000,
+      expiresAt: 61_000,
+      ...override
+    };
+
+    expect(installationPlanSchema.safeParse(base).success).toBe(false);
   });
 });

@@ -1,7 +1,10 @@
+import { lstat, realpath } from "node:fs/promises";
+import { isAbsolute, normalize, relative } from "node:path";
 import type {
   InstallableHarnessId,
   InstallScope
 } from "@skill-steward/engine";
+import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
   catalogCandidateSource,
   verifyCatalogCandidateInspection
@@ -9,31 +12,62 @@ import {
 import {
   applyInstallationPlan,
   inspectStagedSkills,
+  installationPlanSchema,
   InstallerError,
   planInstallation,
   resolveInstallDestination,
   stagePublicGit,
-  StagingRegistry
+  StagingRegistry,
+  type InstallationPlan,
+  type InstallationRecord
 } from "@skill-steward/installer";
 import {
   assertPreflightInstallationRecommendation,
+  claimReviewedPlan,
+  cleanupExpiredReviewedPlans,
+  discardReviewedPlan,
   readCatalogSnapshot,
   readCatalogSources,
-  writeLatestReport
+  ReviewedPlanStoreError,
+  writeLatestReport,
+  writeReviewedPlan,
+  type ReviewedPlanEnvelope
 } from "@skill-steward/store";
-import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import type { CliContext } from "../context.js";
+import {
+  applyClaimedReviewedPlan,
+  reviewedPlanRetryHint
+} from "../reviewed-plan.js";
+import { terminalSafeText } from "../terminal.js";
+
+const INSTALLATION_PLAN_TTL_MS = 5 * 60_000;
+const previewIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export interface CatalogInstallOptions {
-  catalogCandidate: string;
-  harness: string;
-  scope: string;
+  catalogCandidate?: string;
+  harness?: string;
+  scope?: string;
   workspace?: string;
   preflight?: string;
   targetName?: string;
   replace: boolean;
+  plan?: string;
   confirm: boolean;
   json: boolean;
+}
+
+interface InstallationReviewedPayload {
+  plan: InstallationPlan;
+  previewId: string;
+  candidateName: string;
+  workspace: string;
+}
+
+class InstallCommandError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "InstallCommandError";
+  }
 }
 
 function installScope(value: string): InstallScope {
@@ -50,27 +84,259 @@ function installHarness(value: string): InstallableHarnessId {
 
 function errorText(error: unknown): string {
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    return `${error.code}: ${error.message}`;
+    return terminalSafeText(
+      `${error.code}: ${error.message}${reviewedPlanRetryHint(error.code)}`
+    );
   }
-  return error instanceof Error ? error.message : String(error);
+  return terminalSafeText(error instanceof Error ? error.message : String(error));
 }
 
-export async function catalogInstallCommand(
-  options: CatalogInstallOptions,
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function parseInstallationPlan(input: unknown): InstallationPlan {
+  const parsed = installationPlanSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Installation plan failed domain validation"
+    );
+  }
+  const { provenance, ...plan } = parsed.data;
+  return {
+    ...plan,
+    ...(provenance === undefined ? {} : { provenance })
+  };
+}
+
+function parseReviewedPayload(input: unknown): InstallationReviewedPayload {
+  if (!isPlainRecord(input)) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Stored installation payload is not a valid object"
+    );
+  }
+  const expectedKeys = ["candidateName", "plan", "previewId", "workspace"];
+  if (
+    Object.keys(input).sort().join("\0") !== expectedKeys.join("\0")
+    || typeof input.previewId !== "string"
+    || !previewIdPattern.test(input.previewId)
+    || typeof input.candidateName !== "string"
+    || input.candidateName.length < 1
+    || input.candidateName.length > 256
+    || typeof input.workspace !== "string"
+    || input.workspace.length < 1
+    || input.workspace.length > 4_096
+    || !isAbsolute(input.workspace)
+    || normalize(input.workspace) !== input.workspace
+  ) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Stored installation payload is invalid"
+    );
+  }
+  return {
+    plan: parseInstallationPlan(input.plan),
+    previewId: input.previewId,
+    candidateName: input.candidateName,
+    workspace: input.workspace
+  };
+}
+
+function previewIdFromUnknown(input: unknown): string | undefined {
+  if (!isPlainRecord(input) || typeof input.previewId !== "string") return undefined;
+  return previewIdPattern.test(input.previewId) ? input.previewId : undefined;
+}
+
+function matchesEnvelopeIdentity(
+  envelope: ReviewedPlanEnvelope<unknown>,
+  plan: InstallationPlan
+): boolean {
+  return plan.id === envelope.id
+    && new Date(plan.createdAt).toISOString() === envelope.createdAt
+    && new Date(plan.expiresAt).toISOString() === envelope.expiresAt;
+}
+
+async function assertContainedSource(previewDirectory: string, source: string): Promise<void> {
+  const metadata = await lstat(source);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Reviewed installation source must be a physical directory"
+    );
+  }
+  const [physicalPreview, physicalSource] = await Promise.all([
+    realpath(previewDirectory),
+    realpath(source)
+  ]);
+  const containedPath = relative(physicalPreview, physicalSource);
+  if (
+    containedPath.length === 0
+    || containedPath === ".."
+    || containedPath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+    || isAbsolute(containedPath)
+  ) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Reviewed installation source escapes its staged preview"
+    );
+  }
+}
+
+async function cleanupReviewedPlans(context: CliContext, now: Date): Promise<void> {
+  try {
+    await cleanupExpiredReviewedPlans(context.stateDir, now);
+  } catch (error) {
+    if (
+      !(error instanceof ReviewedPlanStoreError)
+      || error.code === "REVIEWED_PLAN_UNSAFE_STATE"
+    ) {
+      throw error;
+    }
+  }
+}
+
+interface PortfolioRefreshWarning {
+  code: "PORTFOLIO_REFRESH_FAILED";
+  message: string;
+  recoveryCommand: "skill-steward scan";
+}
+
+type PortfolioRefreshResult = {
+  refresh:
+    | { status: "completed" }
+    | { status: "failed"; recoveryCommand: "skill-steward scan" };
+  warnings: PortfolioRefreshWarning[];
+};
+
+async function refreshAfterCommit(
+  workspace: string,
   context: CliContext
-): Promise<number> {
-  const staging = new StagingRegistry({ stateDirectory: context.stateDir });
+): Promise<PortfolioRefreshResult> {
+  try {
+    const report = await scanPortfolio(
+      standardRoots({ home: context.home, cwd: workspace }),
+      context.now?.() ?? new Date()
+    );
+    await writeLatestReport(context.stateDir, report);
+    return { refresh: { status: "completed" }, warnings: [] };
+  } catch {
+    const warning: PortfolioRefreshWarning = {
+      code: "PORTFOLIO_REFRESH_FAILED",
+      message: "The installation committed, but the portfolio report was not refreshed.",
+      recoveryCommand: "skill-steward scan"
+    };
+    context.stderr(
+      `${warning.code}: ${warning.message} Run: ${warning.recoveryCommand}\n`
+    );
+    return {
+      refresh: { status: "failed", recoveryCommand: warning.recoveryCommand },
+      warnings: [warning]
+    };
+  }
+}
+
+function hasRawRequest(options: CatalogInstallOptions): boolean {
+  return options.catalogCandidate !== undefined
+    || options.harness !== undefined
+    || options.scope !== undefined
+    || options.workspace !== undefined
+    || options.preflight !== undefined
+    || options.targetName !== undefined
+    || options.replace;
+}
+
+function requirePreviewRequest(options: CatalogInstallOptions): {
+  catalogCandidate: string;
+  harness: string;
+  scope: string;
+} {
+  if (
+    options.catalogCandidate === undefined
+    || options.harness === undefined
+    || options.scope === undefined
+  ) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_PREVIEW_REQUIRED",
+      "Preview requires --catalog-candidate <id>, --harness <id>, and --scope <scope>"
+    );
+  }
+  return {
+    catalogCandidate: options.catalogCandidate,
+    harness: options.harness,
+    scope: options.scope
+  };
+}
+
+function printPlan(
+  plan: InstallationPlan,
+  candidateName: string,
+  sourceId: string,
+  sourceRevision: string,
+  json: boolean,
+  context: CliContext
+): void {
+  const ready = plan.status === "ready";
+  const applyCommand = `skill-steward install --plan ${plan.id} --confirm`;
+  context.stdout(json
+    ? `${JSON.stringify({
+        ...plan,
+        ...(ready ? { planId: plan.id, applyCommand } : {})
+      }, null, 2)}\n`
+    : [
+        `Catalog installation plan: ${terminalSafeText(candidateName)}`,
+        `Source: ${terminalSafeText(sourceId)}@${terminalSafeText(sourceRevision.slice(0, 12))}`,
+        `Destination: ${terminalSafeText(plan.destination)}`,
+        `Status: ${plan.status}`,
+        ...plan.changes.map(({ operation, path }) =>
+          `- ${terminalSafeText(operation)} ${terminalSafeText(path)}`
+        ),
+        ...(ready
+          ? [
+              `Plan ID: ${terminalSafeText(plan.id)}`,
+              `Expires: ${new Date(plan.expiresAt).toISOString()}`,
+              `Apply: ${applyCommand}`
+            ]
+          : [plan.status === "noop"
+              ? "No changes are required."
+              : "Resolve the destination conflict and create a new preview."]),
+        ""
+      ].join("\n")
+  );
+}
+
+async function previewInstallation(
+  options: CatalogInstallOptions,
+  context: CliContext,
+  staging: StagingRegistry
+): Promise<void> {
+  if (options.confirm) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_REQUIRED",
+      "--confirm requires --plan <id>; run the install request first to preview it"
+    );
+  }
+  const request = requirePreviewRequest(options);
+  const now = context.now?.() ?? new Date();
+  await cleanupReviewedPlans(context, now);
   let previewId: string | undefined;
+  let reviewedPlanId: string | undefined;
+  let retainPreview = false;
+  let operationError: unknown;
   try {
     const [sources, snapshot] = await Promise.all([
       readCatalogSources(context.stateDir),
       readCatalogSnapshot(context.stateDir)
     ]);
-    const candidate = snapshot?.skills.find(({ id }) => id === options.catalogCandidate);
+    const candidate = snapshot?.skills.find(({ id }) => id === request.catalogCandidate);
     if (!candidate) {
       throw new InstallerError(
         "CATALOG_CANDIDATE_NOT_FOUND",
-        `Catalog candidate '${options.catalogCandidate}' was not found`
+        `Catalog candidate '${request.catalogCandidate}' was not found`
       );
     }
     const source = sources.find(({ id }) => id === candidate.sourceId);
@@ -96,7 +362,8 @@ export async function catalogInstallCommand(
         provenance.candidateId
       );
     }
-    const preview = await staging.create({ ttlMs: 15 * 60_000 });
+
+    const preview = await staging.create({ ttlMs: INSTALLATION_PLAN_TTL_MS });
     previewId = preview.id;
     const staged = await (context.catalogStage ?? stagePublicGit)(preview.directory, gitSource);
     const inspected = await inspectStagedSkills(staged.sourceDirectory);
@@ -104,9 +371,12 @@ export async function catalogInstallCommand(
       commitSha: staged.commitSha,
       candidates: inspected
     });
-    const scope = installScope(options.scope);
-    const harness = installHarness(options.harness);
-    const workspace = options.workspace ?? context.cwd;
+    const scope = installScope(request.scope);
+    const harness = installHarness(request.harness);
+    const workspace = normalize(options.workspace ?? context.cwd);
+    if (!isAbsolute(workspace)) {
+      throw new InstallerError("INVALID_WORKSPACE", "Workspace must be an absolute path");
+    }
     const { target } = resolveInstallDestination({
       harness,
       scope,
@@ -114,48 +384,181 @@ export async function catalogInstallCommand(
       ...(scope === "project" ? { workspace } : {}),
       name: options.targetName ?? candidate.name
     });
-    const plan = await planInstallation({
+    const planned = await planInstallation({
       source: staged.sourceDirectory,
       sourceFingerprint: candidate.fingerprint,
       destination: target,
       ...(provenance ? { provenance } : {}),
-      ...(options.replace ? { conflictAction: "replace" as const } : {})
+      ...(options.replace ? { conflictAction: "replace" as const } : {}),
+      now: now.getTime(),
+      ttlMs: INSTALLATION_PLAN_TTL_MS
     });
+    const plan = parseInstallationPlan({ ...planned, id: preview.id });
 
-    if (!options.confirm || plan.status === "noop") {
-      context.stdout(options.json
-        ? `${JSON.stringify(plan, null, 2)}\n`
-        : [
-            `Catalog installation plan: ${candidate.name}`,
-            `Source: ${source.id}@${candidate.sourceRevision.slice(0, 12)}`,
-            `Destination: ${target}`,
-            `Status: ${plan.status}`,
-            ...plan.changes.map(({ operation, path }) => `- ${operation} ${path}`),
-            options.confirm ? "No changes were required." : "Rerun with --confirm to apply this exact request.",
-            ""
-          ].join("\n")
+    if (plan.status === "ready") {
+      const payload: InstallationReviewedPayload = {
+        plan,
+        previewId: preview.id,
+        candidateName: candidate.name,
+        workspace
+      };
+      await writeReviewedPlan(context.stateDir, {
+        schemaVersion: 1,
+        id: plan.id,
+        kind: "installation",
+        createdAt: new Date(plan.createdAt).toISOString(),
+        expiresAt: new Date(plan.expiresAt).toISOString(),
+        payload
+      });
+      reviewedPlanId = plan.id;
+      printPlan(
+        plan,
+        candidate.name,
+        source.id,
+        candidate.sourceRevision,
+        options.json,
+        context
       );
-      return 0;
+      retainPreview = true;
+      return;
     }
 
-    const record = await applyInstallationPlan(plan, {
-      stateDirectory: context.stateDir,
-      ...(context.now ? { now: () => context.now!().getTime() } : {})
+    printPlan(
+      plan,
+      candidate.name,
+      source.id,
+      candidate.sourceRevision,
+      options.json,
+      context
+    );
+  } catch (error) {
+    operationError = error;
+    throw error;
+  } finally {
+    if (previewId !== undefined && !retainPreview) {
+      try {
+        if (reviewedPlanId !== undefined) {
+          await discardReviewedPlan(context.stateDir, reviewedPlanId);
+        }
+        await staging.expire(previewId);
+      } catch (cleanupError) {
+        if (operationError === undefined) throw cleanupError;
+      }
+    }
+  }
+}
+
+async function expireAfterClaim(
+  staging: StagingRegistry,
+  previewId: string | undefined,
+  context: CliContext
+): Promise<void> {
+  if (previewId === undefined) return;
+  try {
+    await staging.expire(previewId);
+  } catch (error) {
+    context.stderr(
+      `STAGING_CLEANUP_FAILED: ${terminalSafeText(error instanceof Error ? error.message : String(error))}\n`
+    );
+  }
+}
+
+async function applyInstallation(
+  planId: string,
+  options: CatalogInstallOptions,
+  context: CliContext,
+  staging: StagingRegistry
+): Promise<void> {
+  if (!options.confirm) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
+      "Use --confirm with the reviewed plan ID"
+    );
+  }
+  if (hasRawRequest(options)) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_AMBIGUOUS",
+      "Apply accepts only --plan <id> --confirm; request options are ambiguous"
+    );
+  }
+  const contextNow = context.now;
+  const now = context.now?.() ?? new Date();
+  let envelope: ReviewedPlanEnvelope<unknown>;
+  try {
+    envelope = await claimReviewedPlan(context.stateDir, {
+      id: planId,
+      kind: "installation",
+      now
     });
-    const report = await scanPortfolio(
-      standardRoots({ home: context.home, cwd: workspace }),
-      context.now?.() ?? new Date()
-    );
-    await writeLatestReport(context.stateDir, report);
-    context.stdout(options.json
-      ? `${JSON.stringify(record, null, 2)}\n`
-      : `Installed '${candidate.name}' (${record.id}).\n`
-    );
+  } catch (error) {
+    if (
+      error instanceof ReviewedPlanStoreError
+      && error.code === "REVIEWED_PLAN_EXPIRED"
+    ) {
+      await expireAfterClaim(staging, planId, context);
+    }
+    throw error;
+  }
+  const previewId = previewIdFromUnknown(envelope.payload);
+  let payload: InstallationReviewedPayload;
+  let record: InstallationRecord;
+  try {
+    ({ payload, record } = await applyClaimedReviewedPlan(async () => {
+      const parsed = parseReviewedPayload(envelope.payload);
+      if (!matchesEnvelopeIdentity(envelope, parsed.plan)) {
+        throw new InstallCommandError(
+          "REVIEWED_PLAN_INVALID",
+          "Stored installation plan identity does not match its envelope"
+        );
+      }
+      const preview = await staging.resolve(parsed.previewId);
+      await assertContainedSource(preview.directory, parsed.plan.source);
+      return {
+        payload: parsed,
+        record: await applyInstallationPlan(parsed.plan, {
+          stateDirectory: context.stateDir,
+          ...(contextNow ? { now: () => contextNow().getTime() } : {})
+        })
+      };
+    }));
+  } catch (error) {
+    await expireAfterClaim(staging, previewId, context);
+    throw error;
+  }
+  await expireAfterClaim(staging, payload.previewId, context);
+  const refreshResult = await refreshAfterCommit(payload.workspace, context);
+  context.stdout(options.json
+    ? `${JSON.stringify({
+        record,
+        planId: envelope.id,
+        ...refreshResult
+      }, null, 2)}\n`
+    : [
+        `Installed '${terminalSafeText(payload.candidateName)}' (${terminalSafeText(record.id)}).`,
+        `Plan ID: ${terminalSafeText(envelope.id)}`,
+        ""
+      ].join("\n")
+  );
+}
+
+export async function catalogInstallCommand(
+  options: CatalogInstallOptions,
+  context: CliContext
+): Promise<number> {
+  const contextNow = context.now;
+  const staging = new StagingRegistry({
+    stateDirectory: context.stateDir,
+    ...(contextNow ? { now: () => contextNow().getTime() } : {})
+  });
+  try {
+    if (options.plan !== undefined) {
+      await applyInstallation(options.plan, options, context, staging);
+    } else {
+      await previewInstallation(options, context, staging);
+    }
     return 0;
   } catch (error) {
     context.stderr(`${errorText(error)}\n`);
     return 1;
-  } finally {
-    if (previewId) await staging.expire(previewId);
   }
 }
