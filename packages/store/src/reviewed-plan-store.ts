@@ -530,14 +530,14 @@ async function cleanupStaleOwnedPlan(
   const assessment = await assessStoredPlan(owned, id, now);
   if (assessment === "removable") return removeFile(owned);
   const pending = resolve(dirname(owned), `${id}.json`);
-  const [ownedMetadata, pendingMetadata] = await Promise.all([
-    inspectPlanFileMetadata(owned),
-    inspectPlanFileMetadata(pending)
+  const [ownedIdentity, pendingIdentity] = await Promise.all([
+    inspectExactFileIdentity(owned),
+    inspectExactFileIdentity(pending)
   ]);
-  if (ownedMetadata === undefined || pendingMetadata === undefined) return false;
+  if (ownedIdentity === undefined || pendingIdentity === undefined) return false;
   if (
-    ownedMetadata.dev === pendingMetadata.dev
-    && ownedMetadata.ino === pendingMetadata.ino
+    ownedIdentity.dev === pendingIdentity.dev
+    && ownedIdentity.ino === pendingIdentity.ino
   ) {
     return removeFile(owned);
   }
@@ -545,6 +545,30 @@ async function cleanupStaleOwnedPlan(
     "REVIEWED_PLAN_UNSAFE_STATE",
     "Stale reviewed plan cleanup data conflicts with newer pending state"
   );
+}
+
+async function inspectExactFileIdentity(
+  path: string
+): Promise<{ dev: bigint; ino: bigint } | undefined> {
+  try {
+    const metadata = await lstat(path, { bigint: true });
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw storeError(
+        "REVIEWED_PLAN_UNSAFE_STATE",
+        "Reviewed plan identity requires a regular non-symlink file"
+      );
+    }
+    if (metadata.dev === 0n || metadata.ino === 0n) {
+      throw storeError(
+        "REVIEWED_PLAN_UNSAFE_STATE",
+        "Reviewed plan file identity is unavailable"
+      );
+    }
+    return { dev: metadata.dev, ino: metadata.ino };
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return undefined;
+    throw error;
+  }
 }
 
 function cleanupPath(directory: string, id: string): string {

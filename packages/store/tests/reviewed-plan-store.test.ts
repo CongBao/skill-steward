@@ -28,7 +28,8 @@ const fileSystemObservation = vi.hoisted(() => ({
     releaseNow: () => void;
     triggered: boolean;
   } | undefined,
-  cleanupUsedStreamingDirectory: false
+  cleanupUsedStreamingDirectory: false,
+  exactFileIdentities: undefined as Map<string, { dev: bigint; ino: bigint }> | undefined
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -51,6 +52,24 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     link: async (...args: Parameters<typeof actual.link>) => {
       await createExternalDestination(args[0], args[1]);
       return actual.link(...args);
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const metadata = await actual.lstat(...args);
+      const identity = fileSystemObservation.exactFileIdentities?.get(String(args[0]));
+      if (identity === undefined) return metadata;
+      const bigint = typeof args[1] === "object"
+        && args[1] !== null
+        && "bigint" in args[1]
+        && args[1].bigint === true;
+      return new Proxy(metadata, {
+        get(target, property) {
+          if (property === "dev" || property === "ino") {
+            return bigint ? identity[property] : Number(identity[property]);
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+      });
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const path = String(args[0]);
@@ -187,6 +206,7 @@ afterEach(async () => {
   fileSystemObservation.cleanupReadPause?.releaseNow();
   fileSystemObservation.cleanupReadPause = undefined;
   fileSystemObservation.cleanupUsedStreamingDirectory = false;
+  fileSystemObservation.exactFileIdentities = undefined;
   await Promise.all(temporaryStateDirectories.splice(0).map((directory) =>
     rm(directory, { recursive: true, force: true })
   ));
@@ -577,8 +597,8 @@ describe("reviewed plan store", () => {
     const stale = new Date("2026-07-03T01:00:00.000Z");
     await utimes(owned, stale, stale);
     const [pendingMetadata, ownedMetadata] = await Promise.all([
-      stat(pending),
-      stat(owned)
+      lstat(pending, { bigint: true }),
+      lstat(owned, { bigint: true })
     ]);
     expect([pendingMetadata.dev, pendingMetadata.ino]).toEqual([
       ownedMetadata.dev,
@@ -614,11 +634,16 @@ describe("reviewed plan store", () => {
     await link(pending, owned);
     const stale = new Date("2026-07-03T01:00:00.000Z");
     await utimes(owned, stale, stale);
+    fileSystemObservation.exactFileIdentities = new Map([
+      [owned, { dev: 1n, ino: 42n }],
+      [pending, { dev: 1n, ino: 42n }]
+    ]);
 
     await expect(cleanupExpiredReviewedPlans(
       stateDir,
       new Date("2026-07-03T03:00:00.000Z")
     )).resolves.toBe(1);
+    fileSystemObservation.exactFileIdentities = undefined;
     await expect(lstat(owned)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(claimReviewedPlan(stateDir, {
       id,
@@ -689,6 +714,69 @@ describe("reviewed plan store", () => {
       kind: "installation",
       now: new Date("2026-07-03T03:00:00.000Z")
     })).resolves.toMatchObject({ payload: { generation: "new-pending" } });
+  });
+
+  it("preserves different 64-bit file identities that collide as Numbers", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-bigint-identity-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const id = "bigint-identity";
+    const owned = join(directory, `.${id}.123-${residueUuid}.cleanup`);
+    await writeFile(owned, `${JSON.stringify(envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z",
+      payload: { generation: "owned" }
+    }))}\n`, { mode: 0o600 });
+    const stale = new Date("2026-07-03T01:00:00.000Z");
+    await utimes(owned, stale, stale);
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z",
+      payload: { generation: "pending" }
+    }));
+    const pending = join(directory, `${id}.json`);
+    const ownedIno = 9_007_199_254_740_992n;
+    const pendingIno = 9_007_199_254_740_993n;
+    expect(Number(ownedIno)).toBe(Number(pendingIno));
+    fileSystemObservation.exactFileIdentities = new Map([
+      [owned, { dev: 1n, ino: ownedIno }],
+      [pending, { dev: 1n, ino: pendingIno }]
+    ]);
+
+    await expect(cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T03:00:00.000Z")
+    )).rejects.toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+    fileSystemObservation.exactFileIdentities = undefined;
+    await expect(readFile(owned, "utf8")).resolves.toContain("owned");
+    await expect(readFile(pending, "utf8")).resolves.toContain("pending");
+  });
+
+  it("preserves live cleanup data when exact file identity is unavailable", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-zero-identity-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const id = "zero-identity";
+    const owned = join(directory, `.${id}.123-${residueUuid}.cleanup`);
+    await writeFile(owned, `${JSON.stringify(envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z"
+    }))}\n`, { mode: 0o600 });
+    const stale = new Date("2026-07-03T01:00:00.000Z");
+    await utimes(owned, stale, stale);
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      expiresAt: "2026-07-03T05:00:00.000Z"
+    }));
+    const pending = join(directory, `${id}.json`);
+    fileSystemObservation.exactFileIdentities = new Map([
+      [owned, { dev: 0n, ino: 0n }],
+      [pending, { dev: 0n, ino: 0n }]
+    ]);
+
+    await expect(cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T03:00:00.000Z")
+    )).rejects.toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+    fileSystemObservation.exactFileIdentities = undefined;
+    await expect(readFile(owned, "utf8")).resolves.toContain(id);
+    await expect(readFile(pending, "utf8")).resolves.toContain(id);
   });
 
   it.each(["EACCES", "EIO"] as const)(
