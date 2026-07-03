@@ -81,6 +81,9 @@ importers:
       '@skill-steward/installer':
         specifier: workspace:*
         version: link:../installer
+      '@skill-steward/preflight':
+        specifier: workspace:*
+        version: link:../preflight
       '@skill-steward/report':
         specifier: workspace:*
         version: link:../report

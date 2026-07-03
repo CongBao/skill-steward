@@ -18,6 +18,7 @@ import {
   type ReportFormat
 } from "./commands/report.js";
 import { scanCommand } from "./commands/scan.js";
+import { preflightCommand } from "./commands/preflight.js";
 
 function reportFormat(input: string): ReportFormat {
   if (input === "markdown" || input === "json") return input;
@@ -135,6 +136,35 @@ export async function run(
           return;
         }
         exitCode = await labelCommand(id, validLabel, options.comment, context);
+      }
+    );
+
+  program
+    .command("preflight")
+    .description("Recommend a minimal set of Skills for a task")
+    .option("--task <text>", "task text")
+    .option("--task-file <path>", "read task text from a UTF-8 file")
+    .option("--stdin", "read task text from stdin", false)
+    .option("--max-skills <number>", "maximum recommended Skills", "5")
+    .option("--json", "JSON output", false)
+    .action(
+      async (options: {
+        task?: string;
+        taskFile?: string;
+        stdin: boolean;
+        maxSkills: string;
+        json: boolean;
+      }) => {
+        exitCode = await preflightCommand(
+          {
+            ...(options.task ? { task: options.task } : {}),
+            ...(options.taskFile ? { taskFile: options.taskFile } : {}),
+            stdin: options.stdin,
+            maxSkills: Number(options.maxSkills),
+            json: options.json
+          },
+          context
+        );
       }
     );
 

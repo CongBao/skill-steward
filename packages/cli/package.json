@@ -34,6 +34,7 @@
     "@skill-steward/engine": "workspace:*",
     "@skill-steward/insights": "workspace:*",
     "@skill-steward/installer": "workspace:*",
+    "@skill-steward/preflight": "workspace:*",
     "@skill-steward/report": "workspace:*",
     "@skill-steward/store": "workspace:*",
     "commander": "^14.0.0"

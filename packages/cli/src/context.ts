@@ -6,6 +6,7 @@ export interface CliContext {
   stateDir: string;
   stdout: (value: string) => void;
   stderr: (value: string) => void;
+  stdin?: () => Promise<string>;
 }
 
 export function defaultContext(): CliContext {
@@ -15,6 +16,12 @@ export function defaultContext(): CliContext {
     home,
     stateDir: process.env.SKILL_STEWARD_HOME ?? join(home, ".skill-steward"),
     stdout: (value) => process.stdout.write(value),
-    stderr: (value) => process.stderr.write(value)
+    stderr: (value) => process.stderr.write(value),
+    stdin: async () => {
+      process.stdin.setEncoding("utf8");
+      let value = "";
+      for await (const chunk of process.stdin) value += chunk;
+      return value;
+    }
   };
 }
