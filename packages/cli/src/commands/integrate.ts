@@ -1,31 +1,22 @@
-import { randomUUID } from "node:crypto";
-import {
-  cp,
-  lstat,
-  mkdir,
-  rename,
-  rm
-} from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import {
   applyIntegrationPlan,
+  CompanionSkillError,
+  companionSkillDirectory,
+  installCompanionSkill,
   integrationHarnessSchema,
   integrationStatus,
   planIntegration,
+  removeManagedCompanionSkill,
   removeIntegration,
   type IntegrationConfigOptions,
   type IntegrationHarness,
   type IntegrationPlan
 } from "@skill-steward/integrations";
-import { fingerprintDirectory } from "@skill-steward/installer";
 import type { CliContext } from "../context.js";
 
 const allHarnesses = ["codex", "claude-code"] as const;
-
-class SharedSkillError extends Error {
-  readonly code = "SHARED_SKILL_CONFLICT";
-}
 
 function packagedSkillDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -37,10 +28,6 @@ function packagedSkillDirectory(): string {
     : resolve(moduleDirectory, "integrations/skill-steward-preflight");
 }
 
-function sharedSkillDirectory(home: string): string {
-  return join(home, ".agents", "skills", "skill-steward-preflight");
-}
-
 function configOptions(context: CliContext): IntegrationConfigOptions {
   return {
     home: context.home,
@@ -49,40 +36,11 @@ function configOptions(context: CliContext): IntegrationConfigOptions {
   };
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await lstat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 async function installSharedSkill(context: CliContext): Promise<{ created: boolean; path: string }> {
-  const source = packagedSkillDirectory();
-  const destination = sharedSkillDirectory(context.home);
-  const sourceFingerprint = await fingerprintDirectory(source);
-  if (await exists(destination)) {
-    const metadata = await lstat(destination);
-    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-      throw new SharedSkillError("SHARED_SKILL_CONFLICT: destination is not a regular directory");
-    }
-    if (await fingerprintDirectory(destination) !== sourceFingerprint) {
-      throw new SharedSkillError("SHARED_SKILL_CONFLICT: existing companion Skill differs");
-    }
-    return { created: false, path: destination };
-  }
-  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await cp(source, temporary, { recursive: true, errorOnExist: true, force: false });
-    await rename(temporary, destination);
-  } catch (error) {
-    await rm(temporary, { recursive: true, force: true });
-    throw error;
-  }
-  return { created: true, path: destination };
+  return installCompanionSkill({
+    home: context.home,
+    sourceDirectory: packagedSkillDirectory()
+  });
 }
 
 async function removeSharedSkillIfUnused(context: CliContext): Promise<void> {
@@ -90,18 +48,10 @@ async function removeSharedSkillIfUnused(context: CliContext): Promise<void> {
     allHarnesses.map((harness) => integrationStatus(harness, configOptions(context)))
   );
   if (active.some(({ status }) => status === "installed" || status === "needs-trust")) return;
-  const source = packagedSkillDirectory();
-  const destination = sharedSkillDirectory(context.home);
-  if (!await exists(destination)) return;
-  const metadata = await lstat(destination);
-  if (
-    metadata.isSymbolicLink() ||
-    !metadata.isDirectory() ||
-    await fingerprintDirectory(destination) !== await fingerprintDirectory(source)
-  ) {
-    return;
-  }
-  await rm(destination, { recursive: true, force: true });
+  await removeManagedCompanionSkill({
+    home: context.home,
+    sourceDirectory: packagedSkillDirectory()
+  });
 }
 
 function printPlan(plan: IntegrationPlan, context: CliContext, json: boolean): void {
@@ -112,7 +62,7 @@ function printPlan(plan: IntegrationPlan, context: CliContext, json: boolean): v
   const lines = [
     `Harness integration plan: ${plan.harness}`,
     `Target: ${plan.targetPath}`,
-    `Companion Skill: ${sharedSkillDirectory(context.home)}`,
+    `Companion Skill: ${companionSkillDirectory(context.home)}`,
     ...plan.changes.map(({ operation, path }) => `- ${operation} ${path}`),
     plan.changes.length ? "Run integrate apply with --confirm to apply." : "Already configured.",
     ""
@@ -121,7 +71,7 @@ function printPlan(plan: IntegrationPlan, context: CliContext, json: boolean): v
 }
 
 function errorText(error: unknown): string {
-  if (error instanceof SharedSkillError) return `${error.code}: ${error.message}`;
+  if (error instanceof CompanionSkillError) return `${error.code}: ${error.message}`;
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
     return `${error.code}: ${error.message}`;
   }
@@ -160,7 +110,10 @@ export async function integrateApplyCommand(
     return 0;
   } catch (error) {
     if (installed?.created) {
-      await rm(installed.path, { recursive: true, force: true });
+      await removeManagedCompanionSkill({
+        home: context.home,
+        sourceDirectory: packagedSkillDirectory()
+      });
     }
     context.stderr(`${errorText(error)}\n`);
     return 1;

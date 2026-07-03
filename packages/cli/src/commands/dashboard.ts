@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { join, resolve, sep } from "node:path";
 import {
   createDashboardApp,
   createDashboardServices,
+  createCatalogServices,
   createInstallationServices,
+  createIntegrationServices,
   createPreflightServices,
   type DashboardApp,
   startDashboardServer
@@ -43,6 +46,13 @@ async function launch({ port, context }: DashboardLaunchInput): Promise<{ url: s
   return startDashboardServer({ app, port });
 }
 
+function packagedCompanionSkillDirectory(): string {
+  const moduleDirectory = fileURLToPath(new URL(".", import.meta.url));
+  return moduleDirectory.endsWith(`${join("src", "commands")}${sep}`)
+    ? resolve(moduleDirectory, "../../../integrations/assets/skill-steward-preflight")
+    : resolve(moduleDirectory, "integrations/skill-steward-preflight");
+}
+
 export function createDashboardApplication(
   context: CliContext,
   assetsDirectory?: string
@@ -60,6 +70,11 @@ export function createDashboardApplication(
       await dashboardServices.scan([]);
     }
   });
+  const catalogServices = createCatalogServices({
+    stateDirectory: context.stateDir,
+    inspectInstallation: installationServices.inspectGit,
+    ...(context.now ? { now: context.now } : {})
+  });
   const preflightServices = createPreflightServices({
     stateDirectory: context.stateDir,
     currentPortfolio: async () => {
@@ -68,12 +83,21 @@ export function createDashboardApplication(
       );
       await writeLatestReport(context.stateDir, report);
       return report;
-    }
+    },
+    catalogState: catalogServices.list
+  });
+  const integrationServices = createIntegrationServices({
+    home: context.home,
+    stateDirectory: context.stateDir,
+    companionSkillDirectory: packagedCompanionSkillDirectory(),
+    ...(context.now ? { now: context.now } : {})
   });
   return createDashboardApp({
     services: dashboardServices,
     installationServices,
     preflightServices,
+    catalogServices,
+    integrationServices,
     ...(assetsDirectory ? { assetsDirectory } : {})
   });
 }

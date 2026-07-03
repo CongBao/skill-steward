@@ -126,6 +126,9 @@ importers:
       '@skill-steward/installer':
         specifier: workspace:*
         version: link:../installer
+      '@skill-steward/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@skill-steward/preflight':
         specifier: workspace:*
         version: link:../preflight
@@ -165,6 +168,9 @@ importers:
 
   packages/integrations:
     dependencies:
+      '@skill-steward/installer':
+        specifier: workspace:*
+        version: link:../installer
       '@skill-steward/preflight':
         specifier: workspace:*
         version: link:../preflight

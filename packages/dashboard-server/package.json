@@ -15,6 +15,7 @@
     "@skill-steward/engine": "workspace:*",
     "@skill-steward/insights": "workspace:*",
     "@skill-steward/installer": "workspace:*",
+    "@skill-steward/integrations": "workspace:*",
     "@skill-steward/preflight": "workspace:*",
     "@skill-steward/store": "workspace:*",
     "fastify": "^5.6.0"
