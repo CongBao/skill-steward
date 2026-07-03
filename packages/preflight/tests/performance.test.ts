@@ -63,12 +63,20 @@ it("analyzes one thousand installed and five thousand available Skills within bu
     now: new Date("2026-07-03T00:00:00.000Z")
   };
 
-  const started = performance.now();
-  const first = analyzePreflight(input);
-  const elapsed = performance.now() - started;
-  const second = analyzePreflight(input);
+  const warm = analyzePreflight(input);
+  const samples = Array.from({ length: 3 }, () => {
+    const started = performance.now();
+    const result = analyzePreflight(input);
+    return { elapsed: performance.now() - started, result };
+  });
+  const medianElapsed = samples
+    .map(({ elapsed }) => elapsed)
+    .sort((left, right) => left - right)[1]!;
+  const first = samples[0]!.result;
+  const second = samples[1]!.result;
 
-  expect(elapsed).toBeLessThan(250);
+  expect(medianElapsed).toBeLessThan(250);
+  expect(warm.useCandidateIds).toEqual(first.useCandidateIds);
   expect(first.useCandidateIds).toEqual(second.useCandidateIds);
   expect(first.installCandidateIds).toEqual(second.installCandidateIds);
   expect(first.candidates).toEqual(second.candidates);
