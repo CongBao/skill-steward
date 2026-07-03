@@ -190,6 +190,18 @@ importers:
         specifier: ^3.25.67
         version: 3.25.76
 
+  packages/governance:
+    dependencies:
+      '@skill-steward/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@skill-steward/installer':
+        specifier: workspace:*
+        version: link:../installer
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
   packages/preflight:
     dependencies:
       '@skill-steward/catalog':
