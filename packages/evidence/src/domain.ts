@@ -8,7 +8,20 @@ const probabilitySchema = z.number().min(0).max(1);
 
 export const pseudonymousKeySchema = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
 export const evidenceHarnessSchema = z.enum(["codex", "claude-code", "github-copilot"]);
+export const evidenceDeliverySchema = z.enum(["cli", "dashboard", "hook"]);
 export const evidenceModeSchema = z.enum(["minimal", "learning"]);
+
+export function normalizeEvidenceHarness(harness: string | undefined): EvidenceHarness | undefined {
+  switch (harness) {
+    case "codex":
+    case "github-copilot":
+      return harness;
+    case "claude":
+      return "claude-code";
+    default:
+      return undefined;
+  }
+}
 
 export const evidencePolicySchema = z.object({
   schemaVersion: z.literal(1),
@@ -56,6 +69,7 @@ export const evidencePreflightSchema = z.object({
   taskTermCount: countSchema,
   algorithmVersion: z.number().int().positive(),
   harness: evidenceHarnessSchema.optional(),
+  delivery: evidenceDeliverySchema.optional(),
   candidateIds: z.array(identifierSchema).max(6_000),
   useCandidateIds: z.array(identifierSchema).max(5),
   installCandidateIds: z.array(identifierSchema).max(3),
@@ -239,6 +253,7 @@ export const evidenceDatasetSchema = z.object({
 
 export type PseudonymousKey = z.infer<typeof pseudonymousKeySchema>;
 export type EvidenceHarness = z.infer<typeof evidenceHarnessSchema>;
+export type EvidenceDelivery = z.infer<typeof evidenceDeliverySchema>;
 export type EvidenceMode = z.infer<typeof evidenceModeSchema>;
 export type EvidencePolicy = z.infer<typeof evidencePolicySchema>;
 export type CandidateFeatureSnapshot = z.infer<typeof candidateFeatureSnapshotSchema>;

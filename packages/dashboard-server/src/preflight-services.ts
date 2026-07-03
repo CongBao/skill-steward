@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CatalogSnapshot, CatalogSource } from "@skill-steward/catalog";
 import type { PortfolioReport } from "@skill-steward/engine";
+import { normalizeEvidenceHarness } from "@skill-steward/evidence";
 import {
   analyzePreflight,
   preflightFeedbackSchema,
@@ -67,7 +68,11 @@ export function createPreflightServices(
         id: id(),
         now: now()
       });
-      await appendPreflightEvidence(options.stateDirectory, result);
+      const harness = normalizeEvidenceHarness(request.harness);
+      await appendPreflightEvidence(options.stateDirectory, result, {
+        delivery: "dashboard",
+        ...(harness ? { harness } : {})
+      });
       return result;
     },
     async feedback(preflightId, input) {

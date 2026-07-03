@@ -43,10 +43,15 @@ function correctedSetCounts(preflights: EvidencePreflight[]) {
 
 function installConversion(dataset: EvidenceDataset): EvidenceMetric {
   const deliveredPreflightIds = new Set(
-    dataset.events
-      .filter((event) => event.kind === "preflight-delivered")
-      .map((event) => event.preflightId)
+    dataset.preflights
+      .filter(({ delivery }) => delivery !== undefined)
+      .map(({ id }) => id)
   );
+  for (const event of dataset.events) {
+    if (event.kind === "preflight-delivered") {
+      deliveredPreflightIds.add(event.preflightId);
+    }
+  }
   const recommendedPairs = new Set<string>();
   for (const preflight of dataset.preflights) {
     if (!deliveredPreflightIds.has(preflight.id)) continue;

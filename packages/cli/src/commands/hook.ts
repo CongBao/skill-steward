@@ -95,7 +95,8 @@ export async function hookPromptCommand(
         try {
           await appendPreflightEvidence(context.stateDir, result, {
             policy,
-            harness
+            harness,
+            delivery: "hook"
           });
         } catch (error) {
           debug(context, error);

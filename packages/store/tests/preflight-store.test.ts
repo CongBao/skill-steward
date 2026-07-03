@@ -194,6 +194,25 @@ describe("preflight evidence store", () => {
     expect((await stat(join(state, "preflights.json"))).mode & 0o777).toBe(0o600);
   });
 
+  it("persists attribution while keeping version-3 records without it readable", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-attribution-"));
+    await appendPreflightEvidence(state, result("old-run", "2026-07-03T00:00:00.000Z"));
+    await appendPreflightEvidence(state, result("new-run", "2026-07-03T01:00:00.000Z"), {
+      harness: "claude-code",
+      delivery: "dashboard"
+    });
+
+    const records = await readPreflightEvidence(state);
+    expect(records[0]).toMatchObject({
+      schemaVersion: 3,
+      id: "new-run",
+      harness: "claude-code",
+      delivery: "dashboard"
+    });
+    expect(records[1]).toMatchObject({ schemaVersion: 3, id: "old-run" });
+    expect(records[1]).not.toHaveProperty("delivery");
+  });
+
   it("persists bounded version-3 evidence", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-preflight-bound-"));
     await appendPreflightEvidence(state, result("run-1", "2026-07-03T00:00:00.000Z"), { limit: 2 });

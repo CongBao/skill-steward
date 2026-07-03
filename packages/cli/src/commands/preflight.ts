@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import { normalizeEvidenceHarness } from "@skill-steward/evidence";
 import {
   analyzePreflight,
   preflightRequestSchema,
@@ -216,7 +217,11 @@ export async function preflightCommand(
       id: randomUUID(),
       now: new Date()
     });
-    await appendPreflightEvidence(context.stateDir, result);
+    const harness = normalizeEvidenceHarness(request.harness);
+    await appendPreflightEvidence(context.stateDir, result, {
+      delivery: "cli",
+      ...(harness ? { harness } : {})
+    });
     context.stdout(
       options.json ? `${JSON.stringify(result, null, 2)}\n` : renderPreflightHuman(result)
     );

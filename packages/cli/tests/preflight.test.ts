@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  readPreflightEvidence,
   readLatestReport,
   writeCatalogSnapshot,
   writeCatalogSources
@@ -126,6 +127,10 @@ describe("preflight command", () => {
     });
     const disk = await readFile(join(current.stateDir, "preflights.json"), "utf8");
     expect(disk).not.toContain("Review this TypeScript change");
+    expect((await readPreflightEvidence(current.stateDir))[0]).toMatchObject({
+      harness: "codex",
+      delivery: "cli"
+    });
   });
 
   it("reads task files relative to cwd", async () => {

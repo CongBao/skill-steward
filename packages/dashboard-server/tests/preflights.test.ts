@@ -83,13 +83,19 @@ describe("preflight services", () => {
     const output = await services.run({
       task: "PRIVATE review code security changes",
       maxSkills: 3,
+      harness: "claude",
       includeAvailable: true
     });
 
     expect(currentPortfolio).toHaveBeenCalledOnce();
     expect(catalogState).toHaveBeenCalledOnce();
     expect(output).toMatchObject({ id: "run-1", schemaVersion: 3 });
-    expect(await readPreflightEvidence(stateDirectory)).toHaveLength(1);
+    expect(await readPreflightEvidence(stateDirectory)).toEqual([
+      expect.objectContaining({
+        harness: "claude-code",
+        delivery: "dashboard"
+      })
+    ]);
     expect(await readFile(join(stateDirectory, "preflights.json"), "utf8"))
       .not.toContain("PRIVATE review code security changes");
   });
