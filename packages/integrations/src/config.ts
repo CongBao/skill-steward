@@ -164,71 +164,123 @@ async function readConfig(targetPath: string): Promise<{
   }
 }
 
-function commandFor(harness: IntegrationHarness): string {
-  return `skill-steward hook prompt --harness ${harness}`;
+type ManagedEvent = "UserPromptSubmit" | "Stop" | "SessionEnd";
+
+function managedEvents(harness: IntegrationHarness): ManagedEvent[] {
+  return harness === "codex"
+    ? ["UserPromptSubmit", "Stop"]
+    : ["UserPromptSubmit", "Stop", "SessionEnd"];
 }
 
-function managedGroup(harness: IntegrationHarness): JsonObject {
+function commandFor(harness: IntegrationHarness, event: ManagedEvent): string {
+  const action = event === "UserPromptSubmit" ? "prompt" : "lifecycle";
+  return `skill-steward hook ${action} --harness ${harness}`;
+}
+
+function managedGroup(harness: IntegrationHarness, event: ManagedEvent): JsonObject {
   return {
     hooks: [{
       type: "command",
-      command: commandFor(harness),
+      command: commandFor(harness, event),
       timeout: harness === "codex" ? 0.75 : 1,
-      statusMessage: "Running Skill Steward preflight"
+      statusMessage: event === "UserPromptSubmit"
+        ? "Running Skill Steward preflight"
+        : "Recording Skill Steward lifecycle evidence"
     }]
   };
 }
 
-function eventGroups(config: JsonObject): unknown[] {
+function eventGroups(config: JsonObject, event: ManagedEvent): unknown[] {
   const hooks = config.hooks;
   if (hooks === undefined) return [];
   if (!isObject(hooks)) {
     throw new IntegrationError("INTEGRATION_CONFIG_INVALID", "Configuration hooks must be an object");
   }
-  const groups = hooks.UserPromptSubmit;
+  const groups = hooks[event];
   if (groups === undefined) return [];
   if (!Array.isArray(groups)) {
     throw new IntegrationError(
       "INTEGRATION_CONFIG_INVALID",
-      "UserPromptSubmit hooks must be an array"
+      `${event} hooks must be an array`
     );
   }
   return groups;
 }
 
-function hasManagedCommand(value: unknown, harness: IntegrationHarness): boolean {
+function hasManagedCommand(
+  value: unknown,
+  harness: IntegrationHarness,
+  event: ManagedEvent
+): boolean {
   if (!isObject(value) || !Array.isArray(value.hooks)) return false;
   return value.hooks.some((hook) =>
-    isObject(hook) && hook.type === "command" && hook.command === commandFor(harness)
+    isObject(hook)
+    && hook.type === "command"
+    && hook.command === commandFor(harness, event)
   );
 }
 
-function managedGroups(config: JsonObject, harness: IntegrationHarness): JsonObject[] {
-  return eventGroups(config).filter((group): group is JsonObject =>
-    isObject(group) && hasManagedCommand(group, harness)
+function managedGroups(
+  config: JsonObject,
+  harness: IntegrationHarness,
+  event: ManagedEvent
+): JsonObject[] {
+  return eventGroups(config, event).filter((group): group is JsonObject =>
+    isObject(group) && hasManagedCommand(group, harness, event)
   );
 }
 
-function mergeManagedGroup(config: JsonObject, harness: IntegrationHarness): JsonObject {
-  const currentGroups = eventGroups(config);
+function mergeManagedGroup(
+  config: JsonObject,
+  harness: IntegrationHarness,
+  event: ManagedEvent
+): JsonObject {
+  const currentGroups = eventGroups(config, event);
   const hooks = config.hooks === undefined ? {} : config.hooks as JsonObject;
   return {
     ...config,
     hooks: {
       ...hooks,
-      UserPromptSubmit: [...currentGroups, managedGroup(harness)]
+      [event]: [...currentGroups, managedGroup(harness, event)]
     }
   };
 }
 
-function removeManagedGroup(config: JsonObject, harness: IntegrationHarness): JsonObject {
-  const currentGroups = eventGroups(config);
+function removeManagedGroup(
+  config: JsonObject,
+  harness: IntegrationHarness,
+  event: ManagedEvent
+): JsonObject {
+  const currentGroups = eventGroups(config, event);
   const hooks = config.hooks as JsonObject;
-  const remaining = currentGroups.filter((group) => !hasManagedCommand(group, harness));
+  const remaining = currentGroups.filter((group) => !hasManagedCommand(group, harness, event));
   const nextHooks = { ...hooks };
-  if (remaining.length > 0) nextHooks.UserPromptSubmit = remaining;
-  else delete nextHooks.UserPromptSubmit;
+  if (remaining.length > 0) nextHooks[event] = remaining;
+  else delete nextHooks[event];
   return { ...config, hooks: nextHooks };
+}
+
+function managedBundle(harness: IntegrationHarness): Array<{
+  event: ManagedEvent;
+  group: JsonObject;
+}> {
+  return managedEvents(harness).map((event) => ({
+    event,
+    group: managedGroup(harness, event)
+  }));
+}
+
+function installedBundle(config: JsonObject, harness: IntegrationHarness): Array<{
+  event: ManagedEvent;
+  group: JsonObject;
+}> {
+  return managedEvents(harness).flatMap((event) =>
+    managedGroups(config, harness, event).map((group) => ({ event, group }))
+  );
+}
+
+function bundleFingerprint(bundle: Array<{ event: ManagedEvent; group: JsonObject }>): string {
+  return hash(stableJson(bundle));
 }
 
 function backupPath(targetPath: string, now: Date, discriminator: string): string {
@@ -256,20 +308,27 @@ export async function planIntegration(
   const targetPath = integrationTarget(harness, options.home);
   await assertSafeTarget(targetPath, options.home);
   const before = await readConfig(targetPath);
-  const existing = managedGroups(before.config, harness);
-  if (existing.length > 1) {
+  const existingByEvent = managedEvents(harness).map((event) => ({
+    event,
+    groups: managedGroups(before.config, harness, event)
+  }));
+  if (existingByEvent.some(({ groups }) => groups.length > 1)) {
     throw new IntegrationError(
       "INTEGRATION_DUPLICATE",
       "Harness configuration contains duplicate Skill Steward hooks"
     );
   }
-  const afterConfig = existing.length === 1
-    ? before.config
-    : mergeManagedGroup(before.config, harness);
+  const fullyInstalled = existingByEvent.every(({ groups }) => groups.length === 1);
+  const afterConfig = existingByEvent.reduce(
+    (config, { event, groups }) => groups.length === 0
+      ? mergeManagedGroup(config, harness, event)
+      : config,
+    before.config
+  );
   const afterSource = stableJson(afterConfig);
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();
-  const path = before.exists && existing.length === 0
+  const path = before.exists && !fullyInstalled
     ? backupPath(targetPath, now, id)
     : undefined;
   return {
@@ -280,8 +339,8 @@ export async function planIntegration(
     expectedBeforeFingerprint: before.fingerprint,
     afterConfig,
     afterFingerprint: hash(afterSource),
-    installedEntryFingerprint: hash(stableJson(managedGroup(harness))),
-    changes: existing.length === 1
+    installedEntryFingerprint: bundleFingerprint(managedBundle(harness)),
+    changes: fullyInstalled
       ? []
       : [
           ...(path ? [{ operation: "backup" as const, path: targetPath }] : []),
@@ -343,16 +402,38 @@ export async function integrationStatus(
   try {
     await assertSafeTarget(targetPath, options.home);
     const current = await readConfig(targetPath);
-    const groups = managedGroups(current.config, harness);
-    if (groups.length > 1) {
+    const groups = managedEvents(harness).map((event) => ({
+      event,
+      groups: managedGroups(current.config, harness, event)
+    }));
+    if (groups.some((entry) => entry.groups.length > 1)) {
       return { harness, status: "drifted", targetPath, message: "Duplicate managed hooks" };
     }
-    if (groups.length === 1) {
+    if (groups.every((entry) => entry.groups.length === 1)) {
+      const fingerprint = bundleFingerprint(installedBundle(current.config, harness));
+      if (latest?.status === "installed" && fingerprint !== latest.installedEntryFingerprint) {
+        return {
+          harness,
+          status: "drifted",
+          targetPath,
+          lastChangedAt: latest.createdAt,
+          message: "The recorded Skill Steward hook changed"
+        };
+      }
       return {
         harness,
         status: harness === "codex" ? "needs-trust" : "installed",
         targetPath,
         ...(latest ? { lastChangedAt: latest.createdAt } : {})
+      };
+    }
+    if (groups.some((entry) => entry.groups.length === 1)) {
+      return {
+        harness,
+        status: "drifted",
+        targetPath,
+        ...(latest ? { lastChangedAt: latest.createdAt } : {}),
+        message: "The Skill Steward lifecycle Hook bundle is incomplete"
       };
     }
     if (latest?.status === "installed") {
@@ -399,17 +480,20 @@ export async function removeIntegration(
     );
   }
   const before = await readConfig(targetPath);
-  const groups = managedGroups(before.config, harness);
+  const groups = installedBundle(before.config, harness);
   if (
-    groups.length !== 1 ||
-    hash(stableJson(groups[0])) !== latest.installedEntryFingerprint
+    groups.length !== managedEvents(harness).length ||
+    bundleFingerprint(groups) !== latest.installedEntryFingerprint
   ) {
     throw new IntegrationError(
       "INTEGRATION_DRIFTED",
       "Skill Steward hook changed since installation; removal was not applied"
     );
   }
-  const afterConfig = removeManagedGroup(before.config, harness);
+  const afterConfig = managedEvents(harness).reduce(
+    (config, event) => removeManagedGroup(config, harness, event),
+    before.config
+  );
   const afterSource = stableJson(afterConfig);
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();

@@ -51,6 +51,15 @@ describe.each(["codex", "claude-code"] as const)("%s integration config", (harne
     expect(JSON.stringify(applied)).toContain(
       `skill-steward hook prompt --harness ${harness}`
     );
+    expect(applied.hooks.Stop).toHaveLength(1);
+    expect(JSON.stringify(applied.hooks.Stop)).toContain(
+      `skill-steward hook lifecycle --harness ${harness}`
+    );
+    if (harness === "claude-code") {
+      expect(applied.hooks.SessionEnd).toHaveLength(1);
+    } else {
+      expect(applied.hooks.SessionEnd).toBeUndefined();
+    }
     expect(JSON.stringify(applied)).toContain("keep-me");
     expect(await readFile(plan.backupPath!, "utf8")).toContain("keep-me");
     expect(await integrationStatus(harness, options)).toMatchObject({
@@ -64,6 +73,7 @@ describe.each(["codex", "claude-code"] as const)("%s integration config", (harne
     expect(afterRemoval).toMatchObject({ unrelated: true });
     expect(JSON.stringify(afterRemoval)).toContain("keep-me");
     expect(JSON.stringify(afterRemoval)).not.toContain("skill-steward hook prompt");
+    expect(JSON.stringify(afterRemoval)).not.toContain("skill-steward hook lifecycle");
   });
 });
 

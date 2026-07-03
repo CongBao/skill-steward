@@ -61,3 +61,82 @@ describe("Codex lifecycle", () => {
     expect(onEvent).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Claude Code lifecycle", () => {
+  it("closes the latest open delivery for the pseudonymous session", () => {
+    const sessionKey = pseudonym("session");
+    const event = normalizeLifecycleInput({
+      harness: "claude-code",
+      stdin: JSON.stringify({
+        hook_event_name: "Stop",
+        session_id: "raw-session",
+        stop_hook_active: false,
+        transcript_path: "/private/transcript.jsonl",
+        last_assistant_message: "PRIVATE customer output"
+      }),
+      privacy,
+      events: [
+        {
+          schemaVersion: 1,
+          id: "delivery-old",
+          createdAt: "2026-07-03T00:00:00.000Z",
+          kind: "preflight-delivered",
+          harness: "claude-code",
+          preflightId: "run-old",
+          algorithmVersion: 2,
+          sessionKey
+        },
+        {
+          schemaVersion: 1,
+          id: "delivery-latest",
+          createdAt: "2026-07-03T00:01:00.000Z",
+          kind: "preflight-delivered",
+          harness: "claude-code",
+          preflightId: "run-latest",
+          algorithmVersion: 2,
+          sessionKey
+        }
+      ],
+      now: () => new Date("2026-07-03T00:02:00.000Z"),
+      id: () => "turn-claude"
+    });
+    expect(event).toMatchObject({
+      kind: "turn-finished",
+      harness: "claude-code",
+      preflightId: "run-latest",
+      sessionKey,
+      reason: "complete"
+    });
+    expect(JSON.stringify(event)).not.toMatch(/PRIVATE|raw-session|transcript|customer/);
+  });
+
+  it.each([
+    ["clear", "user-exit"],
+    ["resume", "user-exit"],
+    ["logout", "user-exit"],
+    ["prompt_input_exit", "user-exit"],
+    ["bypass_permissions_disabled", "other"],
+    ["other", "other"]
+  ] as const)("buckets SessionEnd reason %s as %s", (reason, expected) => {
+    expect(normalizeLifecycleInput({
+      harness: "claude-code",
+      stdin: JSON.stringify({
+        hook_event_name: "SessionEnd",
+        session_id: "raw-session",
+        reason,
+        transcript_path: "/private/transcript.jsonl"
+      }),
+      privacy,
+      id: () => `session-${reason}`,
+      now: () => new Date("2026-07-03T00:03:00.000Z")
+    })).toEqual({
+      schemaVersion: 1,
+      id: `session-${reason}`,
+      createdAt: "2026-07-03T00:03:00.000Z",
+      kind: "session-ended",
+      harness: "claude-code",
+      sessionKey: pseudonym("session"),
+      reason: expected
+    });
+  });
+});
