@@ -26,6 +26,7 @@ export const governancePlanSchema = z.object({
   schemaVersion: z.literal(1),
   id: governancePlanIdSchema,
   kind: z.enum(["quarantine", "restore"]),
+  sourceTransactionId: governancePlanIdSchema.optional(),
   skillId: z.string().min(1).max(256),
   activePath: pathSchema,
   vaultPath: pathSchema,

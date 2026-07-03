@@ -13,6 +13,7 @@ const fingerprintSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const governanceTransactionSchema = z.object({
   schemaVersion: z.literal(1),
   id: governancePlanIdSchema,
+  sourceTransactionId: governancePlanIdSchema.optional(),
   action: z.enum(["quarantine", "restore"]),
   status: z.enum(["quarantined", "restored", "failed"]),
   skillId: z.string().min(1).max(256),

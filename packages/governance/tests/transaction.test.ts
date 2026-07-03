@@ -1,12 +1,15 @@
 import { access, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { SkillRecord, SkillRoot } from "@skill-steward/engine";
 import { fingerprintDirectory } from "@skill-steward/installer";
 import { describe, expect, it } from "vitest";
 import {
   applyQuarantinePlan,
+  applyRestorePlan,
   planQuarantine,
+  planRestore,
+  quarantinedSkillFromTransaction,
   readGovernanceTransactions
 } from "../src/index.js";
 
@@ -147,5 +150,105 @@ describe("applyQuarantinePlan", () => {
       stateDirectory: reused.stateDirectory,
       now: () => new Date("2026-07-03T00:01:00.000Z")
     })).rejects.toMatchObject({ code: "PLAN_ALREADY_USED" });
+  });
+});
+
+describe("applyRestorePlan", () => {
+  async function quarantinedFixture(id: string) {
+    const current = await fixture(`quarantine-${id}`);
+    const quarantine = await applyQuarantinePlan(current.plan, {
+      stateDirectory: current.stateDirectory,
+      now: () => new Date("2026-07-03T00:01:00.000Z")
+    });
+    const roots: SkillRoot[] = [{
+      path: dirname(current.activePath),
+      scope: "global",
+      visibleTo: ["codex"]
+    }];
+    const restore = await planRestore({
+      quarantined: quarantinedSkillFromTransaction(quarantine.transaction),
+      activeRoots: roots,
+      stateDirectory: current.stateDirectory,
+      id: () => `restore-${id}`,
+      now: new Date("2026-07-03T00:02:00.000Z")
+    });
+    return { ...current, roots, quarantine, restore };
+  }
+
+  it("round-trips a quarantine to the original fingerprint", async () => {
+    const current = await quarantinedFixture("success");
+    const result = await applyRestorePlan(current.restore, {
+      stateDirectory: current.stateDirectory,
+      now: () => new Date("2026-07-03T00:03:00.000Z")
+    });
+    expect(result).toMatchObject({
+      rescanRequired: true,
+      cleanupPending: false,
+      transaction: {
+        id: "restore-success",
+        action: "restore",
+        status: "restored",
+        sourceTransactionId: "quarantine-success"
+      }
+    });
+    expect(await fingerprintDirectory(current.activePath)).toBe(current.fingerprint);
+    await expect(access(current.restore.vaultPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readGovernanceTransactions(current.stateDirectory)).map(({ status }) => status))
+      .toEqual(["restored", "quarantined"]);
+  });
+
+  it("refuses destination conflict and vault drift without losing either copy", async () => {
+    const occupied = await quarantinedFixture("occupied");
+    await mkdir(occupied.activePath);
+    await writeFile(join(occupied.activePath, "SKILL.md"), "occupied");
+    await expect(applyRestorePlan(occupied.restore, {
+      stateDirectory: occupied.stateDirectory,
+      now: () => new Date("2026-07-03T00:03:00.000Z")
+    })).rejects.toMatchObject({ code: "DESTINATION_CONFLICT" });
+    expect(await readFile(join(occupied.activePath, "SKILL.md"), "utf8")).toBe("occupied");
+    expect(await fingerprintDirectory(occupied.restore.vaultPath)).toBe(occupied.fingerprint);
+
+    const drifted = await quarantinedFixture("drifted");
+    await writeFile(join(drifted.restore.vaultPath, "changed.md"), "changed");
+    await expect(applyRestorePlan(drifted.restore, {
+      stateDirectory: drifted.stateDirectory,
+      now: () => new Date("2026-07-03T00:03:00.000Z")
+    })).rejects.toMatchObject({ code: "VAULT_DRIFT" });
+    await expect(access(drifted.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(join(drifted.restore.vaultPath, "changed.md"))).resolves.toBeUndefined();
+  });
+
+  for (const boundary of ["copy", "verify", "restore", "journal"] as const) {
+    it(`preserves the verified vault when restore ${boundary} fails`, async () => {
+      const current = await quarantinedFixture(boundary);
+      const failure = async () => { throw new Error(`injected restore ${boundary}`); };
+      await expect(applyRestorePlan(current.restore, {
+        stateDirectory: current.stateDirectory,
+        now: () => new Date("2026-07-03T00:03:00.000Z"),
+        ...(boundary === "copy" ? { afterCopy: failure } : {}),
+        ...(boundary === "verify" ? { afterVerify: failure } : {}),
+        ...(boundary === "restore" ? { afterRestore: failure } : {}),
+        ...(boundary === "journal" ? { appendRecord: failure } : {})
+      })).rejects.toThrow(`injected restore ${boundary}`);
+      await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await fingerprintDirectory(current.restore.vaultPath)).toBe(current.fingerprint);
+      await expect(access(current.restore.stagingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readGovernanceTransactions(current.stateDirectory)).toEqual([
+        expect.objectContaining({ action: "restore", status: "failed" }),
+        expect.objectContaining({ action: "quarantine", status: "quarantined" })
+      ]);
+    });
+  }
+
+  it("keeps both verified copies when post-commit vault cleanup fails", async () => {
+    const current = await quarantinedFixture("cleanup");
+    const result = await applyRestorePlan(current.restore, {
+      stateDirectory: current.stateDirectory,
+      now: () => new Date("2026-07-03T00:03:00.000Z"),
+      cleanupVault: async () => { throw new Error("injected cleanup"); }
+    });
+    expect(result.cleanupPending).toBe(true);
+    expect(await fingerprintDirectory(current.activePath)).toBe(current.fingerprint);
+    expect(await fingerprintDirectory(current.restore.vaultPath)).toBe(current.fingerprint);
   });
 });

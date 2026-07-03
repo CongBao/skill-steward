@@ -269,6 +269,7 @@ export async function planRestore(input: PlanRestoreInput): Promise<GovernancePl
     schemaVersion: 1,
     id,
     kind: "restore",
+    sourceTransactionId: quarantined.transactionId,
     skillId: quarantined.skillId,
     activePath,
     vaultPath,
