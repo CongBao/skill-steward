@@ -19,6 +19,8 @@ const harnesses: IntegrationHarness[] = ["codex", "claude-code", "github-copilot
 
 export type IntegrationServiceErrorCode =
   | "INVALID_INTEGRATION_HARNESS"
+  | "INVALID_INTEGRATION_PLAN_REQUEST"
+  | "INTEGRATION_PLAN_MISMATCH"
   | "INTEGRATION_PLAN_REQUIRED"
   | "INTEGRATION_READINESS_FAILED"
   | "INTEGRATION_ROLLBACK_FAILED";
@@ -26,9 +28,10 @@ export type IntegrationServiceErrorCode =
 export class IntegrationServiceError extends Error {
   constructor(
     public readonly code: IntegrationServiceErrorCode,
-    message: string
+    message: string,
+    options?: ErrorOptions
   ) {
-    super(message);
+    super(message, options);
     this.name = "IntegrationServiceError";
   }
 }
@@ -37,7 +40,7 @@ export interface IntegrationServices {
   list(): Promise<IntegrationStatus[]>;
   capabilities(): typeof integrationCapabilities;
   plan(harness: string): Promise<IntegrationPlan>;
-  apply(harness: string): Promise<IntegrationStatus>;
+  apply(harness: string, planId: string): Promise<IntegrationStatus>;
   remove(harness: string): Promise<IntegrationStatus>;
 }
 
@@ -78,7 +81,7 @@ export function createIntegrationServices(
   dependencyOverrides: Partial<IntegrationServiceDependencies> = {}
 ): IntegrationServices {
   const dependencies = { ...integrationServiceDefaults, ...dependencyOverrides };
-  const plans = new Map<IntegrationHarness, IntegrationPlan>();
+  const plans = new Map<string, IntegrationPlan>();
   const configOptions: IntegrationConfigOptions = {
     home: options.home,
     stateDirectory: options.stateDirectory,
@@ -98,19 +101,25 @@ export function createIntegrationServices(
     async plan(value) {
       const harness = parseHarness(value);
       const plan = await planIntegration(harness, configOptions);
-      plans.set(harness, plan);
+      plans.set(plan.id, plan);
       return plan;
     },
-    async apply(value) {
+    async apply(value, planId) {
       const harness = parseHarness(value);
-      const plan = plans.get(harness);
+      const plan = plans.get(planId);
       if (!plan) {
         throw new IntegrationServiceError(
           "INTEGRATION_PLAN_REQUIRED",
           "Review the current integration plan before applying it"
         );
       }
-      plans.delete(harness);
+      if (plan.harness !== harness) {
+        throw new IntegrationServiceError(
+          "INTEGRATION_PLAN_MISMATCH",
+          "The reviewed integration plan belongs to a different Harness"
+        );
+      }
+      plans.delete(planId);
       const installed = await installCompanionSkill(companionOptions);
       let applied = false;
       try {
@@ -119,32 +128,44 @@ export function createIntegrationServices(
         try {
           await options.afterApply();
         } catch (readinessError) {
-          const failures: string[] = [];
+          const rollbackFailures: unknown[] = [];
           if (plan.changes.length > 0) {
             try {
               await dependencies.rollbackPlan(plan, configOptions);
             } catch (error) {
-              failures.push(error instanceof Error ? error.message : String(error));
+              rollbackFailures.push(error);
             }
           }
-          if (installed.created && failures.length === 0) {
+          if (installed.created && rollbackFailures.length === 0) {
             try {
               if (!await dependencies.removeCompanion(companionOptions)) {
-                failures.push("Companion Skill changed before rollback");
+                rollbackFailures.push(
+                  new Error("Companion Skill changed before rollback")
+                );
               }
             } catch (error) {
-              failures.push(error instanceof Error ? error.message : String(error));
+              rollbackFailures.push(error);
             }
           }
-          if (failures.length > 0) {
+          if (rollbackFailures.length > 0) {
+            const details = rollbackFailures.map((error) =>
+              error instanceof Error ? error.message : String(error)
+            );
             throw new IntegrationServiceError(
               "INTEGRATION_ROLLBACK_FAILED",
-              `The initial readiness scan failed and rollback was incomplete: ${failures.join("; ")}`
+              `The initial readiness scan failed and rollback was incomplete: ${details.join("; ")}`,
+              {
+                cause: new AggregateError(
+                  [readinessError, ...rollbackFailures],
+                  "Integration readiness and rollback both failed"
+                )
+              }
             );
           }
           throw new IntegrationServiceError(
             "INTEGRATION_READINESS_FAILED",
-            "The initial readiness scan failed; artifacts created by this apply were rolled back"
+            "The initial readiness scan failed; artifacts created by this apply were rolled back",
+            { cause: readinessError }
           );
         }
       } catch (error) {
@@ -159,7 +180,9 @@ export function createIntegrationServices(
     async remove(value) {
       const harness = parseHarness(value);
       await removeIntegration(harness, configOptions);
-      plans.delete(harness);
+      for (const [id, plan] of plans) {
+        if (plan.harness === harness) plans.delete(id);
+      }
       const statuses = await Promise.all(
         harnesses.map((entry) => integrationStatus(entry, configOptions))
       );

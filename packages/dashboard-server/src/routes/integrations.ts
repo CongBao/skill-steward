@@ -11,13 +11,36 @@ import {
 
 function sendIntegrationError(reply: FastifyReply, error: unknown) {
   if (error instanceof IntegrationServiceError) {
-    return reply.code(error.code === "INVALID_INTEGRATION_HARNESS" ? 400 : 409)
+    return reply.code(
+      error.code === "INVALID_INTEGRATION_HARNESS"
+      || error.code === "INVALID_INTEGRATION_PLAN_REQUEST"
+        ? 400
+        : 409
+    )
       .send(apiFailure(error.code, error.message));
   }
   if (error instanceof IntegrationError || error instanceof CompanionSkillError) {
     return reply.code(409).send(apiFailure(error.code, error.message));
   }
   throw error;
+}
+
+function applyPlanId(body: unknown): string {
+  if (
+    typeof body !== "object"
+    || body === null
+    || Array.isArray(body)
+    || Object.keys(body).length !== 1
+    || !("planId" in body)
+    || typeof body.planId !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(body.planId)
+  ) {
+    throw new IntegrationServiceError(
+      "INVALID_INTEGRATION_PLAN_REQUEST",
+      "Apply requires a strict JSON body containing only { planId }"
+    );
+  }
+  return body.planId;
 }
 
 export function registerIntegrationRoutes(
@@ -41,11 +64,14 @@ export function registerIntegrationRoutes(
     }
   );
 
-  app.post<{ Params: { harness: string } }>(
+  app.post<{ Params: { harness: string }; Body: unknown }>(
     "/api/v1/integrations/:harness/apply",
     async (request, reply) => {
       try {
-        return apiSuccess(await services.apply(request.params.harness));
+        return apiSuccess(await services.apply(
+          request.params.harness,
+          applyPlanId(request.body)
+        ));
       } catch (error) {
         return sendIntegrationError(reply, error);
       }

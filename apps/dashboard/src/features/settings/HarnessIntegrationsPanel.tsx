@@ -26,9 +26,12 @@ export function HarnessIntegrationsPanel() {
     onSuccess: setPlan
   });
   const apply = useMutation({
-    mutationFn: async (harness: IntegrationHarness) => {
+    mutationFn: async ({ harness, planId }: {
+      harness: IntegrationHarness;
+      planId: string;
+    }) => {
       if (!window.confirm(t("settings.integrations.applyConfirm").replace("{harness}", harnessName(harness)))) return null;
-      return applyHarnessIntegration(harness);
+      return applyHarnessIntegration(harness, planId);
     },
     onSuccess: async (result) => {
       if (!result) return;
@@ -79,7 +82,7 @@ export function HarnessIntegrationsPanel() {
           <code>{plan.targetPath}</code>
           <ul>{plan.changes.map((change, index) => <li key={`${change.operation}:${index}`}><span>{change.operation}</span>{change.path !== plan.targetPath ? <code>{change.path}</code> : null}</li>)}</ul>
           <p>{plan.harness === "codex" ? t("settings.integrations.codexTrust") : t("settings.integrations.reviewNotice")}</p>
-          <button className="button primary" aria-label={`${t("settings.integrations.apply")} ${harnessName(plan.harness)} integration`} disabled={apply.isPending} onClick={() => apply.mutate(plan.harness)}>{t("settings.integrations.apply")}</button>
+          <button className="button primary" aria-label={`${t("settings.integrations.apply")} ${harnessName(plan.harness)} integration`} disabled={apply.isPending} onClick={() => apply.mutate({ harness: plan.harness, planId: plan.id })}>{t("settings.integrations.apply")}</button>
         </section>
       ) : null}
       {(integrations.error || capabilities.error || review.error || apply.error || remove.error) ? <p className="form-error" role="alert">{String(integrations.error ?? capabilities.error ?? review.error ?? apply.error ?? remove.error)}</p> : null}

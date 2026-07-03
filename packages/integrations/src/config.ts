@@ -209,12 +209,33 @@ export interface IntegrationConfigOptions {
   id?: () => string;
 }
 
+export interface IntegrationConfigDependencies {
+  appendRecord: typeof appendIntegrationRecord;
+}
+
+const integrationConfigDefaults: IntegrationConfigDependencies = {
+  appendRecord: appendIntegrationRecord
+};
+
 function hash(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 function stableJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function canonicalJson(value: unknown): string {
+  const canonicalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(canonicalize);
+    if (isObject(entry)) {
+      return Object.fromEntries(
+        Object.keys(entry).sort().map((key) => [key, canonicalize(entry[key])])
+      );
+    }
+    return entry;
+  };
+  return JSON.stringify(canonicalize(value));
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -543,6 +564,15 @@ export async function planIntegration(
       "Harness configuration contains duplicate Skill Steward hooks"
     );
   }
+  if (existingByEvent.some(({ event, groups }) =>
+    groups.length === 1
+    && canonicalJson(groups[0]) !== canonicalJson(managedGroup(harness, event))
+  )) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Harness configuration contains a non-canonical Skill Steward Hook group"
+    );
+  }
   const fullyInstalled = existingByEvent.every(({ groups }) => groups.length === 1);
   const afterConfig = existingByEvent.reduce(
     (config, { event, groups }) => groups.length === 0
@@ -578,8 +608,10 @@ export async function planIntegration(
 
 export async function applyIntegrationPlan(
   inputPlan: unknown,
-  options: IntegrationConfigOptions
+  options: IntegrationConfigOptions,
+  dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
+  const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
   const parsedPlan = integrationPlanSchema.safeParse(inputPlan);
   if (!parsedPlan.success) {
     throw new IntegrationError(
@@ -679,7 +711,7 @@ export async function applyIntegrationPlan(
     createdAt: now.toISOString()
   };
   try {
-    await appendIntegrationRecord(options.stateDirectory, record);
+    await dependencies.appendRecord(options.stateDirectory, record);
   } catch (error) {
     if (plan.changes.length > 0) {
       try {
@@ -687,7 +719,13 @@ export async function applyIntegrationPlan(
       } catch (rollbackError) {
         throw new IntegrationError(
           "INTEGRATION_ROLLBACK_FAILED",
-          `Integration configuration was written, its journal failed, and rollback was incomplete: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          `Integration configuration was written, its journal failed, and rollback was incomplete: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          {
+            cause: new AggregateError(
+              [error, rollbackError],
+              "Integration journal commit and configuration rollback both failed"
+            )
+          }
         );
       }
     }

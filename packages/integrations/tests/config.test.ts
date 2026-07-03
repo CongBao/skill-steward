@@ -1,6 +1,9 @@
+import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readIntegrationRecords } from "@skill-steward/store";
 import { describe, expect, it } from "vitest";
 import {
   applyIntegrationPlan,
@@ -11,6 +14,36 @@ import {
   rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan
 } from "../src/config.js";
+
+const applyFixture = fileURLToPath(
+  new URL("./fixtures/integration-apply.mjs", import.meta.url)
+);
+
+async function waitForFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
+
+function integrationWorker(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [applyFixture, ...args], {
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0
+      ? resolve()
+      : reject(new Error(`integration worker exited ${code}: ${stderr}`)));
+  });
+}
 
 function target(home: string, harness: "codex" | "claude-code"): string {
   return harness === "codex"
@@ -123,6 +156,36 @@ it("produces an idempotent plan without a phantom backup", async () => {
   const second = await planIntegration("claude-code", options);
   expect(second.changes).toEqual([]);
   expect(second.backupPath).toBeUndefined();
+  await applyIntegrationPlan(second, options);
+  await expect(integrationStatus("claude-code", options)).resolves.toMatchObject({
+    status: "installed"
+  });
+  await expect(removeIntegration("claude-code", options)).resolves.toMatchObject({
+    status: "removed"
+  });
+});
+
+it("refuses non-canonical managed Hook groups in full and partial bundles", async () => {
+  for (const partial of [false, true]) {
+    const home = await mkdtemp(join(tmpdir(), `steward-noncanonical-${partial}-`));
+    const stateDirectory = join(home, "state");
+    const path = target(home, "codex");
+    const options = {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-03T00:00:00.000Z")
+    };
+    await applyIntegrationPlan(await planIntegration("codex", options), options);
+    const config = JSON.parse(await readFile(path, "utf8"));
+    config.hooks.UserPromptSubmit[0].hooks[0].timeout = 99;
+    config.hooks.UserPromptSubmit[0].extra = "not managed";
+    if (partial) delete config.hooks.Stop;
+    await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await expect(planIntegration("codex", options)).rejects.toMatchObject({
+      code: "INTEGRATION_DRIFTED"
+    });
+  }
 });
 
 it("rolls back an applied plan to exact reviewed bytes or a missing target", async () => {
@@ -156,7 +219,8 @@ it("restores configuration when the post-apply journal cannot commit", async () 
     stateDirectory,
     now: () => new Date("2026-07-03T00:00:00.000Z")
   });
-  await mkdir(join(stateDirectory, "integrations.json"), { recursive: true });
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(join(stateDirectory, "integration-records"), "blocked", "utf8");
 
   await expect(applyIntegrationPlan(plan, {
     home,
@@ -164,6 +228,36 @@ it("restores configuration when the post-apply journal cannot commit", async () 
     now: () => new Date("2026-07-03T00:00:00.000Z")
   })).rejects.toBeDefined();
   await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves journal and rollback failures in one cause chain", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-journal-cause-"));
+  const stateDirectory = join(home, "state");
+  const options = {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z")
+  };
+  const plan = await planIntegration("codex", options);
+  const journalFailure = new Error("journal failed");
+  const failure = await applyIntegrationPlan(plan, options, {
+    appendRecord: async () => {
+      const applied = JSON.parse(await readFile(plan.targetPath, "utf8"));
+      await writeFile(
+        plan.targetPath,
+        `${JSON.stringify({ ...applied, changedDuringJournal: true })}\n`,
+        "utf8"
+      );
+      throw journalFailure;
+    }
+  }).catch((error: unknown) => error);
+
+  expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+  expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+  const causes = ((failure as Error).cause as AggregateError).errors;
+  expect(causes[0]).toBe(journalFailure);
+  expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
+  expect(await readFile(plan.targetPath, "utf8")).toContain("changedDuringJournal");
 });
 
 it("cleans companions only when the domain proves configuration rollback", async () => {
@@ -261,6 +355,34 @@ it("creates normal missing Copilot ancestor directories", async () => {
   await expect(access(join(home, ".copilot", "hooks", "skill-steward.json")))
     .resolves.toBeUndefined();
 });
+
+it("keeps concurrent cross-Harness apply journals removable", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-concurrent-apply-"));
+  const stateDirectory = join(home, "state");
+  const barrier = join(home, "barrier");
+  const readyCodex = join(home, "ready-codex");
+  const readyClaude = join(home, "ready-claude");
+  const count = 10;
+  const workers = [
+    integrationWorker([
+      home, stateDirectory, "codex", readyCodex, barrier, String(count)
+    ]),
+    integrationWorker([
+      home, stateDirectory, "claude-code", readyClaude, barrier, String(count)
+    ])
+  ];
+  await Promise.all([waitForFile(readyCodex), waitForFile(readyClaude)]);
+  await writeFile(barrier, "go\n", "utf8");
+  await Promise.all(workers);
+
+  const records = await readIntegrationRecords(stateDirectory);
+  expect(records.filter(({ harness }) => harness === "codex")).toHaveLength(count);
+  expect(records.filter(({ harness }) => harness === "claude-code")).toHaveLength(count);
+  await expect(removeIntegration("codex", { home, stateDirectory }))
+    .resolves.toMatchObject({ status: "removed" });
+  await expect(removeIntegration("claude-code", { home, stateDirectory }))
+    .resolves.toMatchObject({ status: "removed" });
+}, 15_000);
 
 it("creates a strict ten-minute plan and refuses expired plans before writing", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-expired-config-"));

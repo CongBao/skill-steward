@@ -18,7 +18,21 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-async function fixture() {
+function applyRequest(
+  app: ReturnType<typeof createDashboardApp>["app"],
+  harness: string,
+  planId: string,
+  headers: Record<string, string>
+) {
+  return app.inject({
+    method: "POST",
+    url: `/api/v1/integrations/${harness}/apply`,
+    headers,
+    payload: { planId }
+  });
+}
+
+async function fixture(ids: string[] = ["integration-record"]) {
   const base = await mkdtemp(join(tmpdir(), "steward-integration-api-"));
   const home = join(base, "home");
   const stateDirectory = join(base, "state");
@@ -31,6 +45,8 @@ async function fixture() {
   let domainFailureAfterCommit: Error | undefined;
   let companionCleanupFailure = false;
   let readinessCalls = 0;
+  let idIndex = 0;
+  const appliedPlanIds: string[] = [];
   const integrationServices = createIntegrationServices({
     home,
     stateDirectory,
@@ -42,9 +58,10 @@ async function fixture() {
       await writeLatestReport(stateDirectory, report);
     },
     now: () => new Date("2026-07-03T00:00:00.000Z"),
-    id: () => "integration-record"
+    id: () => ids[idIndex++] ?? `integration-record-${idIndex}`
   }, {
     applyPlan: async (plan, options) => {
+      appliedPlanIds.push((plan as { id: string }).id);
       const record = await applyIntegrationPlan(plan, options);
       if (domainFailureAfterCommit) throw domainFailureAfterCommit;
       return record;
@@ -57,6 +74,8 @@ async function fixture() {
   apps.push(created.app);
   return {
     ...created,
+    integrationServices,
+    appliedPlanIds,
     home,
     stateDirectory,
     failReadiness(
@@ -79,6 +98,46 @@ async function fixture() {
 }
 
 describe("Harness integration routes", () => {
+  it("requires a strict planId apply body", async () => {
+    const headers = { "x-skill-steward-token": "token" };
+    for (const body of [undefined, {}, { planId: "plan-a", extra: true }]) {
+      const { app } = await fixture(["plan-a"]);
+      expect((await app.inject({
+        method: "POST",
+        url: "/api/v1/integrations/codex/plan",
+        headers
+      })).statusCode).toBe(200);
+      const applied = await app.inject({
+        method: "POST",
+        url: "/api/v1/integrations/codex/apply",
+        headers,
+        ...(body === undefined ? {} : { payload: body })
+      });
+      expect(applied.statusCode, JSON.stringify(body)).toBe(400);
+    }
+  });
+
+  it("binds multiple same-Harness plans to their exact IDs", async () => {
+    const { integrationServices, appliedPlanIds } = await fixture(["plan-a", "plan-b"]);
+    const planA = await integrationServices.plan("codex");
+    const planB = await integrationServices.plan("codex");
+    expect(planA.id).toBe("plan-a");
+    expect(planB.id).toBe("plan-b");
+
+    await expect(integrationServices.apply("claude-code", planB.id)).rejects.toMatchObject({
+      code: "INTEGRATION_PLAN_MISMATCH"
+    });
+    await integrationServices.apply("codex", planA.id);
+    expect(appliedPlanIds).toEqual(["plan-a"]);
+    await expect(integrationServices.apply("codex", planA.id)).rejects.toMatchObject({
+      code: "INTEGRATION_PLAN_REQUIRED"
+    });
+    await expect(integrationServices.apply("codex", planB.id)).rejects.toMatchObject({
+      code: "INTEGRATION_DRIFTED"
+    });
+    expect(appliedPlanIds).toEqual(["plan-a", "plan-b"]);
+  });
+
   it("lists without a token but protects plans and changes", async () => {
     const { app } = await fixture();
     const listed = await app.inject({ method: "GET", url: "/api/v1/integrations" });
@@ -123,11 +182,7 @@ describe("Harness integration routes", () => {
       changes: expect.arrayContaining([expect.objectContaining({ operation: "write" })])
     });
 
-    const applied = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
-    });
+    const applied = await applyRequest(app, "codex", planned.json().data.id, headers);
     expect(applied.statusCode).toBe(200);
     expect(applied.json().data).toMatchObject({ harness: "codex", status: "needs-trust" });
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
@@ -160,11 +215,7 @@ describe("Harness integration routes", () => {
     const backupPath = planned.json().data.backupPath as string;
     failReadiness();
 
-    const applied = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
-    });
+    const applied = await applyRequest(app, "codex", planned.json().data.id, headers);
     expect(applied.statusCode).toBe(409);
     expect(applied.json().error).toMatchObject({ code: "INTEGRATION_READINESS_FAILED" });
     expect(await readFile(configPath, "utf8")).toBe(before);
@@ -173,30 +224,59 @@ describe("Harness integration routes", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves readiness and rollback causes for service callers", async () => {
+    const readinessFailure = new Error("scan storage unavailable");
+    const first = await fixture(["readiness-plan"]);
+    const firstPlan = await first.integrationServices.plan("codex");
+    first.failReadiness(readinessFailure);
+    const readiness = await first.integrationServices
+      .apply("codex", firstPlan.id)
+      .catch((error: unknown) => error);
+    expect(readiness).toMatchObject({ code: "INTEGRATION_READINESS_FAILED" });
+    expect((readiness as Error).cause).toBe(readinessFailure);
+
+    const rollbackReadiness = new Error("scan failed before persistence");
+    const second = await fixture(["rollback-plan"]);
+    const secondPlan = await second.integrationServices.plan("codex");
+    second.failReadiness(rollbackReadiness, async () => {
+      const config = JSON.parse(await readFile(secondPlan.targetPath, "utf8"));
+      await writeFile(
+        secondPlan.targetPath,
+        `${JSON.stringify({ ...config, changed: true })}\n`,
+        "utf8"
+      );
+    });
+    const rollback = await second.integrationServices
+      .apply("codex", secondPlan.id)
+      .catch((error: unknown) => error);
+    expect(rollback).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+    expect((rollback as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((rollback as Error).cause as AggregateError).errors[0]).toBe(rollbackReadiness);
+  });
+
   it("preserves pre-existing managed artifacts when a later readiness call fails", async () => {
     const { app, home, failReadiness } = await fixture();
     const headers = { "x-skill-steward-token": "token" };
-    for (const action of ["plan", "apply"]) {
-      expect((await app.inject({
-        method: "POST",
-        url: `/api/v1/integrations/claude-code/${action}`,
-        headers
-      })).statusCode).toBe(200);
-    }
+    const claudePlan = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/claude-code/plan",
+      headers
+    });
+    expect(claudePlan.statusCode).toBe(200);
+    expect((await applyRequest(
+      app, "claude-code", claudePlan.json().data.id, headers
+    )).statusCode).toBe(200);
     const companion = join(home, ".agents", "skills", "skill-steward-preflight");
     const claudeConfig = join(home, ".claude", "settings.json");
     const beforeClaude = await readFile(claudeConfig, "utf8");
-    expect((await app.inject({
+    const codexPlan = await app.inject({
       method: "POST",
       url: "/api/v1/integrations/codex/plan",
       headers
-    })).statusCode).toBe(200);
-    failReadiness();
-    const failed = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
     });
+    expect(codexPlan.statusCode).toBe(200);
+    failReadiness();
+    const failed = await applyRequest(app, "codex", codexPlan.json().data.id, headers);
     expect(failed.statusCode).toBe(409);
     await expect(access(companion)).resolves.toBeUndefined();
     expect(await readFile(claudeConfig, "utf8")).toBe(beforeClaude);
@@ -207,26 +287,27 @@ describe("Harness integration routes", () => {
   it("keeps a no-op pre-existing integration when readiness fails", async () => {
     const { app, home, failReadiness } = await fixture();
     const headers = { "x-skill-steward-token": "token" };
-    for (const action of ["plan", "apply"]) {
-      expect((await app.inject({
-        method: "POST",
-        url: `/api/v1/integrations/codex/${action}`,
-        headers
-      })).statusCode).toBe(200);
-    }
-    const configPath = join(home, ".codex", "hooks.json");
-    const before = await readFile(configPath, "utf8");
-    expect((await app.inject({
+    const initialPlan = await app.inject({
       method: "POST",
       url: "/api/v1/integrations/codex/plan",
       headers
-    })).statusCode).toBe(200);
-    failReadiness();
-    expect((await app.inject({
+    });
+    expect(initialPlan.statusCode).toBe(200);
+    expect((await applyRequest(
+      app, "codex", initialPlan.json().data.id, headers
+    )).statusCode).toBe(200);
+    const configPath = join(home, ".codex", "hooks.json");
+    const before = await readFile(configPath, "utf8");
+    const noopPlan = await app.inject({
       method: "POST",
-      url: "/api/v1/integrations/codex/apply",
+      url: "/api/v1/integrations/codex/plan",
       headers
-    })).statusCode).toBe(409);
+    });
+    expect(noopPlan.statusCode).toBe(200);
+    failReadiness();
+    expect((await applyRequest(
+      app, "codex", noopPlan.json().data.id, headers
+    )).statusCode).toBe(409);
     expect(await readFile(configPath, "utf8")).toBe(before);
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
       .resolves.toBeUndefined();
@@ -245,11 +326,7 @@ describe("Harness integration routes", () => {
       const config = JSON.parse(await readFile(configPath, "utf8"));
       await writeFile(configPath, `${JSON.stringify({ ...config, external: true })}\n`, "utf8");
     });
-    const failed = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
-    });
+    const failed = await applyRequest(app, "codex", "integration-record", headers);
     expect(failed.statusCode).toBe(409);
     expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     expect(await readFile(configPath, "utf8")).toContain('"external":true');
@@ -267,13 +344,10 @@ describe("Harness integration routes", () => {
       url: "/api/v1/integrations/codex/plan",
       headers
     })).statusCode).toBe(200);
-    await mkdir(join(stateDirectory, "integrations.json"), { recursive: true });
+    await mkdir(stateDirectory, { recursive: true });
+    await writeFile(join(stateDirectory, "integration-records"), "blocked", "utf8");
 
-    const failed = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
-    });
+    const failed = await applyRequest(app, "codex", "integration-record", headers);
     expect(failed.statusCode).toBe(500);
     expect(await readFile(configPath, "utf8")).toBe(before);
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
@@ -293,11 +367,7 @@ describe("Harness integration routes", () => {
       "configuration may still be active"
     ));
 
-    const failed = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
-    });
+    const failed = await applyRequest(app, "codex", "integration-record", headers);
     expect(failed.statusCode).toBe(409);
     expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
@@ -314,14 +384,11 @@ describe("Harness integration routes", () => {
       url: "/api/v1/integrations/codex/plan",
       headers
     })).statusCode).toBe(200);
-    await mkdir(join(stateDirectory, "integrations.json"), { recursive: true });
+    await mkdir(stateDirectory, { recursive: true });
+    await writeFile(join(stateDirectory, "integration-records"), "blocked", "utf8");
     failCompanionCleanup();
 
-    const failed = await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/apply",
-      headers
-    });
+    const failed = await applyRequest(app, "codex", "integration-record", headers);
     expect(failed.statusCode).toBe(409);
     expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))

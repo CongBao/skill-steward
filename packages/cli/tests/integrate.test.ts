@@ -205,10 +205,10 @@ describe("integrate command", () => {
 
   it("removes a newly created companion after a journal failure without rereading it", async () => {
     const plan = await preview("codex");
-    await mkdir(join(current.context.stateDir, "integrations.json"));
+    await writeFile(join(current.context.stateDir, "integration-records"), "blocked", "utf8");
 
     expect(await apply(plan.id)).toBe(1);
-    expect(current.stderr.splice(0).join("")).toContain("EISDIR");
+    expect(current.stderr.splice(0).join("")).toContain("EEXIST");
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
@@ -217,7 +217,7 @@ describe("integrate command", () => {
 
   it("reports typed incomplete rollback when companion cleanup cannot be proven", async () => {
     const plan = await preview("codex");
-    await mkdir(join(current.context.stateDir, "integrations.json"));
+    await writeFile(join(current.context.stateDir, "integration-records"), "blocked", "utf8");
 
     expect(await integrateApplyCommand({
       plan: plan.id,
@@ -228,7 +228,7 @@ describe("integrate command", () => {
     })).toBe(1);
     const error = current.stderr.splice(0).join("");
     expect(error).toContain("INTEGRATION_ROLLBACK_FAILED");
-    expect(error).toContain("EISDIR");
+    expect(error).toContain("EEXIST");
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);
