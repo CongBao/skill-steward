@@ -10,6 +10,12 @@ const dashboardSource = fileURLToPath(
 const dashboardDestination = fileURLToPath(
   new URL("./dist/dashboard/", import.meta.url)
 );
+const integrationsSource = fileURLToPath(
+  new URL("../integrations/assets/", import.meta.url)
+);
+const integrationsDestination = fileURLToPath(
+  new URL("./dist/integrations/", import.meta.url)
+);
 
 await mkdir(outputDirectory, { recursive: true });
 await build({
@@ -25,3 +31,5 @@ await build({
 });
 await rm(dashboardDestination, { recursive: true, force: true });
 await cp(dashboardSource, dashboardDestination, { recursive: true });
+await rm(integrationsDestination, { recursive: true, force: true });
+await cp(integrationsSource, integrationsDestination, { recursive: true });

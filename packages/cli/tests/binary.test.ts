@@ -25,6 +25,8 @@ describe("built CLI", () => {
     const { stdout } = await execFileAsync(process.execPath, [binary, "--help"]);
     expect(stdout).toContain("preflight");
     expect(stdout).toMatch(/Recommend a minimal set of Skills for a\s+task/);
+    expect(stdout).toContain("hook");
+    expect(stdout).toContain("integrate");
   });
 
   it("runs as an ESM executable", async () => {

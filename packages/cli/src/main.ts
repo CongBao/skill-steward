@@ -19,6 +19,13 @@ import { discoverCommand } from "./commands/discover.js";
 import { diffCommand } from "./commands/diff.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { labelCommand } from "./commands/label.js";
+import { hookPromptCommand } from "./commands/hook.js";
+import {
+  integrateApplyCommand,
+  integratePlanCommand,
+  integrateRemoveCommand,
+  integrateStatusCommand
+} from "./commands/integrate.js";
 import {
   explainCommand,
   reportCommand,
@@ -52,6 +59,53 @@ export async function run(
     .option("--json", "JSON output", false)
     .action(async (options: { json: boolean }) => {
       exitCode = await catalogListCommand(options.json, context);
+    });
+
+  const hook = program
+    .command("hook")
+    .description("Run fail-open Harness Hook protocols");
+
+  hook
+    .command("prompt")
+    .requiredOption("--harness <id>", "codex or claude-code")
+    .action(async (options: { harness: string }) => {
+      exitCode = await hookPromptCommand(options.harness, context);
+    });
+
+  const integrate = program
+    .command("integrate")
+    .description("Plan and manage Harness preflight integrations");
+
+  integrate
+    .command("plan")
+    .requiredOption("--harness <id>", "codex or claude-code")
+    .option("--json", "JSON output", false)
+    .action(async (options: { harness: string; json: boolean }) => {
+      exitCode = await integratePlanCommand(options.harness, options.json, context);
+    });
+
+  integrate
+    .command("apply")
+    .requiredOption("--harness <id>", "codex or claude-code")
+    .option("--confirm", "confirm the reviewed integration plan", false)
+    .action(async (options: { harness: string; confirm: boolean }) => {
+      exitCode = await integrateApplyCommand(options.harness, options.confirm, context);
+    });
+
+  integrate
+    .command("status")
+    .option("--harness <id>", "codex or claude-code")
+    .option("--json", "JSON output", false)
+    .action(async (options: { harness?: string; json: boolean }) => {
+      exitCode = await integrateStatusCommand(options.harness, options.json, context);
+    });
+
+  integrate
+    .command("remove")
+    .requiredOption("--harness <id>", "codex or claude-code")
+    .option("--confirm", "confirm integration removal", false)
+    .action(async (options: { harness: string; confirm: boolean }) => {
+      exitCode = await integrateRemoveCommand(options.harness, options.confirm, context);
     });
 
   catalog

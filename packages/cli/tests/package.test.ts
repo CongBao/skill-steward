@@ -18,4 +18,15 @@ it("packages the built dashboard alongside the CLI binary", async () => {
   ).join("\n");
   expect(javascript).toContain("/api/v1/preflights");
   expect(javascript).toContain("Task preflight");
+
+  const companion = join(
+    process.cwd(),
+    "dist",
+    "integrations",
+    "skill-steward-preflight",
+    "SKILL.md"
+  );
+  const skill = await readFile(companion, "utf8");
+  expect(skill).toContain("name: skill-steward-preflight");
+  expect(skill).toContain("never install them automatically");
 });
