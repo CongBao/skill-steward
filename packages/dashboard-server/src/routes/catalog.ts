@@ -85,4 +85,15 @@ export function registerCatalogRoutes(
       return sendCatalogError(reply, error);
     }
   });
+
+  app.post<{ Params: { id: string } }>(
+    "/api/v1/catalog/candidates/:id/inspect-installation",
+    async (request, reply) => {
+      try {
+        return apiSuccess(await services.inspectCandidate(request.params.id));
+      } catch (error) {
+        return sendCatalogError(reply, error);
+      }
+    }
+  );
 }

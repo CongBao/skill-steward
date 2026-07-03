@@ -26,6 +26,7 @@ import {
   integrateRemoveCommand,
   integrateStatusCommand
 } from "./commands/integrate.js";
+import { catalogInstallCommand } from "./commands/install.js";
 import {
   explainCommand,
   reportCommand,
@@ -82,6 +83,30 @@ export async function run(
     .option("--json", "JSON output", false)
     .action(async (options: { harness: string; json: boolean }) => {
       exitCode = await integratePlanCommand(options.harness, options.json, context);
+    });
+
+  program
+    .command("install")
+    .description("Plan or apply installation of a catalog recommendation")
+    .requiredOption("--catalog-candidate <id>")
+    .requiredOption("--harness <id>")
+    .requiredOption("--scope <scope>", "global or project")
+    .option("--workspace <path>")
+    .option("--target-name <name>")
+    .option("--replace", "replace a differing destination with backup", false)
+    .option("--confirm", "confirm the reviewed installation", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      catalogCandidate: string;
+      harness: string;
+      scope: string;
+      workspace?: string;
+      targetName?: string;
+      replace: boolean;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await catalogInstallCommand(options, context);
     });
 
   integrate

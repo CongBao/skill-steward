@@ -2,7 +2,12 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogInspection } from "@skill-steward/catalog";
-import { afterEach, describe, expect, it } from "vitest";
+import type { InstallationSource } from "@skill-steward/installer";
+import {
+  writeCatalogSnapshot,
+  writeCatalogSources
+} from "@skill-steward/store";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDashboardApp } from "../src/app.js";
 import { createCatalogServices } from "../src/catalog-services.js";
 import { createPreflightServices } from "../src/preflight-services.js";
@@ -198,5 +203,80 @@ describe("catalog routes", () => {
       useCandidateIds: ["security-installed"],
       installCandidateIds: ["testing-available"]
     });
+  });
+
+  it("returns a reinspected installation preview without planning or committing", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-catalog-preview-"));
+    const source = {
+      id: "fixture-catalog",
+      name: "Fixture catalog",
+      kind: "git" as const,
+      url: "https://example.com/skills.git",
+      enabled: true,
+      trust: "user" as const,
+      preset: false
+    };
+    const fingerprint = `sha256:${"f".repeat(64)}`;
+    await writeCatalogSources(stateDirectory, [source]);
+    await writeCatalogSnapshot(stateDirectory, {
+      schemaVersion: 1,
+      generatedAt: "2026-07-03T00:00:00.000Z",
+      sources: [{ sourceId: source.id, status: "ready", skillCount: 1 }],
+      skills: [{
+        id: "testing-available",
+        sourceId: source.id,
+        sourceRevision: "a".repeat(40),
+        relativePath: "testing",
+        name: "testing-review",
+        description: "Find missing tests",
+        fingerprint,
+        estimatedTokens: 180,
+        scripts: [],
+        executables: [],
+        findings: [],
+        compatibleHarnesses: [],
+        compatibility: "unknown"
+      }]
+    });
+    const inspectInstallation = vi.fn(async (
+      gitSource: Extract<InstallationSource, { kind: "git" }>
+    ) => ({
+      previewId: "preview-1",
+      expiresAt: 10_000,
+      source: gitSource,
+      candidates: [{ id: "root", relativePath: ".", name: "testing-review", fingerprint }]
+    }));
+    const catalogServices = createCatalogServices({
+      stateDirectory,
+      inspect: async () => inspection,
+      inspectInstallation
+    });
+    const { app } = createDashboardApp({ mutationToken: "token", catalogServices });
+    apps.push(app);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/catalog/candidates/testing-available/inspect-installation",
+      headers: { "x-skill-steward-token": "token" }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      catalogCandidateId: "testing-available",
+      previewId: "preview-1",
+      candidates: [expect.objectContaining({ id: "root", fingerprint })]
+    });
+    expect(inspectInstallation).toHaveBeenCalledOnce();
+
+    const driftedServices = createCatalogServices({
+      stateDirectory,
+      inspect: async () => inspection,
+      inspectInstallation: async (gitSource) => ({
+        previewId: "preview-drifted",
+        expiresAt: 10_000,
+        source: { ...gitSource, ref: "b".repeat(40) },
+        candidates: [{ id: "root", relativePath: ".", name: "testing-review", fingerprint }]
+      })
+    });
+    await expect(driftedServices.inspectCandidate("testing-available"))
+      .rejects.toMatchObject({ code: "CATALOG_CANDIDATE_DRIFTED" });
   });
 });

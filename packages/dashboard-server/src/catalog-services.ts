@@ -1,11 +1,11 @@
 import {
   catalogSourceSchema,
+  catalogCandidateSource,
   createGitCatalogInspector,
   refreshCatalog,
-  type CatalogInspection,
+  verifyCatalogCandidateInspection,
   type CatalogSnapshot,
   type CatalogSource,
-  type CatalogSkillRecord,
   type RefreshCatalogInput
 } from "@skill-steward/catalog";
 import type { InstallCandidate } from "@skill-steward/installer";
@@ -15,6 +15,10 @@ import {
   writeCatalogSnapshot,
   writeCatalogSources
 } from "@skill-steward/store";
+import type {
+  InspectionResult,
+  InstallationServices
+} from "./installation-services.js";
 
 export type CatalogServiceErrorCode =
   | "CATALOG_SOURCE_EXISTS"
@@ -22,7 +26,8 @@ export type CatalogServiceErrorCode =
   | "CATALOG_SOURCE_LIMIT"
   | "CATALOG_PRESET_REMOVE_FORBIDDEN"
   | "CATALOG_CANDIDATE_NOT_FOUND"
-  | "CATALOG_CANDIDATE_DRIFTED";
+  | "CATALOG_CANDIDATE_DRIFTED"
+  | "CATALOG_INSTALLATION_UNAVAILABLE";
 
 export class CatalogServiceError extends Error {
   constructor(
@@ -34,11 +39,9 @@ export class CatalogServiceError extends Error {
   }
 }
 
-export interface CatalogCandidateInspection {
-  candidate: CatalogSkillRecord;
-  inspected: InstallCandidate;
-  commitSha: string;
-}
+export type CatalogCandidateInspection = InspectionResult & {
+  catalogCandidateId: string;
+};
 
 export interface CatalogServices {
   list(): Promise<{ sources: CatalogSource[]; snapshot: CatalogSnapshot | null }>;
@@ -52,6 +55,7 @@ export interface CatalogServices {
 export interface CatalogServiceOptions {
   stateDirectory: string;
   inspect?: RefreshCatalogInput["inspect"];
+  inspectInstallation?: InstallationServices["inspectGit"];
   now?: () => Date;
 }
 
@@ -160,33 +164,37 @@ export function createCatalogServices(
           `Catalog source '${candidate.sourceId}' was not found`
         );
       }
-      let inspection: CatalogInspection;
+      if (!options.inspectInstallation) {
+        throw new CatalogServiceError(
+          "CATALOG_INSTALLATION_UNAVAILABLE",
+          "Catalog installation preview is unavailable"
+        );
+      }
+      const gitSource = catalogCandidateSource(candidate, source);
+      let preview: InspectionResult;
       try {
-        inspection = await inspect(source.id, {
-          ...source,
-          enabled: true,
-          ref: candidate.sourceRevision
-        });
+        preview = await options.inspectInstallation(gitSource);
       } catch {
         throw new CatalogServiceError(
           "CATALOG_CANDIDATE_DRIFTED",
           "Catalog candidate could not be reproduced at its recorded revision"
         );
       }
-      const inspected = inspection.candidates.find(
-        (entry) => entry.relativePath === candidate.relativePath
-      );
-      if (
-        inspection.commitSha !== candidate.sourceRevision ||
-        !inspected?.fingerprint ||
-        inspected.fingerprint !== candidate.fingerprint
-      ) {
+      try {
+        if (preview.source.kind !== "git" || !preview.source.ref) {
+          throw new Error("Installation preview did not retain the pinned revision");
+        }
+        verifyCatalogCandidateInspection(candidate, {
+          commitSha: preview.source.ref,
+          candidates: preview.candidates as InstallCandidate[]
+        });
+      } catch {
         throw new CatalogServiceError(
           "CATALOG_CANDIDATE_DRIFTED",
           "Catalog candidate changed since the last refresh"
         );
       }
-      return { candidate, inspected, commitSha: inspection.commitSha };
+      return { catalogCandidateId: candidate.id, ...preview };
     }
   };
 }

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { RefreshCatalogInput } from "@skill-steward/catalog";
+import type { stagePublicGit } from "@skill-steward/installer";
 
 export interface CliContext {
   cwd: string;
@@ -9,6 +10,7 @@ export interface CliContext {
   stderr: (value: string) => void;
   stdin?: () => Promise<string>;
   catalogInspect?: RefreshCatalogInput["inspect"];
+  catalogStage?: typeof stagePublicGit;
   now?: () => Date;
 }
 
