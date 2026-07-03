@@ -1,12 +1,81 @@
 # Product Review — 2026-07-03
 
-## Executive verdict
+Alpha.3 verification completed on **2026-07-04 CST**; the document retains its original review date so existing public links remain stable.
+
+## Current stage verdict — 0.5.0-alpha.3
+
+The Alpha.3 build is ready for continued public Alpha use and for daily dogfooding across its implemented scope. It is easy to understand after the new three-job introduction, produces useful first value from one scan, connects its recommendation flow to real Harness prompts, and puts unusually strong review, drift refusal, recovery, and privacy boundaries around local changes. It is worth keeping installed for portfolio review, explicit task Preflight, catalog discovery, and reversible Skill governance.
+
+The current product score is **8.5/10 under the expanded Alpha.3 qualitative rubric below**. The Alpha.2 post-fix score of **7.9/10** later in this document uses a different weighted rubric and is retained as historical evidence, not as a directly comparable numeric baseline. Alpha.3 adds persistent exact action plans, first-Hook readiness, real Harness/delivery evidence attribution, recommendation-to-install conversion, package-license completeness, responsive KPI configuration, and closes three defects found during installed-artifact dogfooding and final review. The remaining ceiling is semantic task routing and native plugin inventory coverage, not the trust mechanics around the actions already supported.
+
+This verdict does not claim Beta completion. The next competitive phase is native plugin/Skill inventory coverage and visible coverage accounting, followed by a broader labeled recommendation corpus. Skill Steward should remain a Harness companion rather than becoming a prompt-running Harness itself.
+
+## Alpha.3 scope and evidence
+
+The stage review used the Alpha.3 implementation through commit `2f02cbc` and the exact verified package `skill-steward-0.5.0-alpha.3.tgz` with SHA-256 `e85ec2edbe567731f10e1e588e6528bc0963560d0a2db98370d0f3ccbd0b4fd0`. The tarball contained 11 expected package files and complete notices for 73 runtime packages, was installed globally, and reported `0.5.0-alpha.3` from `$HOME/.npm-global/bin/skill-steward`.
+
+Hands-on work used an isolated HOME and state directory rather than test-only service mocks:
+
+- A disposable Skill completed scan, Preflight, exact-plan quarantine, exact-plan restore, and automatic refresh. The restored portfolio fingerprint matched the original.
+- A Codex integration plan refused destination drift, consumed the failed plan, applied a fresh plan, persisted a ready cached portfolio, and produced a useful recommendation on the first real prompt Hook. Status remained honestly `needs-trust` pending Codex's native trust decision.
+- The public Anthropic catalog refreshed at commit `9d2f1ae187231d8199c64b5b762e1bdf2244733d` with 17 candidates. Preflight selected `webapp-testing` as the only install candidate with 91% projected task-term coverage.
+- The catalog install preview retained its inspected source. An intentional staged-source modification failed with `SOURCE_DRIFT`; a fresh exact plan then installed the recorded fingerprint with provenance linking the Preflight, candidate, source, and revision.
+- Evidence attributed all four current Preflights to `codex` and algorithm v4. The provenance-linked installation produced an explicit conversion of **1/1** without treating lifecycle completion as task success.
+- Responsive browser review covered 720, 866, 1100, 1280, and 1600 px. No page developed horizontal overflow. A fresh wide origin opened with a 210 px sidebar, automatically collapsed to 62 px at 720 px, and retained manual sidebar choices.
+- Settings exposed 16 KPI definitions with five recommended defaults. Selecting eight KPIs produced eight real Overview cards at both 720 and 1600 px without overflow.
+- English and Chinese Overview, Preflight, Evidence, Skills, History, and Settings states were inspected from the installed package. Browser logs contained no errors from the reviewed dashboard origin.
+- Full workspace verification rebuilt and typechecked all 13 projects and passed **537 tests**; four Windows-only tests were skipped on macOS and remain covered by the dedicated Windows CI job.
+
+## Alpha.3 dogfood findings
+
+| Priority | Finding | Resolution |
+|---|---|---|
+| P1 | Long Chinese tasks expanded into single characters and arbitrary adjacent pairs, inflating task terms and giving an unrelated résumé Skill a false match. | Algorithm v4 now uses word-level Simplified- and Traditional-Chinese routing, removes generic workflow framing, preserves meaningful English `Skill` intent, and keeps non-reference ICU/CLDR/Unicode results in a separate algorithm evidence identity. |
+| P1 | The Evidence lifecycle badge counted all evidence events while its list counted only lifecycle reasons, producing a non-zero badge beside “No lifecycle events.” | The badge now sums lifecycle reasons only; a fixture with 30 total events and 21 lifecycle reasons locks the distinction. |
+| P1 | Two valid reviewed replacement plans could pass the same early destination check in different processes, both report success, and leave the second backup/journal describing the wrong predecessor. Dashboard installation and rollback also bypassed the integration mutation lease. | CLI and Dashboard installation apply/rollback now share the state-scoped cross-process lease with managed integrations. CLI locks before claim, and the installer rechecks destination drift after the verified copy. Real process regressions prove exactly one replacement commits with the correct predecessor backup, and that a busy wait leaves the same plan available for a successful retry. |
+| P2 | Capability gaps are still lexical and ordered by task appearance, so labels such as `capture` can be less helpful than a semantic capability phrase. | Accepted for this deterministic release; evaluate semantic or hybrid gap labels only against labeled tasks. |
+| P2 | “Active Harnesses” measures Harness visibility in the scanned portfolio, not installed integration trust. | Keep integration truth in Settings for Alpha; rename or add KPI help when coverage accounting is implemented. |
+| P2 | Scan History shows portfolio snapshots but does not combine install, governance, policy, and integration transactions into one operational timeline. | Retain separate trusted journals now; consider a read-only unified activity view after native plugin coverage. |
+
+There were no open P0 findings and no open P1 regressions inside the Alpha.3 trust-loop stage. All three stage P1 findings were reproduced or independently demonstrated, fixed with failing tests, and included in the full verification and review gates. The concurrency fix was rebuilt into the exact tarball named above, reinstalled globally, and checked against the same bundled `main.js` bytes as the verified package.
+
+The broader product still has one open **P1 before Beta**: native plugin manifests and nested Skill roots are not yet inventoried comprehensively enough to prove what each Harness can actually see. That gap is the next development phase, not a closed Alpha.3 item. The P2 items in the table remain accepted Alpha limitations; semantic ranking and unified activity history follow after coverage is explicit.
+
+## Alpha.3 product scores
+
+| Dimension | Score | Current assessment |
+|---|---:|---|
+| Comprehension | 8.7/10 | The three jobs and non-Harness boundary are clear; some KPI and History semantics still need short explanations. |
+| Time to first value | 8.3/10 | Scan and explicit Preflight are fast and local; npm publication and a single release install command remain absent. |
+| Recommendation quality | 7.8/10 | Real installed/available comparison, marginal value, risks, and Chinese routing work; cross-language semantics and broad labeled evidence do not yet exist. |
+| Trust and reversibility | 9.3/10 | Persistent exact plans, single-use claim, shared cross-process mutation serialization, post-copy drift refusal, verified staging, quarantine/restore, rollback, and explicit trust states are the strongest part of the product. |
+| Harness integration | 8.7/10 | Codex and Claude recommend-and-observe, Copilot is honestly observe-only, and first-prompt readiness is real; native plugin inventory remains incomplete. |
+| Evidence usefulness | 8.6/10 | Harness/delivery/algorithm attribution and 1/1 provenance conversion were verified; evidence remains explicitly descriptive rather than an automatic tuner. |
+| Interface and configuration | 8.8/10 | Adaptive sidebar behavior, 16 configurable KPIs, bilingual states, and all five viewport checks are strong. |
+| Distribution quality | 8.6/10 | Exact npm/pnpm package verification and complete license attribution are in place; signed releases and npm publication are future work. |
+| Competitive differentiation | 8.3/10 | Cross-Harness task comparison plus reviewed reversible action and local evidence is distinct; inventory breadth and semantic ranking are the next moat layers. |
+| Overall | **8.5/10** | Strong public Alpha and daily dogfood candidate; not yet a fully covered Beta. |
+
+## Alpha.3 competitive position
+
+| Product capability | Current completion | Competitive assessment |
+|---|---:|---|
+| Scan local Skills and produce a health report | High | Useful foundation but not a moat by itself. |
+| Detect overlap, context cost, findings, and removal candidates | Medium-high | More actionable than a linter because it feeds reviewed governance, but runtime invocation frequency is still limited. |
+| Inspect a newly discovered Skill before installation | High | Strong trust flow: fixed revision, scripts/findings, persistent staging, exact plan, drift refusal, and provenance. |
+| Compare installed and uninstalled Skills for the current task | Medium-high | A real differentiator: one decision model combines relevance, unique coverage, redundancy, risk, context cost, compatibility, and explicit approval. Semantic breadth remains the constraint. |
+| Learn from local use and take reversible portfolio action | Medium | Evidence, feedback, lifecycle attribution, install conversion, quarantine, restore, and rollback exist; automatic calibration is intentionally absent until evidence thresholds and review are met. |
+| Become the universal Skill router | Intentionally not pursued | Avoiding prompt execution preserves the product boundary and prevents Skill Steward from turning into another small Harness. |
+
+The strongest defensible path remains: **native inventory coverage → task-specific comparison → exact reviewed action → privacy-safe local evidence → reviewed calibration**. The product should compete on trustworthy cross-Harness decisions and recovery, not on owning the chat loop.
+
+## Earlier Alpha.2 executive verdict
 
 Skill Steward has a credible core: local inventory, task-time comparison, reviewed installation, and recoverable quarantine solve a real problem for people who use Agent Skills across more than one coding tool. Its strongest quality is operational trust. Its weakest tested quality is still task-routing depth: the current deterministic algorithm is useful as a reviewed assistant, not as an autonomous semantic router.
 
-The original tested baseline earned **6.2/10 overall**. After correcting the observed precision, truthfulness, attribution, feedback, packaging, and documentation failures, the same rubric gives the current build **7.9/10**. The repeat-use verdict is now **yes for portfolio review, interactive Preflight, and reversible governance**. It remains **no for unattended routing on every prompt** until broader labeled evidence demonstrates recommendation quality beyond the tested cases.
+The original tested baseline earned **6.2/10 overall**. After correcting the observed precision, truthfulness, attribution, feedback, packaging, and documentation failures, the same Alpha.2 rubric gave that Alpha.2 build **7.9/10**. The repeat-use verdict became **yes for portfolio review, interactive Preflight, and reversible governance**. It remained **no for unattended routing on every prompt** until broader labeled evidence could demonstrate recommendation quality beyond the tested cases.
 
-## Scope and tested environments
+## Earlier Alpha.2 scope and tested environments
 
 The review used both clean and lived-in environments on macOS with Node.js 22 and pnpm 10:
 
@@ -93,9 +162,9 @@ These errors directly affect the product promise. Recommending the wrong documen
 | Incomplete CLI feedback could be mistaken for only the missing items | Defining `--candidate` as the complete correct recommendation set in help, errors, both READMEs, and the Alpha protocol | CLI feedback validation test |
 | Documentation described algorithm v2 | Aligning public architecture, Alpha protocol, changelog, and README with algorithm v3 and the feedback path | Repository documentation test |
 
-## Post-fix verification
+## Alpha.2 post-fix verification
 
-The current build was checked through the same user journeys, not only by reading the changed source:
+The Alpha.2 build was checked through the same user journeys, not only by reading the changed source:
 
 - A clean package was created with the documented `pnpm --filter skill-steward pack` command. Its prepack log rebuilt all 12 CLI dependencies before producing the tarball.
 - The tarball was installed globally and `skill-steward --version` returned `0.5.0-alpha.2`.
@@ -116,7 +185,7 @@ The final `pnpm check` run rebuilt all packages, passed typechecking in all 13 w
 The following items remain outside the implemented scope:
 
 - Native plugin inventory remains incomplete until installed plugin manifests and nested Skill roots can be discovered without pretending every vendor layout is stable.
-- Deterministic lexical ranking still lacks semantic understanding. Algorithm v3 repairs observed precision failures; it does not prove broad task-routing quality.
+- Deterministic lexical ranking still lacks semantic understanding. Algorithm v4 repairs the observed English-boundary and Chinese single-character failures; it does not prove broad task-routing quality.
 - The final dogfood task confirmed that ceiling: a product-review prompt did not infer that a long evolving session needed the requirements-maintenance Skill until a human supplied the corrected candidate.
 - Lifecycle evidence remains operational evidence, not task outcome. Measuring task success would require a separately designed, privacy-preserving and user-reviewable signal.
 - GitHub Copilot CLI remains observe-only. There is no supported automatic prompt recommendation injection in this release.
@@ -126,9 +195,9 @@ The following items remain outside the implemented scope:
 
 ## Product scores
 
-The baseline column preserves what the review originally found. The current column scores the verified build after the changes above. Overall uses the published weights below; product definition, task choice, and safe change carry the most weight because they are the three primary user jobs.
+This table preserves the Alpha.2 checkpoint for comparison with the current Alpha.3 score near the top of the document. Product definition, task choice, and safe change carry the most weight because they are the three primary user jobs.
 
-| Dimension | Weight | Baseline | Current | Reason for current score |
+| Dimension | Weight | Baseline | Alpha.2 post-fix | Reason for the Alpha.2 score |
 |---|---:|---:|---:|---|
 | Problem value | 5% | 8/10 | 8/10 | Skill sprawl, task choice, and safe removal remain real recurring problems for multi-tool users. |
 | Product definition | 15% | 4/10 | 8/10 | The opening now states the three jobs directly and makes the non-Harness boundary explicit. |
@@ -147,7 +216,7 @@ The baseline column preserves what the review originally found. The current colu
 
 I would not yet make it an invisible autonomous router on every coding prompt. That stronger claim requires explicit scan coverage for native plugin contents and enough reviewed real-task labels to show that recommendations improve task choice rather than merely correlate with lifecycle completion.
 
-## Priorities
+## Alpha.2 priorities at that checkpoint
 
 ### P0 — completed in this stage
 

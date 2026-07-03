@@ -2,13 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
+  open,
   readFile,
   realpath,
   rename,
   unlink,
   writeFile
 } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { z } from "zod";
 import {
   appendIntegrationRecord,
   latestIntegrationRecord,
@@ -25,13 +27,71 @@ export type IntegrationErrorCode =
   | "INTEGRATION_DUPLICATE"
   | "INTEGRATION_DRIFTED"
   | "INTEGRATION_NOT_INSTALLED"
+  | "INTEGRATION_PLAN_EXPIRED"
+  | "INTEGRATION_PLAN_INVALID"
+  | "INTEGRATION_ROLLBACK_FAILED"
   | "INTEGRATION_UNSAFE_PATH";
 
 export class IntegrationError extends Error {
-  constructor(public readonly code: IntegrationErrorCode, message: string) {
-    super(message);
+  constructor(
+    public readonly code: IntegrationErrorCode,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
     this.name = "IntegrationError";
   }
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error
+    && "code" in error
+    && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+function journalCommitIsUncertain(error: unknown): boolean {
+  return errorCode(error) === "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN";
+}
+
+function uncertainJournalError(error: unknown, action: "apply" | "remove"): IntegrationError {
+  return new IntegrationError(
+    "INTEGRATION_ROLLBACK_FAILED",
+    `Integration ${action} reached journal publication, but commit could not be proven; configuration was retained to avoid contradicting a possibly committed record`,
+    { cause: error }
+  );
+}
+
+export async function rethrowAfterIntegrationApplyFailure(input: {
+  error: unknown;
+  companionCreated: boolean;
+  removeCompanion: () => Promise<boolean>;
+}): Promise<never> {
+  if (
+    !input.companionCreated
+    || errorCode(input.error) === "INTEGRATION_ROLLBACK_FAILED"
+  ) throw input.error;
+
+  let removed = false;
+  try {
+    removed = await input.removeCompanion();
+  } catch (error) {
+    const original = input.error instanceof Error ? input.error.message : String(input.error);
+    const cleanupFailure = error instanceof Error ? error.message : String(error);
+    throw new IntegrationError(
+      "INTEGRATION_ROLLBACK_FAILED",
+      `Integration apply failed (${original}) and its newly created companion Skill could not be removed (${cleanupFailure}). Inspect integration status before retrying.`,
+      { cause: input.error }
+    );
+  }
+  if (removed) throw input.error;
+  const original = input.error instanceof Error ? input.error.message : String(input.error);
+  throw new IntegrationError(
+    "INTEGRATION_ROLLBACK_FAILED",
+    `Integration apply failed (${original}) and its newly created companion Skill could not be removed because it changed before cleanup. Inspect integration status before retrying.`,
+    { cause: input.error }
+  );
 }
 
 type JsonObject = Record<string, unknown>;
@@ -41,18 +101,104 @@ export interface IntegrationChange {
   path: string;
 }
 
-export interface IntegrationPlan {
-  id: string;
-  harness: IntegrationHarness;
-  targetPath: string;
-  backupPath?: string;
-  expectedBeforeFingerprint: string;
-  afterConfig: JsonObject;
-  afterFingerprint: string;
-  installedEntryFingerprint: string;
-  changes: IntegrationChange[];
-  createdAt: string;
+const INTEGRATION_PLAN_TTL_MS = 10 * 60_000;
+const fingerprintSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const normalizedAbsolutePathSchema = z.string().min(1).refine(
+  (path) => isAbsolute(path) && normalize(path) === path,
+  "Path must be absolute and normalized"
+);
+
+function isJsonValue(value: unknown, ancestors = new Set<object>()): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || ancestors.has(value)) return false;
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (
+          descriptor === undefined
+          || descriptor.enumerable !== true
+          || !("value" in descriptor)
+          || !isJsonValue(descriptor.value, ancestors)
+        ) return false;
+      }
+      return Reflect.ownKeys(value).every((key) =>
+        key === "length" || (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))
+      );
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    return Reflect.ownKeys(descriptors).every((key) => {
+      if (typeof key !== "string") return false;
+      const descriptor = descriptors[key];
+      return descriptor !== undefined
+        && descriptor.enumerable === true
+        && "value" in descriptor
+        && isJsonValue(descriptor.value, ancestors);
+    });
+  } finally {
+    ancestors.delete(value);
+  }
 }
+
+const integrationChangeSchema = z.object({
+  operation: z.enum(["backup", "write"]),
+  path: normalizedAbsolutePathSchema
+}).strict();
+
+export const integrationPlanSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
+  harness: integrationHarnessSchema,
+  targetPath: normalizedAbsolutePathSchema,
+  backupPath: normalizedAbsolutePathSchema.optional(),
+  expectedBeforeFingerprint: fingerprintSchema,
+  afterConfig: z.custom<JsonObject>(
+    (value) => isObject(value) && isJsonValue(value),
+    "afterConfig must be a JSON object"
+  ),
+  afterFingerprint: fingerprintSchema,
+  installedEntryFingerprint: fingerprintSchema,
+  changes: z.array(integrationChangeSchema).max(2),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime()
+}).strict().superRefine((plan, context) => {
+  const createdAt = Date.parse(plan.createdAt);
+  const expiresAt = Date.parse(plan.expiresAt);
+  if (expiresAt - createdAt !== INTEGRATION_PLAN_TTL_MS) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expiresAt"],
+      message: "Integration plan must expire ten minutes after creation"
+    });
+  }
+  const expectedChanges: IntegrationChange[] = plan.changes.length === 0
+    ? []
+    : plan.backupPath
+      ? [
+          { operation: "backup", path: plan.targetPath },
+          { operation: "write", path: plan.targetPath }
+        ]
+      : [{ operation: "write", path: plan.targetPath }];
+  if (JSON.stringify(plan.changes) !== JSON.stringify(expectedChanges)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["changes"],
+      message: "Integration plan changes are inconsistent"
+    });
+  }
+  if (plan.changes.length === 0 && plan.backupPath !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["backupPath"],
+      message: "No-op integration plans cannot create backups"
+    });
+  }
+});
+
+export type IntegrationPlan = z.infer<typeof integrationPlanSchema>;
 
 export type IntegrationStatusValue =
   | "not-installed"
@@ -76,12 +222,33 @@ export interface IntegrationConfigOptions {
   id?: () => string;
 }
 
-function hash(value: string): string {
+export interface IntegrationConfigDependencies {
+  appendRecord: typeof appendIntegrationRecord;
+}
+
+const integrationConfigDefaults: IntegrationConfigDependencies = {
+  appendRecord: appendIntegrationRecord
+};
+
+function hash(value: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 function stableJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function canonicalJson(value: unknown): string {
+  const canonicalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(canonicalize);
+    if (isObject(entry)) {
+      return Object.fromEntries(
+        Object.keys(entry).sort().map((key) => [key, canonicalize(entry[key])])
+      );
+    }
+    return entry;
+  };
+  return JSON.stringify(canonicalize(value));
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -117,15 +284,37 @@ async function assertSafeTarget(targetPath: string, home: string): Promise<void>
   } catch (error) {
     if (!isMissing(error)) throw error;
   }
+  const physicalHome = await realpath(homePath);
+  const relativeParent = dirname(targetPath).slice(homePath.length + 1);
+  let current = homePath;
+  for (const component of relativeParent.split(sep).filter(Boolean)) {
+    current = join(current, component);
+    try {
+      const metadata = await lstat(current);
+      if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+        throw new IntegrationError(
+          "INTEGRATION_UNSAFE_PATH",
+          "Harness configuration ancestors must be physical directories"
+        );
+      }
+      const physicalCurrent = await realpath(current);
+      if (
+        physicalCurrent !== physicalHome
+        && !physicalCurrent.startsWith(`${physicalHome}${sep}`)
+      ) {
+        throw new IntegrationError(
+          "INTEGRATION_UNSAFE_PATH",
+          "Harness configuration ancestor resolves outside the requested home directory"
+        );
+      }
+    } catch (error) {
+      if (isMissing(error)) break;
+      throw error;
+    }
+  }
   try {
-    const [physicalHome, physicalParent] = await Promise.all([
-      realpath(homePath),
-      realpath(dirname(targetPath))
-    ]);
-    if (
-      physicalParent !== physicalHome &&
-      !physicalParent.startsWith(`${physicalHome}${sep}`)
-    ) {
+    const physicalParent = await realpath(dirname(targetPath));
+    if (physicalParent !== physicalHome && !physicalParent.startsWith(`${physicalHome}${sep}`)) {
       throw new IntegrationError(
         "INTEGRATION_UNSAFE_PATH",
         "Harness configuration parent resolves outside the requested home directory"
@@ -149,20 +338,55 @@ function parseConfig(source: string): JsonObject {
   }
 }
 
+async function readTargetState(targetPath: string): Promise<{
+  exists: boolean;
+  source: string;
+  bytes: Buffer;
+  fingerprint: string;
+}> {
+  try {
+    const bytes = await readFile(targetPath);
+    return {
+      exists: true,
+      source: bytes.toString("utf8"),
+      bytes,
+      fingerprint: hash(bytes)
+    };
+  } catch (error) {
+    if (isMissing(error)) {
+      const bytes = Buffer.alloc(0);
+      return { exists: false, source: "", bytes, fingerprint: hash(bytes) };
+    }
+    throw error;
+  }
+}
+
 async function readConfig(targetPath: string): Promise<{
   exists: boolean;
   source: string;
+  bytes: Buffer;
   fingerprint: string;
   config: JsonObject;
 }> {
-  try {
-    const source = await readFile(targetPath, "utf8");
-    return { exists: true, source, fingerprint: hash(source), config: parseConfig(source) };
-  } catch (error) {
-    if (isMissing(error)) {
-      return { exists: false, source: "", fingerprint: hash(""), config: {} };
-    }
-    throw error;
+  const state = await readTargetState(targetPath);
+  return {
+    ...state,
+    config: state.exists ? parseConfig(state.source) : {}
+  };
+}
+
+async function requireExactTargetState(input: {
+  targetPath: string;
+  expectedExists: boolean;
+  expectedFingerprint: string;
+  message: string;
+}): Promise<void> {
+  const current = await readTargetState(input.targetPath);
+  if (
+    current.exists !== input.expectedExists
+    || current.fingerprint !== input.expectedFingerprint
+  ) {
+    throw new IntegrationError("INTEGRATION_DRIFTED", input.message);
   }
 }
 
@@ -291,15 +515,109 @@ function backupPath(targetPath: string, now: Date, discriminator: string): strin
   return `${targetPath}.skill-steward-${stamp}-${safeDiscriminator}.bak`;
 }
 
-async function atomicWrite(path: string, source: string): Promise<void> {
+async function atomicWrite(
+  path: string,
+  source: string | Uint8Array,
+  home: string,
+  expected: {
+    exists: boolean;
+    fingerprint: string;
+    message: string;
+  }
+): Promise<void> {
+  await assertSafeTarget(path, home);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, source, { encoding: "utf8", mode: 0o600 });
-  await rename(temporary, path);
+  await assertSafeTarget(path, home);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let handle: Awaited<ReturnType<typeof open>> | undefined = await open(
+    temporary,
+    "wx",
+    0o600
+  );
+  let renamed = false;
+  try {
+    if (typeof source === "string") await handle.writeFile(source, "utf8");
+    else await handle.writeFile(source);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await assertSafeTarget(path, home);
+    await requireExactTargetState({
+      targetPath: path,
+      expectedExists: expected.exists,
+      expectedFingerprint: expected.fingerprint,
+      message: expected.message
+    });
+    await rename(temporary, path);
+    renamed = true;
+  } finally {
+    await handle?.close();
+    if (!renamed) {
+      try {
+        await unlink(temporary);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
+  }
 }
 
-async function writeBackup(path: string, source: string): Promise<void> {
-  await writeFile(path, source, { encoding: "utf8", mode: 0o600, flag: "wx" });
+async function writeBackup(
+  path: string,
+  source: string | Uint8Array,
+  home: string
+): Promise<void> {
+  await assertSafeTarget(path, home);
+  if (typeof source === "string") {
+    await writeFile(path, source, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } else {
+    await writeFile(path, source, { mode: 0o600, flag: "wx" });
+  }
+}
+
+async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Promise<void> {
+  await assertSafeTarget(plan.targetPath, home);
+  const current = await readTargetState(plan.targetPath);
+  if (!current.exists || current.fingerprint !== plan.afterFingerprint) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Harness configuration changed after integration apply; rollback was not applied"
+    );
+  }
+  if (plan.backupPath) {
+    const expectedBackup = backupPath(
+      plan.targetPath,
+      new Date(plan.createdAt),
+      plan.id
+    );
+    if (plan.backupPath !== expectedBackup) {
+      throw new IntegrationError(
+        "INTEGRATION_UNSAFE_PATH",
+        "Integration backup target is invalid"
+      );
+    }
+    const backupSource = await readFile(plan.backupPath);
+    if (hash(backupSource) !== plan.expectedBeforeFingerprint) {
+      throw new IntegrationError(
+        "INTEGRATION_DRIFTED",
+        "Integration backup changed before rollback"
+      );
+    }
+    await atomicWrite(plan.targetPath, backupSource, home, {
+      exists: true,
+      fingerprint: plan.afterFingerprint,
+      message: "Harness configuration changed while integration rollback was prepared"
+    });
+    await unlink(plan.backupPath);
+    return;
+  }
+  if (plan.expectedBeforeFingerprint !== hash("")) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_INVALID",
+      "Integration rollback is missing its reviewed backup"
+    );
+  }
+  await unlink(plan.targetPath);
 }
 
 export async function planIntegration(
@@ -330,7 +648,8 @@ export async function planIntegration(
       afterFingerprint,
       installedEntryFingerprint: afterFingerprint,
       changes: before.exists ? [] : [{ operation: "write", path: targetPath }],
-      createdAt: now.toISOString()
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + INTEGRATION_PLAN_TTL_MS).toISOString()
     };
   }
   const existingByEvent = managedEvents(harness).map((event) => ({
@@ -341,6 +660,15 @@ export async function planIntegration(
     throw new IntegrationError(
       "INTEGRATION_DUPLICATE",
       "Harness configuration contains duplicate Skill Steward hooks"
+    );
+  }
+  if (existingByEvent.some(({ event, groups }) =>
+    groups.length === 1
+    && canonicalJson(groups[0]) !== canonicalJson(managedGroup(harness, event))
+  )) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Harness configuration contains a non-canonical Skill Steward Hook group"
     );
   }
   const fullyInstalled = existingByEvent.every(({ groups }) => groups.length === 1);
@@ -371,14 +699,32 @@ export async function planIntegration(
           ...(path ? [{ operation: "backup" as const, path: targetPath }] : []),
           { operation: "write" as const, path: targetPath }
         ],
-    createdAt: now.toISOString()
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + INTEGRATION_PLAN_TTL_MS).toISOString()
   };
 }
 
 export async function applyIntegrationPlan(
-  plan: IntegrationPlan,
-  options: IntegrationConfigOptions
+  inputPlan: unknown,
+  options: IntegrationConfigOptions,
+  dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
+  const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
+  const parsedPlan = integrationPlanSchema.safeParse(inputPlan);
+  if (!parsedPlan.success) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_INVALID",
+      "Integration plan failed strict domain validation"
+    );
+  }
+  const plan = parsedPlan.data;
+  const now = options.now?.() ?? new Date();
+  if (now.getTime() >= Date.parse(plan.expiresAt)) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_EXPIRED",
+      "Integration plan has expired"
+    );
+  }
   const harness = integrationHarnessSchema.parse(plan.harness);
   const expectedTarget = integrationTarget(harness, options.home);
   if (plan.targetPath !== expectedTarget) {
@@ -392,14 +738,69 @@ export async function applyIntegrationPlan(
       "Harness configuration changed after the integration plan was created"
     );
   }
+  const expectedConfig = harness === "github-copilot"
+    ? copilotHookConfig()
+    : managedEvents(harness).reduce(
+        (config, event) => managedGroups(config, harness, event).length === 0
+          ? mergeManagedGroup(config, harness, event)
+          : config,
+        before.config
+      );
   const afterSource = stableJson(plan.afterConfig);
+  if (afterSource !== stableJson(expectedConfig)) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Integration plan configuration does not match its Harness target"
+    );
+  }
   if (hash(afterSource) !== plan.afterFingerprint) {
     throw new IntegrationError("INTEGRATION_DRIFTED", "Integration plan content changed");
   }
-  if (plan.backupPath && before.exists && plan.changes.length > 0) {
-    await writeBackup(plan.backupPath, before.source);
+  const expectedInstalledFingerprint = harness === "github-copilot"
+    ? plan.afterFingerprint
+    : bundleFingerprint(managedBundle(harness));
+  if (plan.installedEntryFingerprint !== expectedInstalledFingerprint) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Integration plan managed entry fingerprint changed"
+    );
   }
-  if (plan.changes.length > 0) await atomicWrite(plan.targetPath, afterSource);
+  const fullyInstalled = harness === "github-copilot"
+    ? before.exists
+    : managedEvents(harness).every((event) => managedGroups(before.config, harness, event).length === 1);
+  const expectedBackupPath = harness !== "github-copilot" && before.exists && !fullyInstalled
+    ? backupPath(plan.targetPath, new Date(plan.createdAt), plan.id)
+    : undefined;
+  if (plan.backupPath !== expectedBackupPath) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Integration plan backup target changed"
+    );
+  }
+  const expectedChanges: IntegrationChange[] = fullyInstalled
+    ? []
+    : [
+        ...(expectedBackupPath
+          ? [{ operation: "backup" as const, path: plan.targetPath }]
+          : []),
+        { operation: "write" as const, path: plan.targetPath }
+      ];
+  if (JSON.stringify(plan.changes) !== JSON.stringify(expectedChanges)) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Integration plan operation list changed"
+    );
+  }
+  if (plan.backupPath && before.exists && plan.changes.length > 0) {
+    await writeBackup(plan.backupPath, before.bytes, options.home);
+  }
+  if (plan.changes.length > 0) {
+    await atomicWrite(plan.targetPath, afterSource, options.home, {
+      exists: before.exists,
+      fingerprint: before.fingerprint,
+      message: "Harness configuration changed while integration apply was prepared"
+    });
+  }
   const record: IntegrationRecord = {
     schemaVersion: 1,
     id: plan.id,
@@ -411,9 +812,106 @@ export async function applyIntegrationPlan(
     beforeFingerprint: before.fingerprint,
     afterFingerprint: plan.afterFingerprint,
     installedEntryFingerprint: plan.installedEntryFingerprint,
-    createdAt: (options.now?.() ?? new Date()).toISOString()
+    createdAt: now.toISOString()
   };
-  await appendIntegrationRecord(options.stateDirectory, record);
+  try {
+    await dependencies.appendRecord(options.stateDirectory, record);
+  } catch (error) {
+    if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "apply");
+    if (plan.changes.length > 0) {
+      try {
+        await restoreIntegrationTarget(plan, options.home);
+      } catch (rollbackError) {
+        throw new IntegrationError(
+          "INTEGRATION_ROLLBACK_FAILED",
+          `Integration configuration was written, its journal failed, and rollback was incomplete: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          {
+            cause: new AggregateError(
+              [error, rollbackError],
+              "Integration journal commit and configuration rollback both failed"
+            )
+          }
+        );
+      }
+    }
+    throw error;
+  }
+  return record;
+}
+
+export async function rollbackIntegrationPlan(
+  inputPlan: unknown,
+  options: IntegrationConfigOptions,
+  dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
+): Promise<IntegrationRecord> {
+  const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
+  const parsedPlan = integrationPlanSchema.safeParse(inputPlan);
+  if (!parsedPlan.success) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_INVALID",
+      "Integration rollback plan failed strict domain validation"
+    );
+  }
+  const plan = parsedPlan.data;
+  if (plan.changes.length === 0) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_INVALID",
+      "No-op integration plans have no configuration to roll back"
+    );
+  }
+  const expectedTarget = integrationTarget(plan.harness, options.home);
+  if (plan.targetPath !== expectedTarget) {
+    throw new IntegrationError("INTEGRATION_UNSAFE_PATH", "Integration plan target is invalid");
+  }
+  await assertSafeTarget(plan.targetPath, options.home);
+  await restoreIntegrationTarget(plan, options.home);
+  const now = options.now?.() ?? new Date();
+  const record: IntegrationRecord = {
+    schemaVersion: 1,
+    id: options.id?.() ?? randomUUID(),
+    harness: plan.harness,
+    action: "remove",
+    status: "removed",
+    targetPath: plan.targetPath,
+    beforeFingerprint: plan.afterFingerprint,
+    afterFingerprint: plan.expectedBeforeFingerprint,
+    installedEntryFingerprint: plan.installedEntryFingerprint,
+    createdAt: now.toISOString()
+  };
+  try {
+    await dependencies.appendRecord(options.stateDirectory, record);
+  } catch (error) {
+    if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
+    try {
+      await requireExactTargetState({
+        targetPath: plan.targetPath,
+        expectedExists: plan.expectedBeforeFingerprint !== hash(""),
+        expectedFingerprint: plan.expectedBeforeFingerprint,
+        message: "Harness configuration changed while integration rollback was journaling"
+      });
+      await atomicWrite(plan.targetPath, stableJson(plan.afterConfig), options.home, {
+        exists: plan.expectedBeforeFingerprint !== hash(""),
+        fingerprint: plan.expectedBeforeFingerprint,
+        message: "Harness configuration changed while rollback compensation was prepared"
+      });
+    } catch (compensationError) {
+      throw new IntegrationError(
+        "INTEGRATION_ROLLBACK_FAILED",
+        `Integration rollback could not journal removal or restore the installed configuration: ${compensationError instanceof Error ? compensationError.message : String(compensationError)}`,
+        {
+          cause: new AggregateError(
+            [error, compensationError],
+            "Integration rollback journal and installed-configuration compensation both failed"
+          )
+        }
+      );
+    }
+    throw new IntegrationError(
+      "INTEGRATION_ROLLBACK_FAILED",
+      "Integration rollback could not journal removal; the installed configuration was restored to match the retained record",
+      { cause: error }
+    );
+  }
   return record;
 }
 
@@ -527,8 +1025,10 @@ export async function integrationStatus(
 
 export async function removeIntegration(
   inputHarness: IntegrationHarness,
-  options: IntegrationConfigOptions
+  options: IntegrationConfigOptions,
+  dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
+  const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
   const harness = integrationHarnessSchema.parse(inputHarness);
   const targetPath = integrationTarget(harness, options.home);
   await assertSafeTarget(targetPath, options.home);
@@ -540,6 +1040,39 @@ export async function removeIntegration(
     );
   }
   const before = await readConfig(targetPath);
+  const commitRemoval = async (record: IntegrationRecord): Promise<IntegrationRecord> => {
+    try {
+      await dependencies.appendRecord(options.stateDirectory, record);
+      return record;
+    } catch (error) {
+      if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
+      try {
+        await requireExactTargetState({
+          targetPath,
+          expectedExists: harness !== "github-copilot",
+          expectedFingerprint: record.afterFingerprint,
+          message: "Harness configuration changed while integration removal was journaling"
+        });
+        await atomicWrite(targetPath, before.bytes, options.home, {
+          exists: harness !== "github-copilot",
+          fingerprint: record.afterFingerprint,
+          message: "Harness configuration changed while removal restoration was prepared"
+        });
+      } catch (rollbackError) {
+        throw new IntegrationError(
+          "INTEGRATION_ROLLBACK_FAILED",
+          `Integration configuration was removed, its journal failed, and restoration was incomplete: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          {
+            cause: new AggregateError(
+              [error, rollbackError],
+              "Integration removal journal commit and configuration restoration both failed"
+            )
+          }
+        );
+      }
+      throw error;
+    }
+  };
   if (harness === "github-copilot") {
     const expectedFingerprint = hash(stableJson(copilotHookConfig()));
     if (
@@ -566,8 +1099,7 @@ export async function removeIntegration(
       installedEntryFingerprint: latest.installedEntryFingerprint,
       createdAt: now.toISOString()
     };
-    await appendIntegrationRecord(options.stateDirectory, record);
-    return record;
+    return commitRemoval(record);
   }
   const groups = installedBundle(before.config, harness);
   if (
@@ -587,8 +1119,12 @@ export async function removeIntegration(
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();
   const path = backupPath(targetPath, now, `${id}-remove`);
-  await writeBackup(path, before.source);
-  await atomicWrite(targetPath, afterSource);
+  await writeBackup(path, before.bytes, options.home);
+  await atomicWrite(targetPath, afterSource, options.home, {
+    exists: before.exists,
+    fingerprint: before.fingerprint,
+    message: "Harness configuration changed while integration removal was prepared"
+  });
   const record: IntegrationRecord = {
     schemaVersion: 1,
     id,
@@ -602,6 +1138,5 @@ export async function removeIntegration(
     installedEntryFingerprint: latest.installedEntryFingerprint,
     createdAt: now.toISOString()
   };
-  await appendIntegrationRecord(options.stateDirectory, record);
-  return record;
+  return commitRemoval(record);
 }

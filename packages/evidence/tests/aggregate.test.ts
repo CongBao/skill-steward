@@ -31,6 +31,7 @@ function preflight(
     install?: string[];
     portfolio?: string;
     harness?: EvidencePreflight["harness"];
+    delivery?: "cli" | "dashboard" | "hook";
     algorithm?: number;
     createdAt?: string;
   } = {}
@@ -48,6 +49,7 @@ function preflight(
     taskTermCount: 3,
     algorithmVersion: options.algorithm ?? 2,
     harness: options.harness ?? "codex",
+    ...(options.delivery ? { delivery: options.delivery } : {}),
     candidateIds,
     useCandidateIds: use,
     installCandidateIds: install,
@@ -117,6 +119,31 @@ describe("aggregateEvidence", () => {
     expect(summary.metrics.correctionRecall.value).toBe(0.5);
     expect(summary.metrics.correctionF1.value).toBe(0.5);
     expect(summary.metrics.installConversion.value).toBe(1);
+  });
+
+  it("counts minimal-mode delivery attribution with installation provenance", () => {
+    const summary = aggregateEvidence({
+      schemaVersion: 1,
+      preflights: [preflight("minimal", {
+        delivery: "cli",
+        use: [],
+        install: ["install-me"]
+      })],
+      events: [],
+      installations: [{
+        schemaVersion: 1,
+        id: "install-1",
+        createdAt: "2026-07-03T00:20:00.000Z",
+        preflightId: "minimal",
+        candidateId: "install-me"
+      }]
+    }, new Date("2026-07-03T01:00:00.000Z"));
+
+    expect(summary.metrics.installConversion).toEqual({
+      numerator: 1,
+      denominator: 1,
+      value: 1
+    });
   });
 
   it("keeps lifecycle reasons distinct from labels and groups Harnesses and algorithms", () => {

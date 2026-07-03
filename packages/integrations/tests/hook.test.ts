@@ -1,4 +1,7 @@
-import type { PreflightResult } from "@skill-steward/preflight";
+import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  type PreflightResult
+} from "@skill-steward/preflight";
 import { describe, expect, it, vi } from "vitest";
 import { renderPromptHook, runPromptHook } from "../src/hook.js";
 
@@ -7,7 +10,7 @@ const rawTask = "PRIVATE rotate customer encryption keys";
 function result(): PreflightResult {
   return {
     schemaVersion: 3,
-    algorithmVersion: 3,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -192,7 +195,7 @@ it("records a content-free delivery without changing prompt output when evidence
     kind: "preflight-delivered",
     harness: "codex",
     preflightId: "run-1",
-    algorithmVersion: 3,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     sessionKey: `hmac-sha256:${"a".repeat(64)}`,
     turnKey: `hmac-sha256:${"b".repeat(64)}`
   });

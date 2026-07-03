@@ -109,6 +109,7 @@ export function EvidencePage() {
 
   const ready = summary.readiness.status === "ready-for-calibration";
   const lifecycle = Object.entries(summary.lifecycleReasons).sort((left, right) => right[1] - left[1]);
+  const lifecycleCount = lifecycle.reduce((total, [, count]) => total + count, 0);
   return (
     <>
       <PageHeader title={t("page.evidence.title")} description={t("page.evidence.description")} />
@@ -131,7 +132,7 @@ export function EvidencePage() {
           <div className="window-totals"><span>7d · {summary.windows.last7Days.totals.labeled} {t("evidence.labels")}</span><span>30d · {summary.windows.last30Days.totals.labeled} {t("evidence.labels")}</span></div>
         </section>
         <section className="evidence-panel lifecycle-panel">
-          <header><div><h2>{t("evidence.lifecycle")}</h2><p>{t("evidence.lifecycleCopy")}</p></div><span>{summary.totals.events}</span></header>
+          <header><div><h2>{t("evidence.lifecycle")}</h2><p>{t("evidence.lifecycleCopy")}</p></div><span>{lifecycleCount}</span></header>
           {lifecycle.length > 0 ? <div className="lifecycle-list">{lifecycle.map(([reason, count]) => <div key={reason}><span>{lifecycleReasonKeys[reason] ? t(lifecycleReasonKeys[reason]) : reason}</span><strong>{count}</strong></div>)}</div> : <p className="muted-copy">{t("evidence.noLifecycle")}</p>}
         </section>
       </section>

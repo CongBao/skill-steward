@@ -1,7 +1,10 @@
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PreflightResult } from "@skill-steward/preflight";
+import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  type PreflightResult
+} from "@skill-steward/preflight";
 import { describe, expect, it } from "vitest";
 import {
   appendPreflightEvidence,
@@ -18,7 +21,7 @@ const sourceUrl = "https://example.com/private-skills.git";
 function result(id: string, createdAt: string): PreflightResult {
   return {
     schemaVersion: 3,
-    algorithmVersion: 3,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id,
     generatedAt: createdAt,
     portfolioFingerprint: hash("a"),
@@ -192,6 +195,25 @@ describe("preflight evidence store", () => {
       installCandidateIds: ["catalog-testing"]
     });
     expect((await stat(join(state, "preflights.json"))).mode & 0o777).toBe(0o600);
+  });
+
+  it("persists attribution while keeping version-3 records without it readable", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-attribution-"));
+    await appendPreflightEvidence(state, result("old-run", "2026-07-03T00:00:00.000Z"));
+    await appendPreflightEvidence(state, result("new-run", "2026-07-03T01:00:00.000Z"), {
+      harness: "claude-code",
+      delivery: "dashboard"
+    });
+
+    const records = await readPreflightEvidence(state);
+    expect(records[0]).toMatchObject({
+      schemaVersion: 3,
+      id: "new-run",
+      harness: "claude-code",
+      delivery: "dashboard"
+    });
+    expect(records[1]).toMatchObject({ schemaVersion: 3, id: "old-run" });
+    expect(records[1]).not.toHaveProperty("delivery");
   });
 
   it("persists bounded version-3 evidence", async () => {

@@ -18,12 +18,41 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: mkdir -p artifacts
-      - name: Pack from a clean checkout
-        run: pnpm --filter skill-steward pack --pack-destination artifacts
+      - run: mkdir -p artifacts/npm artifacts/pnpm
+      - name: Pack with pnpm from a clean checkout
+        run: pnpm --filter skill-steward pack --pack-destination artifacts/pnpm
+      - name: Inspect npm pack dry-run
+        working-directory: packages/cli
+        run: npm pack --dry-run --ignore-scripts --json > ../../artifacts/pack-dry-run.json
+      - name: Pack the built artifact with npm
+        working-directory: packages/cli
+        run: npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm
+      - name: Verify dry-run package contents
+        run: node packages/cli/tests/verify-packed-artifact.mjs --dry-run artifacts/pack-dry-run.json
+      - name: Verify pnpm packed artifact
+        run: node packages/cli/tests/verify-packed-artifact.mjs artifacts/pnpm/skill-steward-*.tgz
+      - name: Verify npm packed artifact
+        run: node packages/cli/tests/verify-packed-artifact.mjs artifacts/npm/skill-steward-*.tgz
       - name: Build
         run: pnpm build
       - name: Typecheck
         run: pnpm typecheck
       - name: Test
         run: pnpm test
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Windows integration journal smoke
+        run: pnpm --filter @skill-steward/store exec vitest run tests/integration-store.windows.test.ts
+      - name: Build CLI
+        run: pnpm build
+      - name: Run packaged CLI help
+        run: node packages/cli/dist/main.js --help

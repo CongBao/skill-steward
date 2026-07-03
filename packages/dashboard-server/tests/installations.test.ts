@@ -1,9 +1,14 @@
-import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDashboardApp } from "../src/app.js";
 import { readInstallationHistory } from "@skill-steward/installer";
+import {
+  InstallationMutationLeaseError,
+  withIntegrationMutationLease
+} from "@skill-steward/store";
 import {
   createInstallationServices,
   type InstallationServices
@@ -29,6 +34,18 @@ function services(): InstallationServices {
     history: vi.fn(async () => []),
     rollback: vi.fn(async () => ({ id: "tx-1", status: "rolled-back" as const }))
   };
+}
+
+async function waitFor(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await delay(2);
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`);
 }
 
 describe("installation routes", () => {
@@ -115,6 +132,33 @@ describe("installation routes", () => {
     ).toMatchObject({ data: { status: "rolled-back" } });
   });
 
+  it("reports shared installation contention as a retryable conflict", async () => {
+    const installationServices = services();
+    vi.mocked(installationServices.commit).mockRejectedValue(
+      new InstallationMutationLeaseError(
+        "INSTALLATION_BUSY",
+        "Another portfolio mutation is already in progress; retry this same reviewed plan after it finishes"
+      )
+    );
+    const { app } = createDashboardApp({ mutationToken: "token", installationServices });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/installations/commit",
+      headers: { "x-skill-steward-token": "token" },
+      payload: { planId: "plan-1", confirmed: true }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: {
+        code: "INSTALLATION_BUSY",
+        message: "Another portfolio mutation is already in progress; retry this same reviewed plan after it finishes"
+      }
+    });
+  });
+
   it("carries validated catalog provenance from preview through the journal", async () => {
     const root = await mkdtemp(join(tmpdir(), "steward-install-provenance-"));
     const source = join(root, "source");
@@ -157,5 +201,69 @@ describe("installation routes", () => {
     expect(await readInstallationHistory(stateDirectory)).toEqual([
       expect.objectContaining({ provenance })
     ]);
+  });
+
+  it("serializes dashboard commit and rollback through the shared portfolio lease", async () => {
+    const root = await mkdtemp(join(tmpdir(), "steward-dashboard-install-lease-"));
+    const stateDirectory = join(root, "state");
+    const installationServices = createInstallationServices({
+      stateDirectory,
+      home: root,
+      workspace: root
+    });
+    const preview = await installationServices.inspectFolder(
+      { kind: "folder", label: "review" },
+      [{
+        relativePath: "SKILL.md",
+        data: Buffer.from(
+          "---\nname: review\ndescription: Review changes\n---\nApply review.\n"
+        )
+      }]
+    );
+    const candidate = preview.candidates[0]!;
+    const plan = await installationServices.plan({
+      previewId: preview.previewId,
+      candidateId: candidate.id,
+      harness: "codex",
+      scope: "global",
+      targetName: candidate.name
+    });
+
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    const heldForCommit = withIntegrationMutationLease(
+      stateDirectory,
+      () => commitGate,
+      { waitMs: 1_000, pollMs: 2, heartbeatMs: 5 }
+    );
+    await waitFor(join(stateDirectory, "integration-mutation.lease"));
+    let commitSettled = false;
+    const committing = installationServices.commit(plan.id)
+      .finally(() => { commitSettled = true; });
+    await delay(30);
+    const commitWaited = !commitSettled;
+    releaseCommit();
+    await heldForCommit;
+    const transaction = await committing;
+
+    let releaseRollback!: () => void;
+    const rollbackGate = new Promise<void>((resolve) => { releaseRollback = resolve; });
+    const heldForRollback = withIntegrationMutationLease(
+      stateDirectory,
+      () => rollbackGate,
+      { waitMs: 1_000, pollMs: 2, heartbeatMs: 5 }
+    );
+    await waitFor(join(stateDirectory, "integration-mutation.lease"));
+    let rollbackSettled = false;
+    const rollingBack = installationServices.rollback(transaction.id)
+      .finally(() => { rollbackSettled = true; });
+    await delay(30);
+    const rollbackWaited = !rollbackSettled;
+    releaseRollback();
+    await heldForRollback;
+    await rollingBack;
+
+    expect(commitWaited).toBe(true);
+    expect(rollbackWaited).toBe(true);
   });
 });

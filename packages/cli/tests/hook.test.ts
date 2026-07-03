@@ -118,7 +118,11 @@ describe("hook command", () => {
     expect(current.stdout[0]).not.toContain("PRIVATE");
     expect(current.stdout[0]).not.toContain("https://example.com");
     const [record] = await readPreflightEvidence(current.stateDir);
-    expect(record).toMatchObject({ schemaVersion: 3, harness: "codex" });
+    expect(record).toMatchObject({
+      schemaVersion: 3,
+      harness: "codex",
+      delivery: "hook"
+    });
     expect(record).not.toHaveProperty("candidateFeatures");
     await expect(access(join(current.stateDir, "evidence-events.jsonl")))
       .rejects.toMatchObject({ code: "ENOENT" });

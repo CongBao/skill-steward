@@ -12,7 +12,7 @@ import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
   schemaVersion: 3,
-  algorithmVersion: 3,
+  algorithmVersion: 4,
   id: "run-1",
   generatedAt: "2026-07-03T01:00:00.000Z",
   portfolioFingerprint: `sha256:${"a".repeat(64)}`,

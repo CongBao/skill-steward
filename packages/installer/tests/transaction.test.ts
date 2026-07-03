@@ -1,6 +1,7 @@
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { fingerprintDirectory } from "../src/manifest.js";
 import { planInstallation } from "../src/planner.js";
@@ -113,4 +114,43 @@ describe("applyInstallationPlan", () => {
     ).rejects.toMatchObject({ code: "DESTINATION_DRIFT" });
     await expect(access(join(destination, "SKILL.md"))).resolves.toBeUndefined();
   });
+
+  it("revalidates destination drift after the staged copy and before replacement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "steward-transaction-copy-race-"));
+    const source = join(root, "source");
+    const destination = join(root, "skills", "review");
+    const stateDirectory = join(root, "state");
+    await createSkill(source, "new");
+    for (let start = 0; start < 1_500; start += 100) {
+      await Promise.all(Array.from({ length: 100 }, (_, offset) =>
+        writeFile(
+          join(source, `payload-${String(start + offset).padStart(4, "0")}.txt`),
+          "x".repeat(8_192)
+        )
+      ));
+    }
+    const sourceFingerprint = await fingerprintDirectory(source);
+    await createSkill(destination, "old");
+    const plan = await planInstallation({
+      source,
+      sourceFingerprint,
+      destination,
+      conflictAction: "replace"
+    });
+
+    const applying = applyInstallationPlan(plan, { stateDirectory });
+    const parent = dirname(destination);
+    const deadline = Date.now() + 10_000;
+    while (!(await readdir(parent)).some((name) =>
+      name.startsWith(".review.skill-steward-") && name.endsWith(".tmp")
+    )) {
+      if (Date.now() >= deadline) throw new Error("Timed out waiting for staged copy");
+      await delay(1);
+    }
+    await createSkill(destination, "raced");
+
+    await expect(applying).rejects.toMatchObject({ code: "DESTINATION_DRIFT" });
+    expect(await readFile(join(destination, "SKILL.md"), "utf8")).toContain("raced");
+    expect(await readInstallationHistory(stateDirectory)).toEqual([]);
+  }, 20_000);
 });

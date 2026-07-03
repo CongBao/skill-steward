@@ -124,15 +124,17 @@ export async function run(
 
   evidencePolicy
     .command("set")
-    .requiredOption("--mode <mode>", "minimal or learning")
-    .requiredOption("--retention-days <number>")
-    .requiredOption("--max-events <number>")
+    .option("--mode <mode>", "minimal or learning")
+    .option("--retention-days <number>")
+    .option("--max-events <number>")
+    .option("--plan <id>", "apply an exact reviewed policy plan")
     .option("--confirm", "apply the reviewed policy plan", false)
     .option("--json", "JSON output", false)
     .action(async (options: {
-      mode: string;
-      retentionDays: string;
-      maxEvents: string;
+      mode?: string;
+      retentionDays?: string;
+      maxEvents?: string;
+      plan?: string;
       confirm: boolean;
       json: boolean;
     }) => {
@@ -183,10 +185,11 @@ export async function run(
 
   evidence
     .command("erase")
+    .option("--plan <id>", "apply an exact reviewed evidence erase plan")
     .option("--confirm", "erase the reviewed evidence files", false)
     .option("--json", "JSON output", false)
-    .action(async (options: { confirm: boolean; json: boolean }) => {
-      exitCode = await evidenceEraseCommand(options.confirm, options.json, context);
+    .action(async (options: { plan?: string; confirm: boolean; json: boolean }) => {
+      exitCode = await evidenceEraseCommand(options, context);
     });
 
   const govern = program
@@ -195,30 +198,32 @@ export async function run(
 
   govern
     .command("quarantine")
-    .requiredOption("--skill <id>")
+    .option("--skill <id>")
+    .option("--plan <id>", "apply an exact reviewed quarantine plan")
     .option("--confirm", "apply the reviewed quarantine", false)
     .option("--json", "JSON output", false)
-    .action(async (options: { skill: string; confirm: boolean; json: boolean }) => {
-      exitCode = await governQuarantineCommand(
-        options.skill,
-        options.confirm,
-        options.json,
-        context
-      );
+    .action(async (options: {
+      skill?: string;
+      plan?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await governQuarantineCommand(options, context);
     });
 
   govern
     .command("restore")
-    .requiredOption("--transaction <id>")
+    .option("--transaction <id>")
+    .option("--plan <id>", "apply an exact reviewed restore plan")
     .option("--confirm", "apply the reviewed restore", false)
     .option("--json", "JSON output", false)
-    .action(async (options: { transaction: string; confirm: boolean; json: boolean }) => {
-      exitCode = await governRestoreCommand(
-        options.transaction,
-        options.confirm,
-        options.json,
-        context
-      );
+    .action(async (options: {
+      transaction?: string;
+      plan?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await governRestoreCommand(options, context);
     });
 
   govern
@@ -238,24 +243,30 @@ export async function run(
 
   program
     .command("install")
-    .description("Plan or apply installation of a catalog recommendation")
-    .requiredOption("--catalog-candidate <id>")
-    .requiredOption("--harness <id>")
-    .requiredOption("--scope <scope>", "global or project")
-    .option("--workspace <path>")
+    .description([
+      "Install a catalog recommendation using one of two mutually exclusive modes.",
+      "Preview: --catalog-candidate <id> --harness <id> --scope <scope>",
+      "Apply: --plan <id> --confirm"
+    ].join("\n"))
+    .option("--catalog-candidate <id>", "catalog candidate ID to preview")
+    .option("--harness <id>", "target Harness for preview")
+    .option("--scope <scope>", "global or project")
+    .option("--workspace <path>", "project workspace path")
     .option("--preflight <id>", "link an explicit Task Preflight recommendation")
-    .option("--target-name <name>")
+    .option("--target-name <name>", "installed directory name")
     .option("--replace", "replace a differing destination with backup", false)
+    .option("--plan <id>", "apply an exact reviewed installation plan")
     .option("--confirm", "confirm the reviewed installation", false)
     .option("--json", "JSON output", false)
     .action(async (options: {
-      catalogCandidate: string;
-      harness: string;
-      scope: string;
+      catalogCandidate?: string;
+      harness?: string;
+      scope?: string;
       workspace?: string;
       preflight?: string;
       targetName?: string;
       replace: boolean;
+      plan?: string;
       confirm: boolean;
       json: boolean;
     }) => {
@@ -264,10 +275,18 @@ export async function run(
 
   integrate
     .command("apply")
-    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
+    .description("Apply one exact reviewed integration plan")
+    .option("--plan <id>", "reviewed integration plan ID")
+    .option("--harness <id>", "not accepted with reviewed-plan apply")
     .option("--confirm", "confirm the reviewed integration plan", false)
-    .action(async (options: { harness: string; confirm: boolean }) => {
-      exitCode = await integrateApplyCommand(options.harness, options.confirm, context);
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      plan?: string;
+      harness?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await integrateApplyCommand(options, context);
     });
 
   integrate

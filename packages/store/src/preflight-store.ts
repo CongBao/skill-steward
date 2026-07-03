@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   evidencePolicySchema,
   evidencePreflightSchema,
+  type EvidenceDelivery,
   type EvidencePreflight,
   type EvidenceHarness,
   type EvidencePolicy
@@ -186,7 +187,8 @@ async function atomicWrite(
 function sanitize(
   result: PreflightResult,
   policy: EvidencePolicy,
-  harness: EvidenceHarness | undefined
+  harness: EvidenceHarness | undefined,
+  delivery: EvidenceDelivery | undefined
 ): PreflightEvidenceRecord {
   const parsed = preflightResultSchema.parse(result);
   return evidencePreflightSchema.parse({
@@ -199,6 +201,7 @@ function sanitize(
     taskCharacterCount: parsed.taskCharacterCount,
     taskTermCount: parsed.taskTermCount,
     ...(harness ? { harness } : {}),
+    ...(delivery ? { delivery } : {}),
     candidateIds: parsed.candidates.map(({ candidateId }) => candidateId),
     useCandidateIds: parsed.useCandidateIds,
     installCandidateIds: parsed.installCandidateIds,
@@ -225,6 +228,7 @@ export async function appendPreflightEvidence(
   options: {
     policy?: EvidencePolicy;
     harness?: EvidenceHarness;
+    delivery?: EvidenceDelivery;
     limit?: number;
   } = {}
 ): Promise<void> {
@@ -238,7 +242,7 @@ export async function appendPreflightEvidence(
     retentionDays: 30,
     maxEvents: 5_000
   });
-  const record = sanitize(result, policy, options.harness);
+  const record = sanitize(result, policy, options.harness, options.delivery);
   const current = await readFileState(stateDirectory);
   const records = [
     record,

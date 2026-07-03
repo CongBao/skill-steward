@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   candidateFeatureSnapshotSchema,
+  evidenceDeliverySchema,
   evidenceDatasetSchema,
   evidenceEventSchema,
+  evidenceHarnessSchema,
   evidencePolicySchema,
   evidencePreflightSchema,
-  evidenceSummarySchema
+  evidenceSummarySchema,
+  normalizeEvidenceHarness
 } from "../src/index.js";
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
@@ -28,6 +31,39 @@ const zeroBreakdown = {
 };
 
 describe("evidence domain", () => {
+  it("preserves valid engine Harness IDs while canonicalizing Claude", () => {
+    expect([
+      normalizeEvidenceHarness("codex"),
+      normalizeEvidenceHarness("claude"),
+      normalizeEvidenceHarness("github-copilot"),
+      normalizeEvidenceHarness("cursor"),
+      normalizeEvidenceHarness("gemini"),
+      normalizeEvidenceHarness("agents"),
+      normalizeEvidenceHarness("unknown"),
+      normalizeEvidenceHarness("claude-code"),
+      normalizeEvidenceHarness("not-a-harness"),
+      normalizeEvidenceHarness(undefined)
+    ]).toEqual([
+      "codex",
+      "claude-code",
+      "github-copilot",
+      "cursor",
+      "gemini",
+      "agents",
+      "unknown",
+      "claude-code",
+      undefined,
+      undefined
+    ]);
+    expect(evidenceHarnessSchema.parse("cursor")).toBe("cursor");
+    expect(evidenceHarnessSchema.parse("gemini")).toBe("gemini");
+    expect(() => evidenceHarnessSchema.parse("not-a-harness")).toThrow();
+  });
+
+  it("validates delivery attribution", () => {
+    expect(evidenceDeliverySchema.options).toEqual(["cli", "dashboard", "hook"]);
+  });
+
   it("accepts bounded policies and rejects unsafe retention", () => {
     expect(evidencePolicySchema.parse({
       schemaVersion: 1,
@@ -115,6 +151,7 @@ describe("evidence domain", () => {
       taskTermCount: 4,
       algorithmVersion: 2,
       harness: "codex",
+      delivery: "cli",
       candidateIds: ["review"],
       useCandidateIds: ["review"],
       installCandidateIds: [],
@@ -126,6 +163,9 @@ describe("evidence domain", () => {
       events: [],
       installations: []
     }).preflights).toHaveLength(1);
+    expect(preflight.delivery).toBe("cli");
+    const { delivery: _delivery, ...legacyPreflight } = preflight;
+    expect(evidencePreflightSchema.parse(legacyPreflight)).not.toHaveProperty("delivery");
     expect(() => evidencePreflightSchema.parse({
       ...preflight,
       task: "private task"

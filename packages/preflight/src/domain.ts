@@ -1,13 +1,39 @@
 import {
   findingSchema,
   harnessIdSchema,
+  sha256,
   severitySchema,
   skillScopeSchema
 } from "@skill-steward/engine";
 import { z } from "zod";
 
 export const PREFLIGHT_SCHEMA_VERSION = 3 as const;
-export const PREFLIGHT_ALGORITHM_VERSION = 3 as const;
+
+export interface IntlRuntimeVersions {
+  cldr: string | undefined;
+  icu: string | undefined;
+  unicode: string | undefined;
+}
+
+const REFERENCE_INTL_RUNTIME = "cldr=48.0;icu=78.2;unicode=17.0";
+
+export function algorithmVersionForIntlRuntime(runtime: IntlRuntimeVersions): number {
+  const fingerprint = [
+    `cldr=${runtime.cldr ?? "unknown"}`,
+    `icu=${runtime.icu ?? "unknown"}`,
+    `unicode=${runtime.unicode ?? "unknown"}`
+  ].join(";");
+  if (fingerprint === REFERENCE_INTL_RUNTIME) return 4;
+
+  const runtimeHash = sha256(fingerprint).slice("sha256:".length, "sha256:".length + 12);
+  return 4_000_000_000_000 + Number.parseInt(runtimeHash, 16);
+}
+
+export const PREFLIGHT_ALGORITHM_VERSION = algorithmVersionForIntlRuntime({
+  cldr: process.versions.cldr,
+  icu: process.versions.icu,
+  unicode: process.versions.unicode
+});
 
 export const preflightReasonCodeSchema = z.enum([
   "TASK_TERM_MATCH",

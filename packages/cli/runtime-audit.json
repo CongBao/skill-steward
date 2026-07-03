@@ -1,0 +1,1333 @@
+{
+  "schemaVersion": 1,
+  "description": "Generated full runtime bundle audit; update only with the explicit maintainer command.",
+  "noticesSha256": "56aa0b1eb68f5b4377c7bbf1982bc91c650a3ad1c5b59124d2de1780dc7183df",
+  "packages": [
+    {
+      "name": "@fastify/ajv-compiler",
+      "version": "4.0.5",
+      "license": "MIT",
+      "source": "https://github.com/fastify/ajv-compiler.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "c3f135dcf4c9e17220a2748144951afda82a1d49ae030398514d4bbd4f83960f"
+        }
+      ]
+    },
+    {
+      "name": "@fastify/error",
+      "version": "4.2.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/fastify-error.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "f796c4523e635d0aa4422289cadaeae45ee937fe96f14ce86e275d07f56a156c"
+        }
+      ]
+    },
+    {
+      "name": "@fastify/fast-json-stringify-compiler",
+      "version": "5.0.3",
+      "license": "MIT",
+      "source": "https://github.com/fastify/fast-json-stringify-compiler.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "5f4d0ec20bdfe3dc3d55227655579c2f323774cd7f99b621fd343d6e58285718"
+        }
+      ]
+    },
+    {
+      "name": "@fastify/forwarded",
+      "version": "3.0.1",
+      "license": "MIT",
+      "source": "https://github.com/fastify/forwarded.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "3881f9ffe0b759e246aeebb98e130024007ef1ffc3df44ed17dc51c74dabd460"
+        }
+      ]
+    },
+    {
+      "name": "@fastify/merge-json-schemas",
+      "version": "0.2.1",
+      "license": "MIT",
+      "source": "https://github.com/fastify/merge-json-schemas.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "58a4a552c82306f96d845733eafd53b5a51343864bc010cf6c6b3ecfce522b7f"
+        }
+      ]
+    },
+    {
+      "name": "@fastify/proxy-addr",
+      "version": "5.1.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/proxy-addr.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "08f52a31a1ae11317f1a6a99c5d3004eaf954a1a76b7a2cf50dc1b63b01675e6"
+        }
+      ]
+    },
+    {
+      "name": "@pinojs/redact",
+      "version": "0.4.0",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/redact.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "ac5e6a97800602cff4eadb52b990a487b9cf610a898dae15df7043a5cd22baff"
+        }
+      ]
+    },
+    {
+      "name": "@tanstack/query-core",
+      "version": "5.101.2",
+      "license": "MIT",
+      "source": "https://github.com/TanStack/query.git",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "277d2a8e459713d6c596bab89ef857cb8b2433223fa9edb49ccc403a6ceb08ee"
+        }
+      ]
+    },
+    {
+      "name": "@tanstack/react-query",
+      "version": "5.101.2",
+      "license": "MIT",
+      "source": "https://github.com/TanStack/query.git",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "277d2a8e459713d6c596bab89ef857cb8b2433223fa9edb49ccc403a6ceb08ee"
+        }
+      ]
+    },
+    {
+      "name": "abstract-logging",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/jsumners/abstract-logging.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "override",
+          "source": "https://jsumners.mit-license.org/",
+          "reason": "The published package README links to the author's MIT license page but does not include the required license text.",
+          "textSha256": "ca4e65b340fa57c350f2bdc7bf9ad4ab2ec89f357a2f6e46df8e63a673f350f0"
+        }
+      ]
+    },
+    {
+      "name": "ajv-formats",
+      "version": "3.0.1",
+      "license": "MIT",
+      "source": "https://github.com/ajv-validator/ajv-formats.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "0eb7e0538bf86badc8cc36fc66164d495630f21f6998529188406fb00c782a5e"
+        }
+      ]
+    },
+    {
+      "name": "ajv",
+      "version": "8.20.0",
+      "license": "MIT",
+      "source": "https://github.com/ajv-validator/ajv",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "f2fde84e6c1f177681e152a4459f025a87e855c0aa374238ba79b2e72a15b57c"
+        }
+      ]
+    },
+    {
+      "name": "atomic-sleep",
+      "version": "1.0.0",
+      "license": "MIT",
+      "source": "https://github.com/davidmarkclements/atomic-sleep.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "a59324b88cac1317efeee53e205fb006f0b3f8d8bae8fe40a4b4dce93228cbf0"
+        }
+      ]
+    },
+    {
+      "name": "avvio",
+      "version": "9.2.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/avvio.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "7f237c82af55b7d9a81c6227c9e3a06f3bdaab63ac8a4939e64c4462c388c883"
+        }
+      ]
+    },
+    {
+      "name": "commander",
+      "version": "14.0.3",
+      "license": "MIT",
+      "source": "https://github.com/tj/commander.js.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "4cc9c2af4eb0056cd4d2297b7404819e3816b4c44b7f8012c42d5fd671d783d3"
+        }
+      ]
+    },
+    {
+      "name": "cookie",
+      "version": "1.1.1",
+      "license": "MIT",
+      "source": "https://github.com/jshttp/cookie",
+      "surfaces": [
+        "cli-bundle",
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "b970cfe4a7f34ca7455ca2dd6cc4fa3a229c34c67eb62e0e5f746131bead1e70"
+        }
+      ]
+    },
+    {
+      "name": "core-util-is",
+      "version": "1.0.3",
+      "license": "MIT",
+      "source": "https://github.com/isaacs/core-util-is",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "9248b91d3cee18551aa7386215f61578c3484a6d47bfbcd5a3b05ebe8998b7cb"
+        }
+      ]
+    },
+    {
+      "name": "dequal",
+      "version": "2.0.3",
+      "license": "MIT",
+      "source": "https://github.com/lukeed/dequal",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "license",
+          "reason": null,
+          "textSha256": "d0a8e5996a99e9ea88093954e45ab673905d5fdc2d243e45622bc5ff1cf35f36"
+        }
+      ]
+    },
+    {
+      "name": "fast-decode-uri-component",
+      "version": "1.0.1",
+      "license": "MIT",
+      "source": "https://github.com/delvedor/fast-decode-uri-component.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "853c1070966600c4cc9d550951bdf9793f00ab85cd6df9fae364d9c9a50bab9c"
+        }
+      ]
+    },
+    {
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "license": "MIT",
+      "source": "https://github.com/epoberezkin/fast-deep-equal.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "aa407ee69b3f646286f5162d0679256a0fe5b7fcc51f104ffb647efe167715ea"
+        }
+      ]
+    },
+    {
+      "name": "fast-json-stringify",
+      "version": "6.4.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/fast-json-stringify.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "8c42394192775f302269c49e5841c1ccdcf837c31468d2d4bf63f45f679a2c10"
+        }
+      ]
+    },
+    {
+      "name": "fast-querystring",
+      "version": "1.1.2",
+      "license": "MIT",
+      "source": "https://github.com/anonrig/fast-querystring.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "4a6c8145b219a6aad34b9b19c48a0c99de5ff581ac71dd40d46582d6177409a1"
+        }
+      ]
+    },
+    {
+      "name": "fast-uri",
+      "version": "3.1.3",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/fastify/fast-uri.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786"
+        }
+      ]
+    },
+    {
+      "name": "fastify",
+      "version": "5.9.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/fastify.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "aa5961ad135fad37fdf03ec6004d1cb9c907bd596c4ff36b5ec6f2618136aa4d"
+        }
+      ]
+    },
+    {
+      "name": "fastq",
+      "version": "1.20.1",
+      "license": "ISC",
+      "source": "https://github.com/mcollina/fastq.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "61817d32cf2cc8abd3b14b637ecb7a4c2eaae4334f58b3dab4f762583e1cf380"
+        }
+      ]
+    },
+    {
+      "name": "find-my-way",
+      "version": "9.6.0",
+      "license": "MIT",
+      "source": "https://github.com/delvedor/find-my-way.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "461e1afc3bffb3ea65be948ae0341b40d6003fef45022fe5250b5d852641716a"
+        }
+      ]
+    },
+    {
+      "name": "immediate",
+      "version": "3.0.6",
+      "license": "MIT",
+      "source": "https://github.com/calvinmetcalf/immediate.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.txt",
+          "reason": null,
+          "textSha256": "f48fea67bde19a5353f8caec4592243c9ab9f52cc7886f9e4e0bf1dfb391550b"
+        }
+      ]
+    },
+    {
+      "name": "inherits",
+      "version": "2.0.4",
+      "license": "ISC",
+      "source": "https://github.com/isaacs/inherits",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "3a395674c5c917a5c484fbb4825d855da35333cc24cf770efa7e2f0420ecba14"
+        }
+      ]
+    },
+    {
+      "name": "ipaddr.js",
+      "version": "2.4.0",
+      "license": "MIT",
+      "source": "https://github.com/whitequark/ipaddr.js",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "ad66ea5b7919ff9ec5a234a131e09ca4ac761bacb9d2c840f2d2c5d1691ee5e1"
+        }
+      ]
+    },
+    {
+      "name": "isarray",
+      "version": "1.0.0",
+      "license": "MIT",
+      "source": "https://github.com/juliangruber/isarray.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "readme",
+          "source": "README.md#License",
+          "reason": null,
+          "textSha256": "3a7c107a9e6227f8e67ae8aab097925e6ba81f210193eef54ff38f7b0023fb39"
+        }
+      ]
+    },
+    {
+      "name": "json-schema-ref-resolver",
+      "version": "3.0.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/json-schema-ref-resolver.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "6bf9ef444e186ec7550195f6c40a370c72929331cfe0b1d03fc599948351b6b9"
+        }
+      ]
+    },
+    {
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "license": "MIT",
+      "source": "https://github.com/epoberezkin/json-schema-traverse.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "aa407ee69b3f646286f5162d0679256a0fe5b7fcc51f104ffb647efe167715ea"
+        }
+      ]
+    },
+    {
+      "name": "jszip",
+      "version": "3.10.1",
+      "license": "(MIT OR GPL-3.0-or-later)",
+      "source": "https://github.com/Stuk/jszip.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.markdown",
+          "reason": null,
+          "textSha256": "602ef1d5d3db1b23ada0b61d4230ef336012de7bc3b773d565f2b27a2757f51d"
+        }
+      ]
+    },
+    {
+      "name": "lie",
+      "version": "3.3.0",
+      "license": "MIT",
+      "source": "https://github.com/calvinmetcalf/lie.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "license.md",
+          "reason": null,
+          "textSha256": "04b11337b6a187f7601f96a7214921fd19d6fc312b861cf28595b9667fce4b74"
+        }
+      ]
+    },
+    {
+      "name": "light-my-request",
+      "version": "6.6.0",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/fastify/light-my-request.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "df6fa9bfdea4e746829295a30a8b165fde6ee02618751396741562d55057e954"
+        }
+      ]
+    },
+    {
+      "name": "lucide-react",
+      "version": "0.468.0",
+      "license": "ISC",
+      "source": "https://github.com/lucide-icons/lucide.git",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "092a9de2ea14bcedb33f7fdf523461346251bf5334f62480a162466f4591afe1"
+        }
+      ]
+    },
+    {
+      "name": "on-exit-leak-free",
+      "version": "2.1.2",
+      "license": "MIT",
+      "source": "https://github.com/mcollina/on-exit-or-gc.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "faa656659f2faae714ec4131dd39fc378a62b8079ed8c3757e481e3718d950d0"
+        }
+      ]
+    },
+    {
+      "name": "pako",
+      "version": "1.0.11",
+      "license": "(MIT AND Zlib)",
+      "source": "https://github.com/nodeca/pako",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "9bce71206bb197a44eea817bf9c4091118b153cbe09f7544ed7e5abc536d5bcc"
+        }
+      ]
+    },
+    {
+      "name": "pino-abstract-transport",
+      "version": "3.0.0",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/pino-abstract-transport.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "336a674d6f31158e93ece1fbf939c390b01ad81bbec59c7fe25cc09faef7a74b"
+        }
+      ]
+    },
+    {
+      "name": "pino-std-serializers",
+      "version": "7.1.0",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/pino-std-serializers.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "24fb95d93448de448fadf2bf24520007ac0862074a5564410b7da1e16a690298"
+        }
+      ]
+    },
+    {
+      "name": "pino",
+      "version": "10.3.1",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/pino.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "b4f5cd3544e59973a68d0eee89cac90b44aefd001e4c9a240881c0b53cacfcfa"
+        }
+      ]
+    },
+    {
+      "name": "process-nextick-args",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/calvinmetcalf/process-nextick-args.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "license.md",
+          "reason": null,
+          "textSha256": "f25d2af75b3e4127175b550231cc59ee11ed6cc07debce16498ace9ed163e25f"
+        }
+      ]
+    },
+    {
+      "name": "process-warning",
+      "version": "4.0.1",
+      "license": "MIT",
+      "source": "https://github.com/fastify/process-warning.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "b264bc42a271d3a9b02fa9e7f8123fe2a95a38c343a337d73c5c29ee38352ff6"
+        }
+      ]
+    },
+    {
+      "name": "process-warning",
+      "version": "5.0.0",
+      "license": "MIT",
+      "source": "https://github.com/fastify/process-warning.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "b264bc42a271d3a9b02fa9e7f8123fe2a95a38c343a337d73c5c29ee38352ff6"
+        }
+      ]
+    },
+    {
+      "name": "quick-format-unescaped",
+      "version": "4.0.4",
+      "license": "MIT",
+      "source": "https://github.com/davidmarkclements/quick-format.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "244826c05d1c63cbd052582b94ed014ea4979a15ef8d29a8dd8cb586b714b4c9"
+        }
+      ]
+    },
+    {
+      "name": "react-dom",
+      "version": "19.2.7",
+      "license": "MIT",
+      "source": "https://github.com/facebook/react.git",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "cf9b17822d1fcd4ff32ccbe14183386fb3adf6f2ff92dc184130823f7fc28173"
+        }
+      ]
+    },
+    {
+      "name": "react-router-dom",
+      "version": "7.18.1",
+      "license": "MIT",
+      "source": "https://github.com/remix-run/react-router",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.md",
+          "reason": null,
+          "textSha256": "9bd42e9ab2f84a397e8efd7ba4feedd4956198c0ff6ea6f886fd47fcf8e53df2"
+        }
+      ]
+    },
+    {
+      "name": "react-router",
+      "version": "7.18.1",
+      "license": "MIT",
+      "source": "https://github.com/remix-run/react-router",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.md",
+          "reason": null,
+          "textSha256": "9bd42e9ab2f84a397e8efd7ba4feedd4956198c0ff6ea6f886fd47fcf8e53df2"
+        }
+      ]
+    },
+    {
+      "name": "react",
+      "version": "19.2.7",
+      "license": "MIT",
+      "source": "https://github.com/facebook/react.git",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "cf9b17822d1fcd4ff32ccbe14183386fb3adf6f2ff92dc184130823f7fc28173"
+        }
+      ]
+    },
+    {
+      "name": "readable-stream",
+      "version": "2.3.8",
+      "license": "MIT",
+      "source": "https://github.com/nodejs/readable-stream",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "4f8ade273d406cf67b5a078d751d0b651e3f73b84f958b493e9254ab3ce47391"
+        }
+      ]
+    },
+    {
+      "name": "real-require",
+      "version": "0.2.0",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/real-require.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.md",
+          "reason": null,
+          "textSha256": "c07895728da90895a92f4a52788f8fd26b1b3ae6c3ad7502f299419a30bb08fb"
+        }
+      ]
+    },
+    {
+      "name": "real-require",
+      "version": "1.0.0",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/real-require.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.md",
+          "reason": null,
+          "textSha256": "c07895728da90895a92f4a52788f8fd26b1b3ae6c3ad7502f299419a30bb08fb"
+        }
+      ]
+    },
+    {
+      "name": "require-from-string",
+      "version": "2.0.2",
+      "license": "MIT",
+      "source": "https://github.com/floatdrop/require-from-string",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "license",
+          "reason": null,
+          "textSha256": "937e8ea6d28e259cb0a3703148f6b292c50708013888372feae61e3520b18100"
+        }
+      ]
+    },
+    {
+      "name": "ret",
+      "version": "0.5.0",
+      "license": "MIT",
+      "source": "https://github.com/fent/ret.js.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "658da9911b13c923477f526a4ccc0e407c09afc9039696d437c4649632b3c577"
+        }
+      ]
+    },
+    {
+      "name": "reusify",
+      "version": "1.1.0",
+      "license": "MIT",
+      "source": "https://github.com/mcollina/reusify.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "7eb05843f078916a78f1be5f00b944653a398d208d8f7aa3df4f8f6986323bb7"
+        }
+      ]
+    },
+    {
+      "name": "rfdc",
+      "version": "1.4.1",
+      "license": "MIT",
+      "source": "https://github.com/davidmarkclements/rfdc.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "94fbdb1dddcacead00adf373c9af79460710100e2d9011385418df840b64a08c"
+        }
+      ]
+    },
+    {
+      "name": "safe-buffer",
+      "version": "5.1.2",
+      "license": "MIT",
+      "source": "https://github.com/feross/safe-buffer.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "dff1a84cb70365271326e19f09b24dd85364a47b4fc2beb446ccd9dec225531f"
+        }
+      ]
+    },
+    {
+      "name": "safe-regex2",
+      "version": "5.1.1",
+      "license": "MIT",
+      "source": "https://github.com/fastify/safe-regex2.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "1e3a615632ffacad800dda0d42dbb2c390dff29b65a4fa21c1b37677e783ddbf"
+        }
+      ]
+    },
+    {
+      "name": "safe-stable-stringify",
+      "version": "2.5.0",
+      "license": "MIT",
+      "source": "https://github.com/BridgeAR/safe-stable-stringify.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "8c8362dba0c958154b1fca50965c8449c5a16df4edb408113fc0458bfd80755c"
+        }
+      ]
+    },
+    {
+      "name": "scheduler",
+      "version": "0.27.0",
+      "license": "MIT",
+      "source": "https://github.com/facebook/react.git",
+      "surfaces": [
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "cf9b17822d1fcd4ff32ccbe14183386fb3adf6f2ff92dc184130823f7fc28173"
+        }
+      ]
+    },
+    {
+      "name": "secure-json-parse",
+      "version": "4.1.0",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/fastify/secure-json-parse.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "98a20f72f2efec15dbb288aedf9ae039ee16aa50db1da72774da113ed5313e36"
+        }
+      ]
+    },
+    {
+      "name": "semver",
+      "version": "7.8.5",
+      "license": "ISC",
+      "source": "https://github.com/npm/node-semver.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "0ae52fe329ccfd23fedbd688361bd0dedaf5cae3e3516eb2ad17831f2d8b347c"
+        }
+      ]
+    },
+    {
+      "name": "set-cookie-parser",
+      "version": "2.7.2",
+      "license": "MIT",
+      "source": "https://github.com/nfriedly/set-cookie-parser",
+      "surfaces": [
+        "cli-bundle",
+        "dashboard-bundle",
+        "dashboard-runtime"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "1798ebfcb7e5db7076851eb61f3101d8117be2dc0408688bd90b842c4f16f3fb"
+        }
+      ]
+    },
+    {
+      "name": "setimmediate",
+      "version": "1.0.5",
+      "license": "MIT",
+      "source": "https://github.com/YuzuJS/setImmediate",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.txt",
+          "reason": null,
+          "textSha256": "e989f62f4fdcda4199c3d1d6049e9a52aad32539c02d2a5e8c92583ed0960e2b"
+        }
+      ]
+    },
+    {
+      "name": "sonic-boom",
+      "version": "4.2.1",
+      "license": "MIT",
+      "source": "https://github.com/pinojs/sonic-boom.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "ff5a7cfcb60603ad49ec83e6c25a15c267fd23af16e17c4b7014b05fb7475e58"
+        }
+      ]
+    },
+    {
+      "name": "split2",
+      "version": "4.2.0",
+      "license": "ISC",
+      "source": "https://github.com/mcollina/split2.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "a6f69779493956e3e43ad85d9f22a4cdfd0b330344dd0ded0c3049b587529203"
+        }
+      ]
+    },
+    {
+      "name": "string_decoder",
+      "version": "1.1.1",
+      "license": "MIT",
+      "source": "https://github.com/nodejs/string_decoder.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "4f8ade273d406cf67b5a078d751d0b651e3f73b84f958b493e9254ab3ce47391"
+        }
+      ]
+    },
+    {
+      "name": "thread-stream",
+      "version": "4.2.0",
+      "license": "MIT",
+      "source": "https://github.com/mcollina/thread-stream.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "faa656659f2faae714ec4131dd39fc378a62b8079ed8c3757e481e3718d950d0"
+        }
+      ]
+    },
+    {
+      "name": "toad-cache",
+      "version": "3.7.1",
+      "license": "MIT",
+      "source": "https://github.com/kibertoad/toad-cache.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "e369e4f95e0731b5bd6be9767695b375268f2d74d7923c41da1967fdad3cb745"
+        }
+      ]
+    },
+    {
+      "name": "util-deprecate",
+      "version": "1.0.2",
+      "license": "MIT",
+      "source": "https://github.com/TooTallNate/util-deprecate.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "ff15562c1fef0205e4f0ad1efb4d266805bd8686f95d2b788b2dac4d8da81370"
+        }
+      ]
+    },
+    {
+      "name": "vite",
+      "version": "7.3.6",
+      "license": "MIT",
+      "source": "https://github.com/vitejs/vite.git",
+      "surfaces": [
+        "dashboard-injected-runtime"
+      ],
+      "rationale": "Vite injects the modulepreload polyfill into the copied production dashboard JavaScript.",
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.md",
+          "reason": null,
+          "textSha256": "a26fe66748b6d03fa797f45d2260c8400de1f47cd22e3abfcb622eb0276216d2"
+        }
+      ]
+    },
+    {
+      "name": "yaml",
+      "version": "2.9.0",
+      "license": "ISC",
+      "source": "https://github.com/eemeli/yaml",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "cf12d35c36bad4b21582e8549d43283d304574764c28fe0b93f25f475c5e832c"
+        }
+      ]
+    },
+    {
+      "name": "zod",
+      "version": "3.25.76",
+      "license": "MIT",
+      "source": "https://github.com/colinhacks/zod.git",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "f61cacc2acb8b71aa79a128b3e732bf25e02aab40747bbbd5bf00c97c9cda28d"
+        }
+      ]
+    }
+  ]
+}

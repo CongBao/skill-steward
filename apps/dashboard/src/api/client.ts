@@ -200,7 +200,7 @@ export interface PreflightCandidate {
 
 export interface PreflightResult {
   schemaVersion: 3;
-  algorithmVersion: 3;
+  algorithmVersion: number;
   id: string;
   generatedAt: string;
   portfolioFingerprint: string;
@@ -354,8 +354,14 @@ export function planHarnessIntegration(harness: IntegrationHarness): Promise<Int
   return apiRequest(`/api/v1/integrations/${harness}/plan`, { method: "POST" });
 }
 
-export function applyHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationStatus> {
-  return apiRequest(`/api/v1/integrations/${harness}/apply`, { method: "POST" });
+export function applyHarnessIntegration(
+  harness: IntegrationHarness,
+  planId: string
+): Promise<IntegrationStatus> {
+  return apiRequest(`/api/v1/integrations/${harness}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ planId })
+  });
 }
 
 export function removeHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationStatus> {

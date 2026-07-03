@@ -28,6 +28,8 @@ const policyPlanSchema = z.object({
   expiresAt: z.string().datetime()
 }).strict();
 
+export const evidencePolicyPlanSchema = policyPlanSchema;
+
 export type EvidencePolicyPlan = z.infer<typeof policyPlanSchema>;
 
 export class EvidencePolicyStoreError extends Error {

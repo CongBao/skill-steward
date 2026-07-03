@@ -4,6 +4,37 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.5.0-alpha.3] - 2026-07-03
+
+### Added
+
+- CLI installation, governance, integration apply, evidence-policy, and evidence-erasure now use exact, single-use reviewed plans that persist privately across processes and apply only through the emitted `--plan <id> --confirm` command.
+- Catalog installation retains the inspected source in private staging until apply or expiry, then rechecks source, destination, route, provenance, and filesystem safety without restaging from the network.
+- Managed integration apply persists an initial portfolio scan before reporting ready, rolls back safely on readiness failure, and serializes CLI and dashboard mutations through a private cross-process lease without consuming a waiting plan.
+- Installation apply and rollback now share that state-scoped lease across CLI and dashboard processes. Apply acquires it before claiming a reviewed plan and revalidates the destination after copy, so concurrent replacements cannot both commit or corrupt backup provenance.
+- Integration history uses private immutable journal fragments with bounded recovery and cleanup rather than concurrent rewrites of one shared record.
+- Preflight evidence preserves normalized Harness and CLI/dashboard/Hook delivery attribution while continuing to exclude raw task content.
+
+### Changed
+
+- Preflight algorithm v4 routes Simplified- and Traditional-Chinese tasks with word-level concepts and filters generic workflow language, preventing unrelated Skills from matching through common single characters while preserving explainable deterministic scoring. Evidence uses a distinct numeric identity when the Node ICU/CLDR/Unicode segmentation runtime differs from the verified reference.
+- The Evidence dashboard lifecycle badge now counts only lifecycle reasons, rather than all delivery and lifecycle events, so an empty lifecycle panel cannot display a contradictory non-zero total.
+
+### Distribution
+
+- The CLI package now ships a package README, MIT license, deterministic complete third-party notices, and complete repository metadata.
+- CI and local package tests verify real npm and pnpm tarballs against the trusted package tree and source-controlled runtime audit, including exact files, manifest semantics, runtime bytes, license attribution, and hostile archive metadata.
+
+### Security
+
+- Reviewed plans use strict private envelopes, atomic single-use claim, bounded fail-safe cleanup, and domain fingerprint revalidation; a claimed plan that fails validation is not silently regenerated.
+- Integration readiness, journal commit, compensation, and shared companion cleanup preserve original failures and report rollback-incomplete state when safe recovery cannot be proven.
+- A busy installation remains retryable without consuming its waiting CLI plan; a stale waiter that later enters the lease is refused on destination drift.
+
+### Limitations
+
+- This remains an Alpha release. Native workflow adapters remain limited to Codex, Claude Code, and the documented observe-only GitHub Copilot CLI path; the broader root catalog does not imply complete plugin inventory or Hook coverage.
+
 ## [0.5.0-alpha.2] - 2026-07-03
 
 ### Changed

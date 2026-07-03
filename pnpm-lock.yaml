@@ -117,6 +117,9 @@ importers:
       commander:
         specifier: ^14.0.0
         version: 14.0.3
+      spdx-expression-parse:
+        specifier: ^4.0.0
+        version: 4.0.0
 
   packages/dashboard-server:
     dependencies:
@@ -162,6 +165,21 @@ importers:
 
   packages/evidence:
     dependencies:
+      '@skill-steward/engine':
+        specifier: workspace:*
+        version: link:../engine
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
+  packages/governance:
+    dependencies:
+      '@skill-steward/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@skill-steward/installer':
+        specifier: workspace:*
+        version: link:../installer
       zod:
         specifier: ^3.25.67
         version: 3.25.76
@@ -198,18 +216,6 @@ importers:
       '@skill-steward/store':
         specifier: workspace:*
         version: link:../store
-      zod:
-        specifier: ^3.25.67
-        version: 3.25.76
-
-  packages/governance:
-    dependencies:
-      '@skill-steward/engine':
-        specifier: workspace:*
-        version: link:../engine
-      '@skill-steward/installer':
-        specifier: workspace:*
-        version: link:../installer
       zod:
         specifier: ^3.25.67
         version: 3.25.76
@@ -1459,6 +1465,15 @@ packages:
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
+
+  spdx-exceptions@2.5.0:
+    resolution: {integrity: sha512-PiU42r+xO4UbUS1buo3LPJkjlO7430Xn5SVAhdpzzsPHsjbYVflnnFdATgabnLude+Cqu25p6N+g2lw/PFsa4w==}
+
+  spdx-expression-parse@4.0.0:
+    resolution: {integrity: sha512-Clya5JIij/7C6bRR22+tnGXbc4VKlibKSVj2iHvVeX5iMW7s1SIQlqu699JkODJJIhh/pUu8L0/VLh8xflD+LQ==}
+
+  spdx-license-ids@3.0.23:
+    resolution: {integrity: sha512-CWLcCCH7VLu13TgOH+r8p1O/Znwhqv/dbb6lqWy67G+pT1kHmeD/+V36AVb/vq8QMIQwVShJ6Ssl5FPh0fuSdw==}
 
   split2@4.2.0:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
@@ -2754,6 +2769,15 @@ snapshots:
       atomic-sleep: 1.0.0
 
   source-map-js@1.2.1: {}
+
+  spdx-exceptions@2.5.0: {}
+
+  spdx-expression-parse@4.0.0:
+    dependencies:
+      spdx-exceptions: 2.5.0
+      spdx-license-ids: 3.0.23
+
+  spdx-license-ids@3.0.23: {}
 
   split2@4.2.0: {}
 

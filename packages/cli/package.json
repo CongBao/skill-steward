@@ -1,10 +1,13 @@
 {
   "name": "skill-steward",
-  "version": "0.5.0-alpha.2",
-  "description": "Local-first discovery, preflight, and reversible Skill operations across AI harnesses",
+  "version": "0.5.0-alpha.3",
+  "description": "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
   "license": "MIT",
   "keywords": [
     "agent-skills",
+    "skill-discovery",
+    "task-preflight",
+    "reversible-governance",
     "codex",
     "claude-code",
     "github-copilot",
@@ -13,7 +16,9 @@
   "private": false,
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "bin": {
     "skill-steward": "./dist/main.js"
@@ -21,11 +26,33 @@
   "engines": {
     "node": ">=22"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CongBao/skill-steward.git"
+  },
+  "homepage": "https://github.com/CongBao/skill-steward#readme",
+  "bugs": {
+    "url": "https://github.com/CongBao/skill-steward/issues"
+  },
+  "author": {
+    "name": "CongBao",
+    "email": "bao_cong@outlook.com"
+  },
+  "maintainers": [
+    {
+      "name": "CongBao",
+      "email": "bao_cong@outlook.com"
+    }
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "pnpm --filter @skill-steward/dashboard build && node build.mjs",
     "pretest": "pnpm build",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "runtime-audit:update": "pnpm --filter @skill-steward/dashboard build && node build.mjs --update-runtime-audit",
     "prepack": "pnpm --filter \"skill-steward^...\" build && pnpm build"
   },
   "devDependencies": {
@@ -36,11 +63,12 @@
     "@skill-steward/evidence": "workspace:*",
     "@skill-steward/governance": "workspace:*",
     "@skill-steward/insights": "workspace:*",
-    "@skill-steward/integrations": "workspace:*",
     "@skill-steward/installer": "workspace:*",
+    "@skill-steward/integrations": "workspace:*",
     "@skill-steward/preflight": "workspace:*",
     "@skill-steward/report": "workspace:*",
     "@skill-steward/store": "workspace:*",
-    "commander": "^14.0.0"
+    "commander": "^14.0.0",
+    "spdx-expression-parse": "^4.0.0"
   }
 }

@@ -24,6 +24,7 @@ import {
   type InstallationSource,
   type UploadedFile
 } from "@skill-steward/installer";
+import { withInstallationMutationLease } from "@skill-steward/store";
 
 export interface InspectionResult {
   previewId: string;
@@ -164,17 +165,21 @@ export function createInstallationServices(
       return plan;
     },
     async commit(planId) {
-      const plan = plans.get(planId);
-      if (!plan) throw new InstallerError("PLAN_NOT_FOUND", "Installation plan was not found or already used");
-      const result = await applyInstallationPlan(plan, {
-        stateDirectory: options.stateDirectory
+      return withInstallationMutationLease(options.stateDirectory, async () => {
+        const plan = plans.get(planId);
+        if (!plan) throw new InstallerError("PLAN_NOT_FOUND", "Installation plan was not found or already used");
+        const result = await applyInstallationPlan(plan, {
+          stateDirectory: options.stateDirectory
+        });
+        plans.delete(planId);
+        await options.afterCommit?.();
+        return result;
       });
-      plans.delete(planId);
-      await options.afterCommit?.();
-      return result;
     },
     history: () => readInstallationHistory(options.stateDirectory),
-    rollback: (transactionId) =>
-      rollbackInstallation(transactionId, { stateDirectory: options.stateDirectory })
+    rollback: (transactionId) => withInstallationMutationLease(
+      options.stateDirectory,
+      () => rollbackInstallation(transactionId, { stateDirectory: options.stateDirectory })
+    )
   };
 }

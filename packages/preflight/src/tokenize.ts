@@ -43,6 +43,84 @@ const STOP_WORDS = new Set([
   "your"
 ]);
 
+const CJK_STOP_WORDS = new Set([
+  "并",
+  "並",
+  "不是",
+  "不再",
+  "但",
+  "当前",
+  "當前",
+  "的",
+  "对",
+  "對",
+  "而",
+  "完成",
+  "该",
+  "該",
+  "和",
+  "或",
+  "及",
+  "阶段",
+  "階段",
+  "进行",
+  "继续",
+  "繼續",
+  "将",
+  "將",
+  "就",
+  "了",
+  "每个",
+  "每個",
+  "那些",
+  "那个",
+  "那個",
+  "你",
+  "您",
+  "请",
+  "請",
+  "让",
+  "讓",
+  "然后",
+  "如果",
+  "重新",
+  "整体",
+  "整體",
+  "是否",
+  "所有",
+  "他们",
+  "他們",
+  "它",
+  "它们",
+  "它們",
+  "推进",
+  "推進",
+  "为",
+  "為",
+  "问题",
+  "問題",
+  "我",
+  "我们",
+  "希望",
+  "想要",
+  "需要",
+  "也",
+  "以",
+  "用",
+  "用户",
+  "用戶",
+  "与",
+  "與",
+  "在",
+  "这个",
+  "這個",
+  "这些",
+  "這些",
+  "中"
+]);
+
+const CJK_SEGMENTER = new Intl.Segmenter("zh-CN", { granularity: "word" });
+
 const INFLECTION_DOUBLED_CONSONANTS = new Set([
   "b",
   "d",
@@ -95,6 +173,33 @@ function normalizeLatin(value: string): string {
   return STOP_WORDS.has(term) ? "" : term;
 }
 
+function segmentCjk(value: string): string[] {
+  const terms: string[] = [];
+  let pendingSingles = "";
+  const flushSingles = () => {
+    if ([...pendingSingles].length >= 2 && !CJK_STOP_WORDS.has(pendingSingles)) {
+      terms.push(pendingSingles);
+    }
+    pendingSingles = "";
+  };
+
+  for (const part of CJK_SEGMENTER.segment(value)) {
+    if (!part.isWordLike) continue;
+    if ([...part.segment].length === 1) {
+      if (CJK_STOP_WORDS.has(part.segment)) {
+        flushSingles();
+      } else {
+        pendingSingles += part.segment;
+      }
+      continue;
+    }
+    flushSingles();
+    if (!CJK_STOP_WORDS.has(part.segment)) terms.push(part.segment);
+  }
+  flushSingles();
+  return terms;
+}
+
 export function tokenize(value: string): TokenizedText {
   const normalized = normalizeTask(value).toLowerCase();
   const terms: string[] = [];
@@ -115,11 +220,7 @@ export function tokenize(value: string): TokenizedText {
       continue;
     }
 
-    const characters = [...segment];
-    characters.forEach(emit);
-    for (let index = 0; index < characters.length - 1; index += 1) {
-      emit(`${characters[index]}${characters[index + 1]}`);
-    }
+    segmentCjk(segment).forEach(emit);
   }
 
   return { terms, counts };

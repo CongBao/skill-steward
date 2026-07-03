@@ -56,6 +56,9 @@ it("reviews a Harness plan before applying it", async () => {
   expect(confirm).toHaveBeenCalled();
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/v1/integrations/codex/apply",
-    expect.objectContaining({ method: "POST" })
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ planId: "plan-1" })
+    })
   );
 });

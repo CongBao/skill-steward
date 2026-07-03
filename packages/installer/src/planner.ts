@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
+import { isAbsolute, normalize } from "node:path";
+import { z } from "zod";
 import {
   installationProvenanceSchema,
   InstallerError,
@@ -30,6 +32,87 @@ export interface InstallationPlan {
   expiresAt: number;
   provenance?: InstallationProvenance;
 }
+
+const fingerprintSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const absolutePathSchema = z.string().min(1).max(4_096).refine(
+  (value) => isAbsolute(value) && normalize(value) === value,
+  "Installation path must be absolute and normalized"
+);
+const installationChangeSchema = z.object({
+  operation: z.enum(["backup", "create"]),
+  path: absolutePathSchema
+}).strict();
+
+export const installationPlanSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["ready", "conflict", "noop"]),
+  action: z.enum(["create", "replace", "cancel", "none"]),
+  source: absolutePathSchema,
+  sourceFingerprint: fingerprintSchema,
+  destination: absolutePathSchema,
+  expectedDestinationFingerprint: fingerprintSchema.nullable(),
+  allowedActions: z.array(z.enum(["cancel", "rename", "replace"])).length(3),
+  changes: z.array(installationChangeSchema).max(2),
+  createdAt: z.number().int().safe().nonnegative(),
+  expiresAt: z.number().int().safe().positive(),
+  provenance: installationProvenanceSchema.optional()
+}).strict().superRefine((plan, context) => {
+  if (plan.expiresAt <= plan.createdAt) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expiresAt"],
+      message: "Installation plan expiry must be after creation"
+    });
+  }
+  if (new Set(plan.allowedActions).size !== 3) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allowedActions"],
+      message: "Installation plan actions must be unique"
+    });
+  }
+
+  const operations = plan.changes.map(({ operation, path }) => ({ operation, path }));
+  const expectedChanges = plan.status === "ready" && plan.action === "create"
+    ? [{ operation: "create", path: plan.destination }]
+    : plan.status === "ready" && plan.action === "replace"
+      ? [
+          { operation: "backup", path: plan.destination },
+          { operation: "create", path: plan.destination }
+        ]
+      : [];
+  if (JSON.stringify(operations) !== JSON.stringify(expectedChanges)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["changes"],
+      message: "Installation changes do not match the reviewed action"
+    });
+  }
+
+  const consistentStatus =
+    (plan.status === "ready" && plan.action === "create"
+      && plan.expectedDestinationFingerprint === null)
+    || (plan.status === "ready" && plan.action === "replace"
+      && plan.expectedDestinationFingerprint !== null)
+    || (plan.status === "conflict" && plan.action === "cancel"
+      && plan.expectedDestinationFingerprint !== null)
+    || (plan.status === "noop" && plan.action === "none"
+      && plan.expectedDestinationFingerprint === plan.sourceFingerprint);
+  if (!consistentStatus) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["status"],
+      message: "Installation status, action, and fingerprints are inconsistent"
+    });
+  }
+  if (plan.source === plan.destination) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["destination"],
+      message: "Installation source and destination must differ"
+    });
+  }
+});
 
 export interface PlanInstallationInput {
   source: string;

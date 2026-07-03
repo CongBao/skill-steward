@@ -2,11 +2,15 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  readPreflightEvidence,
   readLatestReport,
   writeCatalogSnapshot,
   writeCatalogSources
 } from "@skill-steward/store";
-import type { PreflightResult } from "@skill-steward/preflight";
+import {
+  PREFLIGHT_ALGORITHM_VERSION,
+  type PreflightResult
+} from "@skill-steward/preflight";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderPreflightHuman } from "../src/commands/preflight.js";
 import type { CliContext } from "../src/context.js";
@@ -126,6 +130,10 @@ describe("preflight command", () => {
     });
     const disk = await readFile(join(current.stateDir, "preflights.json"), "utf8");
     expect(disk).not.toContain("Review this TypeScript change");
+    expect((await readPreflightEvidence(current.stateDir))[0]).toMatchObject({
+      harness: "codex",
+      delivery: "cli"
+    });
   });
 
   it("reads task files relative to cwd", async () => {
@@ -151,11 +159,31 @@ describe("preflight command", () => {
     const output = JSON.parse(current.stdout.join(""));
     expect(output).toMatchObject({
       schemaVersion: 3,
-      algorithmVersion: 3,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       useCandidateIds: expect.any(Array),
       installCandidateIds: expect.any(Array)
     });
     expect(output).not.toHaveProperty("task");
+  });
+
+  it("attributes valid cursor and gemini preflight requests", async () => {
+    for (const harness of ["cursor", "gemini"]) {
+      expect(await run([
+        "preflight",
+        "--task", "Review security changes and missing tests",
+        "--harness", harness,
+        "--json"
+      ], current.context)).toBe(0);
+      current.stdout.splice(0);
+    }
+
+    expect((await readPreflightEvidence(current.stateDir)).map((record) => ({
+      harness: record.schemaVersion === 3 ? record.harness : undefined,
+      delivery: record.schemaVersion === 3 ? record.delivery : undefined
+    }))).toEqual([
+      { harness: "gemini", delivery: "cli" },
+      { harness: "cursor", delivery: "cli" }
+    ]);
   });
 
   it("rejects missing or multiple task sources", async () => {
@@ -210,7 +238,7 @@ describe("preflight command", () => {
   it("bounds low-value exclusions and points to complete JSON", () => {
     const result: PreflightResult = {
       schemaVersion: 3,
-      algorithmVersion: 3,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
       portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -274,7 +302,7 @@ describe("preflight command", () => {
   it("explains a hard exclusion instead of the generic relevance fallback", () => {
     const result: PreflightResult = {
       schemaVersion: 3,
-      algorithmVersion: 3,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
       portfolioFingerprint: `sha256:${"a".repeat(64)}`,

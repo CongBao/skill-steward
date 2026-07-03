@@ -1,4 +1,5 @@
-import type { FastifyInstance } from "fastify";
+import { InstallationMutationLeaseError } from "@skill-steward/store";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { apiFailure, apiSuccess } from "../api.js";
 import type {
   InstallationPlanRequest,
@@ -17,6 +18,13 @@ function decodeBase64(value: unknown): Buffer {
     throw new Error("File content must be base64");
   }
   return Buffer.from(value, "base64");
+}
+
+function sendInstallationError(reply: FastifyReply, error: unknown) {
+  if (error instanceof InstallationMutationLeaseError) {
+    return reply.code(409).send(apiFailure(error.code, error.message));
+  }
+  throw error;
 }
 
 export function registerInstallationRoutes(
@@ -79,7 +87,11 @@ export function registerInstallationRoutes(
           .code(400)
           .send(apiFailure("CONFIRMATION_REQUIRED", "Explicit installation confirmation is required"));
       }
-      return apiSuccess(await services.commit(request.body.planId));
+      try {
+        return apiSuccess(await services.commit(request.body.planId));
+      } catch (error) {
+        return sendInstallationError(reply, error);
+      }
     }
   );
 
@@ -87,6 +99,12 @@ export function registerInstallationRoutes(
 
   app.post<{ Params: { transactionId: string } }>(
     "/api/v1/installations/:transactionId/rollback",
-    async (request) => apiSuccess(await services.rollback(request.params.transactionId))
+    async (request, reply) => {
+      try {
+        return apiSuccess(await services.rollback(request.params.transactionId));
+      } catch (error) {
+        return sendInstallationError(reply, error);
+      }
+    }
   );
 }

@@ -40,6 +40,8 @@ const erasePlanSchema = z.object({
   paths: z.array(erasePathSchema).length(3)
 }).strict();
 
+export const evidenceErasePlanSchema = erasePlanSchema;
+
 export type EvidenceErasePlan = z.infer<typeof erasePlanSchema>;
 
 export class EvidenceEventStoreError extends Error {
