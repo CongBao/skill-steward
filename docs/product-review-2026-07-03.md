@@ -12,7 +12,7 @@ This verdict does not claim Beta completion. The next competitive phase is nativ
 
 ## Alpha.3 scope and evidence
 
-The stage review used the Alpha.3 implementation through commit `ec65f4e` and the exact verified package `skill-steward-0.5.0-alpha.3.tgz` with SHA-256 `e85ec2edbe567731f10e1e588e6528bc0963560d0a2db98370d0f3ccbd0b4fd0`. The tarball contained 11 expected package files and complete notices for 73 runtime packages, was installed globally, and reported `0.5.0-alpha.3` from `$HOME/.npm-global/bin/skill-steward`.
+The stage review used the Alpha.3 implementation through commit `2f02cbc` and the exact verified package `skill-steward-0.5.0-alpha.3.tgz` with SHA-256 `e85ec2edbe567731f10e1e588e6528bc0963560d0a2db98370d0f3ccbd0b4fd0`. The tarball contained 11 expected package files and complete notices for 73 runtime packages, was installed globally, and reported `0.5.0-alpha.3` from `$HOME/.npm-global/bin/skill-steward`.
 
 Hands-on work used an isolated HOME and state directory rather than test-only service mocks:
 
@@ -24,7 +24,7 @@ Hands-on work used an isolated HOME and state directory rather than test-only se
 - Responsive browser review covered 720, 866, 1100, 1280, and 1600 px. No page developed horizontal overflow. A fresh wide origin opened with a 210 px sidebar, automatically collapsed to 62 px at 720 px, and retained manual sidebar choices.
 - Settings exposed 16 KPI definitions with five recommended defaults. Selecting eight KPIs produced eight real Overview cards at both 720 and 1600 px without overflow.
 - English and Chinese Overview, Preflight, Evidence, Skills, History, and Settings states were inspected from the installed package. Browser logs contained no errors from the reviewed dashboard origin.
-- Full workspace verification rebuilt and typechecked all 13 projects and passed **536 tests**; four Windows-only tests were skipped on macOS and remain covered by the dedicated Windows CI job.
+- Full workspace verification rebuilt and typechecked all 13 projects and passed **537 tests**; four Windows-only tests were skipped on macOS and remain covered by the dedicated Windows CI job.
 
 ## Alpha.3 dogfood findings
 
@@ -32,7 +32,7 @@ Hands-on work used an isolated HOME and state directory rather than test-only se
 |---|---|---|
 | P1 | Long Chinese tasks expanded into single characters and arbitrary adjacent pairs, inflating task terms and giving an unrelated résumé Skill a false match. | Algorithm v4 now uses word-level Simplified- and Traditional-Chinese routing, removes generic workflow framing, preserves meaningful English `Skill` intent, and keeps non-reference ICU/CLDR/Unicode results in a separate algorithm evidence identity. |
 | P1 | The Evidence lifecycle badge counted all evidence events while its list counted only lifecycle reasons, producing a non-zero badge beside “No lifecycle events.” | The badge now sums lifecycle reasons only; a fixture with 30 total events and 21 lifecycle reasons locks the distinction. |
-| P1 | Two valid reviewed replacement plans could pass the same early destination check in different processes, both report success, and leave the second backup/journal describing the wrong predecessor. Dashboard installation and rollback also bypassed the integration mutation lease. | CLI and Dashboard installation apply/rollback now share the state-scoped cross-process lease with managed integrations. CLI locks before claim, and the installer rechecks destination drift after the verified copy. A real two-process regression proves exactly one replacement commits and its backup still matches the reviewed predecessor. |
+| P1 | Two valid reviewed replacement plans could pass the same early destination check in different processes, both report success, and leave the second backup/journal describing the wrong predecessor. Dashboard installation and rollback also bypassed the integration mutation lease. | CLI and Dashboard installation apply/rollback now share the state-scoped cross-process lease with managed integrations. CLI locks before claim, and the installer rechecks destination drift after the verified copy. Real process regressions prove exactly one replacement commits with the correct predecessor backup, and that a busy wait leaves the same plan available for a successful retry. |
 | P2 | Capability gaps are still lexical and ordered by task appearance, so labels such as `capture` can be less helpful than a semantic capability phrase. | Accepted for this deterministic release; evaluate semantic or hybrid gap labels only against labeled tasks. |
 | P2 | “Active Harnesses” measures Harness visibility in the scanned portfolio, not installed integration trust. | Keep integration truth in Settings for Alpha; rename or add KPI help when coverage accounting is implemented. |
 | P2 | Scan History shows portfolio snapshots but does not combine install, governance, policy, and integration transactions into one operational timeline. | Retain separate trusted journals now; consider a read-only unified activity view after native plugin coverage. |

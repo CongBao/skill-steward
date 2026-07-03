@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,7 +11,7 @@ import {
   readInstallationHistory,
   StagingRegistry
 } from "@skill-steward/installer";
-import { writeReviewedPlan } from "@skill-steward/store";
+import { withIntegrationMutationLease, writeReviewedPlan } from "@skill-steward/store";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -222,4 +222,58 @@ describe("integration CLI source processes", () => {
     expect(await readFile(join(history[0]!.backupDirectory!, "SKILL.md"), "utf8"))
       .toContain("original");
   }, 30_000);
+
+  it("keeps a reviewed installation plan retryable when the shared lease is busy", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-cli-install-busy-process-"));
+    const home = join(base, "home");
+    const state = join(base, "state");
+    const workspace = join(base, "workspace");
+    const destination = join(home, ".agents", "skills", "shared-review");
+    await mkdir(workspace, { recursive: true });
+    await createSkill(destination, "original");
+    const planId = await writeReplacementPlan({
+      state,
+      home,
+      workspace,
+      destination,
+      body: "replacement after busy"
+    });
+    const options = {
+      cwd: workspace,
+      env: { ...process.env, HOME: home, SKILL_STEWARD_HOME: state }
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const held = withIntegrationMutationLease(state, () => gate, {
+      waitMs: 10_000,
+      pollMs: 2,
+      heartbeatMs: 25
+    });
+    const leasePath = join(state, "integration-mutation.lease");
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      try {
+        await access(leasePath);
+        break;
+      } catch {
+        if (Date.now() >= deadline) throw new Error("Timed out waiting for shared lease");
+        await delay(2);
+      }
+    }
+
+    const busy = await runCli(["install", "--plan", planId, "--confirm"], options);
+    expect(busy.code).toBe(1);
+    expect(busy.stderr).toMatch(/INSTALLATION_BUSY.*retry this same reviewed plan/is);
+    await expect(access(join(state, "reviewed-plans", `${planId}.json`)))
+      .resolves.toBeUndefined();
+    await expect(access(join(state, "staging", planId))).resolves.toBeUndefined();
+
+    release();
+    await held;
+    const retried = await runCli(["install", "--plan", planId, "--confirm"], options);
+    expect(retried.code, retried.stderr).toBe(0);
+    expect(await readFile(join(destination, "SKILL.md"), "utf8"))
+      .toContain("replacement after busy");
+    expect(await readInstallationHistory(state)).toHaveLength(1);
+  }, 20_000);
 });
