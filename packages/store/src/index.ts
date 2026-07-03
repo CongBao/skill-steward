@@ -6,3 +6,4 @@ export * from "./integration-store.js";
 export * from "./preflight-store.js";
 export * from "./evidence-policy-store.js";
 export * from "./evidence-privacy.js";
+export * from "./evidence-event-store.js";
