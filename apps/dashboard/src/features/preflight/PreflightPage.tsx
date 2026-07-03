@@ -24,6 +24,39 @@ const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
   PORTFOLIO_RISK: "preflight.reason.PORTFOLIO_RISK"
 };
 
+function reasonDetail(
+  candidate: PreflightCandidate,
+  reason: PreflightCandidate["reasons"][number],
+  t: (key: TranslationKey) => string
+): string {
+  const percent = (value: number) => String(Math.round(value * 100));
+  switch (reason.code) {
+    case "TASK_TERM_MATCH":
+      return reason.detail;
+    case "NAME_MATCH":
+      return t("preflight.reasonDetail.NAME_MATCH").replace("{name}", candidate.name);
+    case "PROJECT_SCOPE_FIT":
+      return t("preflight.reasonDetail.PROJECT_SCOPE_FIT");
+    case "UNIQUE_COVERAGE":
+      return t("preflight.reasonDetail.UNIQUE_COVERAGE").replace(
+        "{percent}",
+        percent(candidate.uniqueCoverage)
+      );
+    case "REDUNDANT_WITH_SELECTED":
+      return t("preflight.reasonDetail.REDUNDANT_WITH_SELECTED").replace(
+        "{percent}",
+        percent(candidate.redundancyPenalty)
+      );
+    case "LOW_RELEVANCE":
+      return t("preflight.reasonDetail.LOW_RELEVANCE");
+    case "PORTFOLIO_RISK":
+      return t("preflight.reasonDetail.PORTFOLIO_RISK").replace(
+        "{percent}",
+        percent(candidate.riskPenalty)
+      );
+  }
+}
+
 function ScoreBar({
   label,
   value
@@ -60,7 +93,7 @@ function CandidateCard({ candidate }: { candidate: PreflightCandidate }) {
         {candidate.reasons.map((reason, index) => (
           <li key={`${reason.code}-${index}`}>
             <span>{t(reasonKeys[reason.code])}</span>
-            <p>{reason.detail}</p>
+            <p>{reasonDetail(candidate, reason, t)}</p>
           </li>
         ))}
       </ul>

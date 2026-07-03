@@ -3,7 +3,11 @@ import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { PreferencesProvider } from "../../theme/preferences.js";
+import {
+  DEFAULT_PREFERENCES,
+  PREFERENCES_KEY,
+  PreferencesProvider
+} from "../../theme/preferences.js";
 import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
@@ -230,5 +234,30 @@ describe("PreflightPage", () => {
 
     expect(await screen.findByText("Analysis failed")).toBeVisible();
     expect(task).toHaveValue("Review this task after a temporary failure");
+  });
+
+  it("localizes structured reason details in Chinese", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_PREFERENCES, locale: "zh-CN" })
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: result, error: null, meta: { apiVersion: 1 } })
+      }))
+    );
+    render(<PreflightPage />, { wrapper: wrapper() });
+
+    await user.type(
+      screen.getByRole("textbox", { name: "待分析任务" }),
+      "检查这次安全变更并补充缺失测试"
+    );
+    await user.click(screen.getByRole("button", { name: "分析任务" }));
+
+    expect(await screen.findByText("57% 的任务词由该 Skill 独立覆盖。")).toBeVisible();
+    expect(screen.queryByText("57% unique task-term coverage.")).not.toBeInTheDocument();
   });
 });
