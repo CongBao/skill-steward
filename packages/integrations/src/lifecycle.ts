@@ -45,6 +45,20 @@ const claudeLifecycleInputSchema = z.discriminatedUnion("hook_event_name", [
   claudeSessionEndInputSchema
 ]);
 
+const copilotPromptInputSchema = z.object({
+  sessionId: correlationIdSchema,
+  timestamp: z.number().int().nonnegative(),
+  cwd: z.string().min(1).max(4_096),
+  prompt: z.string().min(1).max(20_000)
+}).passthrough();
+
+const copilotSessionEndInputSchema = z.object({
+  sessionId: correlationIdSchema,
+  timestamp: z.number().int().nonnegative(),
+  cwd: z.string().min(1).max(4_096),
+  reason: z.enum(["complete", "error", "abort", "timeout", "user_exit"])
+}).passthrough();
+
 export interface LifecyclePrivacy {
   key(namespace: "session" | "turn", raw: string): string;
 }
@@ -200,6 +214,54 @@ export async function runLifecycleHook(input: RunLifecycleHookInput): Promise<Re
     await input.onEvent?.(event);
   } catch {
     // Lifecycle observation must never block or change the host Harness.
+  }
+  return {};
+}
+
+export interface NormalizeObserveInput extends EventFactoryOptions {
+  harness: "github-copilot";
+  event: "userPromptSubmitted" | "sessionEnd";
+  stdin: string;
+}
+
+export function normalizeObserveInput(input: NormalizeObserveInput): EvidenceEvent {
+  const harness = integrationHarnessSchema.parse(input.harness);
+  if (harness !== "github-copilot") throw new Error("Observe Hook requires GitHub Copilot");
+  const raw: unknown = JSON.parse(input.stdin);
+  const common = {
+    schemaVersion: 1 as const,
+    id: input.id?.() ?? randomUUID(),
+    createdAt: (input.now?.() ?? new Date()).toISOString(),
+    harness
+  };
+  if (input.event === "userPromptSubmitted") {
+    const payload = copilotPromptInputSchema.parse(raw);
+    const sessionKey = correlationKey(input.privacy, "session", payload.sessionId);
+    return evidenceEventSchema.parse({
+      ...common,
+      kind: "prompt-observed",
+      ...(sessionKey ? { sessionKey } : {})
+    });
+  }
+  const payload = copilotSessionEndInputSchema.parse(raw);
+  const sessionKey = correlationKey(input.privacy, "session", payload.sessionId);
+  return evidenceEventSchema.parse({
+    ...common,
+    kind: "session-ended",
+    ...(sessionKey ? { sessionKey } : {}),
+    reason: payload.reason === "user_exit" ? "user-exit" : payload.reason
+  });
+}
+
+export interface RunObserveHookInput extends NormalizeObserveInput {
+  onEvent?(event: EvidenceEvent): Promise<void> | void;
+}
+
+export async function runObserveHook(input: RunObserveHookInput): Promise<Record<string, never>> {
+  try {
+    await input.onEvent?.(normalizeObserveInput(input));
+  } catch {
+    // Copilot observation is neutral and must never alter the host prompt/session.
   }
   return {};
 }

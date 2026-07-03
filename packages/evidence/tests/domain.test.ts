@@ -94,6 +94,14 @@ describe("evidence domain", () => {
       sessionKey: "session-raw",
       prompt: "private task"
     })).toThrow();
+    expect(evidenceEventSchema.parse({
+      schemaVersion: 1,
+      id: "event-copilot",
+      createdAt: "2026-07-03T00:00:00.000Z",
+      kind: "prompt-observed",
+      harness: "github-copilot",
+      sessionKey: pseudonym("c")
+    }).kind).toBe("prompt-observed");
   });
 
   it("validates privacy-reduced preflights and datasets", () => {

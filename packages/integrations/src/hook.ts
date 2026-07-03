@@ -3,7 +3,7 @@ import {
   type PreflightResult
 } from "@skill-steward/preflight";
 import {
-  integrationHarnessSchema,
+  promptInjectionHarnessSchema,
   promptHookInputSchema,
   type IntegrationHarness,
   type PromptHookOutput
@@ -56,7 +56,7 @@ function outputFor(context: string): PromptHookOutput {
 }
 
 export function renderPromptHook(input: RenderPromptHookInput): PromptHookOutput {
-  integrationHarnessSchema.parse(input.harness);
+  promptInjectionHarnessSchema.parse(input.harness);
   const result = preflightResultSchema.parse(input.result);
   const maxBytes = input.maxBytes ?? 2_048;
   if (!Number.isInteger(maxBytes) || maxBytes < 1) return {};
@@ -103,7 +103,7 @@ export async function runPromptHook(
   input: RunPromptHookInput
 ): Promise<PromptHookOutput> {
   try {
-    const harness = integrationHarnessSchema.parse(input.harness);
+    const harness = promptInjectionHarnessSchema.parse(input.harness);
     const payload = promptHookInputSchema.parse(JSON.parse(input.stdin));
     const result = await input.analyze({
       task: payload.prompt,

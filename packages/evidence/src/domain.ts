@@ -119,6 +119,13 @@ const sessionEventSchema = z.object({
   reason: z.enum(["complete", "error", "abort", "timeout", "user-exit", "other"])
 }).strict();
 
+const promptObservedEventSchema = z.object({
+  ...eventBase,
+  kind: z.literal("prompt-observed"),
+  harness: evidenceHarnessSchema,
+  sessionKey: pseudonymousKeySchema.optional()
+}).strict();
+
 const installationEventSchema = z.object({
   ...eventBase,
   kind: z.literal("installation-applied"),
@@ -139,6 +146,7 @@ export const evidenceEventSchema = z.discriminatedUnion("kind", [
   deliveryEventSchema,
   turnEventSchema,
   sessionEventSchema,
+  promptObservedEventSchema,
   installationEventSchema,
   governanceEventSchema
 ]);

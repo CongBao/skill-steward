@@ -5,6 +5,7 @@ import {
   readFile,
   realpath,
   rename,
+  unlink,
   writeFile
 } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -17,6 +18,7 @@ import {
   integrationHarnessSchema,
   type IntegrationHarness
 } from "./domain.js";
+import { copilotHookConfig, copilotHookTarget } from "./config-adapters.js";
 
 export type IntegrationErrorCode =
   | "INTEGRATION_CONFIG_INVALID"
@@ -91,9 +93,9 @@ function isMissing(error: unknown): boolean {
 }
 
 function integrationTarget(harness: IntegrationHarness, home: string): string {
-  return harness === "codex"
-    ? resolve(home, ".codex", "hooks.json")
-    : resolve(home, ".claude", "settings.json");
+  if (harness === "codex") return resolve(home, ".codex", "hooks.json");
+  if (harness === "claude-code") return resolve(home, ".claude", "settings.json");
+  return copilotHookTarget(home);
 }
 
 async function assertSafeTarget(targetPath: string, home: string): Promise<void> {
@@ -167,9 +169,9 @@ async function readConfig(targetPath: string): Promise<{
 type ManagedEvent = "UserPromptSubmit" | "Stop" | "SessionEnd";
 
 function managedEvents(harness: IntegrationHarness): ManagedEvent[] {
-  return harness === "codex"
-    ? ["UserPromptSubmit", "Stop"]
-    : ["UserPromptSubmit", "Stop", "SessionEnd"];
+  if (harness === "codex") return ["UserPromptSubmit", "Stop"];
+  if (harness === "claude-code") return ["UserPromptSubmit", "Stop", "SessionEnd"];
+  return [];
 }
 
 function commandFor(harness: IntegrationHarness, event: ManagedEvent): string {
@@ -308,6 +310,29 @@ export async function planIntegration(
   const targetPath = integrationTarget(harness, options.home);
   await assertSafeTarget(targetPath, options.home);
   const before = await readConfig(targetPath);
+  if (harness === "github-copilot") {
+    const afterConfig = copilotHookConfig();
+    const afterSource = stableJson(afterConfig);
+    const afterFingerprint = hash(afterSource);
+    if (before.exists && before.fingerprint !== afterFingerprint) {
+      throw new IntegrationError(
+        "INTEGRATION_DRIFTED",
+        "The dedicated Copilot Hook file already exists with different content"
+      );
+    }
+    const now = options.now?.() ?? new Date();
+    return {
+      id: options.id?.() ?? randomUUID(),
+      harness,
+      targetPath,
+      expectedBeforeFingerprint: before.fingerprint,
+      afterConfig,
+      afterFingerprint,
+      installedEntryFingerprint: afterFingerprint,
+      changes: before.exists ? [] : [{ operation: "write", path: targetPath }],
+      createdAt: now.toISOString()
+    };
+  }
   const existingByEvent = managedEvents(harness).map((event) => ({
     event,
     groups: managedGroups(before.config, harness, event)
@@ -402,6 +427,41 @@ export async function integrationStatus(
   try {
     await assertSafeTarget(targetPath, options.home);
     const current = await readConfig(targetPath);
+    if (harness === "github-copilot") {
+      const expectedFingerprint = hash(stableJson(copilotHookConfig()));
+      if (current.exists && current.fingerprint === expectedFingerprint) {
+        if (latest?.status === "installed" && latest.afterFingerprint !== current.fingerprint) {
+          return {
+            harness,
+            status: "drifted",
+            targetPath,
+            lastChangedAt: latest.createdAt,
+            message: "The recorded Copilot Hook fingerprint changed"
+          };
+        }
+        return {
+          harness,
+          status: "installed",
+          targetPath,
+          ...(latest ? { lastChangedAt: latest.createdAt } : {})
+        };
+      }
+      if (current.exists || latest?.status === "installed") {
+        return {
+          harness,
+          status: "drifted",
+          targetPath,
+          ...(latest ? { lastChangedAt: latest.createdAt } : {}),
+          message: "The managed Copilot Hook is missing or changed"
+        };
+      }
+      return {
+        harness,
+        status: "not-installed",
+        targetPath,
+        ...(latest ? { lastChangedAt: latest.createdAt } : {})
+      };
+    }
     const groups = managedEvents(harness).map((event) => ({
       event,
       groups: managedGroups(current.config, harness, event)
@@ -480,6 +540,35 @@ export async function removeIntegration(
     );
   }
   const before = await readConfig(targetPath);
+  if (harness === "github-copilot") {
+    const expectedFingerprint = hash(stableJson(copilotHookConfig()));
+    if (
+      !before.exists
+      || before.fingerprint !== expectedFingerprint
+      || before.fingerprint !== latest.afterFingerprint
+    ) {
+      throw new IntegrationError(
+        "INTEGRATION_DRIFTED",
+        "Copilot Hook changed since installation; removal was not applied"
+      );
+    }
+    await unlink(targetPath);
+    const now = options.now?.() ?? new Date();
+    const record: IntegrationRecord = {
+      schemaVersion: 1,
+      id: options.id?.() ?? randomUUID(),
+      harness,
+      action: "remove",
+      status: "removed",
+      targetPath,
+      beforeFingerprint: before.fingerprint,
+      afterFingerprint: hash(""),
+      installedEntryFingerprint: latest.installedEntryFingerprint,
+      createdAt: now.toISOString()
+    };
+    await appendIntegrationRecord(options.stateDirectory, record);
+    return record;
+  }
   const groups = installedBundle(before.config, harness);
   if (
     groups.length !== managedEvents(harness).length ||

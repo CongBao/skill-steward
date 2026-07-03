@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -120,4 +120,52 @@ it("produces an idempotent plan without a phantom backup", async () => {
   const second = await planIntegration("claude-code", options);
   expect(second.changes).toEqual([]);
   expect(second.backupPath).toBeUndefined();
+});
+
+it("manages only the dedicated Copilot Hook file and removes it only without drift", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-copilot-home-"));
+  const stateDirectory = join(home, "state");
+  const hookDirectory = join(home, ".copilot", "hooks");
+  const unrelatedPath = join(hookDirectory, "keep-me.json");
+  const targetPath = join(hookDirectory, "skill-steward.json");
+  await mkdir(hookDirectory, { recursive: true });
+  await writeFile(unrelatedPath, "UNRELATED-BYTES\n", "utf8");
+  const options = {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z"),
+    id: () => "integration-github-copilot"
+  };
+
+  const plan = await planIntegration("github-copilot", options);
+  expect(plan.targetPath).toBe(targetPath);
+  expect(plan.changes).toEqual([{ operation: "write", path: targetPath }]);
+  await applyIntegrationPlan(plan, options);
+  const config = JSON.parse(await readFile(targetPath, "utf8"));
+  expect(config).toEqual({
+    version: 1,
+    hooks: {
+      userPromptSubmitted: [expect.objectContaining({
+        type: "command",
+        bash: "skill-steward hook observe --harness github-copilot --event userPromptSubmitted"
+      })],
+      sessionEnd: [expect.objectContaining({
+        type: "command",
+        bash: "skill-steward hook observe --harness github-copilot --event sessionEnd"
+      })]
+    }
+  });
+  expect(await readFile(unrelatedPath, "utf8")).toBe("UNRELATED-BYTES\n");
+  expect(await integrationStatus("github-copilot", options)).toMatchObject({ status: "installed" });
+
+  await writeFile(targetPath, `${JSON.stringify({ ...config, changed: true })}\n`, "utf8");
+  await expect(removeIntegration("github-copilot", options)).rejects.toMatchObject({
+    code: "INTEGRATION_DRIFTED"
+  });
+  expect(await readFile(unrelatedPath, "utf8")).toBe("UNRELATED-BYTES\n");
+
+  await writeFile(targetPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await removeIntegration("github-copilot", options);
+  await expect(access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(unrelatedPath, "utf8")).toBe("UNRELATED-BYTES\n");
 });

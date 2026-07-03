@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   normalizeLifecycleInput,
+  normalizeObserveInput,
+  runObserveHook,
   runLifecycleHook
 } from "../src/lifecycle.js";
 
@@ -135,6 +137,64 @@ describe("Claude Code lifecycle", () => {
       createdAt: "2026-07-03T00:03:00.000Z",
       kind: "session-ended",
       harness: "claude-code",
+      sessionKey: pseudonym("session"),
+      reason: expected
+    });
+  });
+});
+
+describe("GitHub Copilot observe-only lifecycle", () => {
+  it("observes prompts without returning recommendation context", async () => {
+    const events: unknown[] = [];
+    const output = await runObserveHook({
+      harness: "github-copilot",
+      stdin: JSON.stringify({
+        sessionId: "raw-copilot-session",
+        timestamp: 1_783_035_600_000,
+        cwd: "/private/customer/project",
+        prompt: "PRIVATE rotate customer keys",
+        transcript: "PRIVATE transcript"
+      }),
+      event: "userPromptSubmitted",
+      privacy,
+      id: () => "copilot-prompt",
+      now: () => new Date("2026-07-03T00:04:00.000Z"),
+      onEvent: (event) => { events.push(event); }
+    });
+    expect(output).toEqual({});
+    expect(events).toEqual([{
+      schemaVersion: 1,
+      id: "copilot-prompt",
+      createdAt: "2026-07-03T00:04:00.000Z",
+      kind: "prompt-observed",
+      harness: "github-copilot",
+      sessionKey: pseudonym("session")
+    }]);
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|raw-copilot|customer|transcript/);
+  });
+
+  it.each([
+    ["complete", "complete"],
+    ["error", "error"],
+    ["abort", "abort"],
+    ["timeout", "timeout"],
+    ["user_exit", "user-exit"]
+  ] as const)("normalizes sessionEnd reason %s", (reason, expected) => {
+    expect(normalizeObserveInput({
+      harness: "github-copilot",
+      event: "sessionEnd",
+      stdin: JSON.stringify({
+        sessionId: "raw-copilot-session",
+        timestamp: 1_783_035_600_000,
+        cwd: "/private/project",
+        reason
+      }),
+      privacy,
+      id: () => `copilot-${reason}`,
+      now: () => new Date("2026-07-03T00:05:00.000Z")
+    })).toMatchObject({
+      kind: "session-ended",
+      harness: "github-copilot",
       sessionKey: pseudonym("session"),
       reason: expected
     });
