@@ -11,6 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@skill-steward/engine": "workspace:*"
+    "@skill-steward/engine": "workspace:*",
+    "@skill-steward/preflight": "workspace:*",
+    "zod": "^3.25.67"
   }
 }

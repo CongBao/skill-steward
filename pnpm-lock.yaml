@@ -156,6 +156,12 @@ importers:
       '@skill-steward/engine':
         specifier: workspace:*
         version: link:../engine
+      '@skill-steward/preflight':
+        specifier: workspace:*
+        version: link:../preflight
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
 
 packages:
 
