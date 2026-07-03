@@ -62,11 +62,12 @@
     "@skill-steward/evidence": "workspace:*",
     "@skill-steward/governance": "workspace:*",
     "@skill-steward/insights": "workspace:*",
-    "@skill-steward/integrations": "workspace:*",
     "@skill-steward/installer": "workspace:*",
+    "@skill-steward/integrations": "workspace:*",
     "@skill-steward/preflight": "workspace:*",
     "@skill-steward/report": "workspace:*",
     "@skill-steward/store": "workspace:*",
-    "commander": "^14.0.0"
+    "commander": "^14.0.0",
+    "spdx-expression-parse": "^4.0.0"
   }
 }

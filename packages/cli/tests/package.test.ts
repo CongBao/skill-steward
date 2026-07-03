@@ -110,12 +110,20 @@ it("builds package documentation, license, and deterministic notice coverage", a
     await readFile(join(packageDirectory, "dist", "third-party-manifest.json"), "utf8")
   ) as {
     schemaVersion: number;
-    packages: Array<{ name: string; version: string; license: string }>;
+    packages: Array<{
+      name: string;
+      version: string;
+      license: string;
+      source?: string;
+      attributions: Array<{ kind: string; source: string; reason?: string }>;
+    }>;
   };
   expect(manifest.schemaVersion).toBe(1);
   expect(manifest.packages.length).toBeGreaterThan(0);
   const identifiers = manifest.packages.map(({ name, version }) => `${name}@${version}`);
-  expect(identifiers).toEqual([...identifiers].sort((left, right) => left.localeCompare(right)));
+  expect(identifiers).toEqual(
+    [...identifiers].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  );
   const notices = await readFile(
     join(packageDirectory, "dist", "THIRD_PARTY_NOTICES.txt"),
     "utf8"
@@ -125,6 +133,85 @@ it("builds package documentation, license, and deterministic notice coverage", a
   expect(notices).not.toMatch(
     /(?:^|[\s('"`])(?:\/[Uu]sers\/|\/home\/|\/private\/|\/tmp\/|[A-Za-z]:[\\/])/m,
   );
+});
+
+it("includes complete license text and audited attribution for every runtime package", async () => {
+  const manifest = JSON.parse(
+    await readFile(join(packageDirectory, "dist", "third-party-manifest.json"), "utf8")
+  ) as {
+    packages: Array<{
+      name: string;
+      version: string;
+      source?: string;
+      attributions: Array<{ kind: string; source: string; reason?: string }>;
+    }>;
+  };
+  const notices = await readFile(
+    join(packageDirectory, "dist", "THIRD_PARTY_NOTICES.txt"),
+    "utf8"
+  );
+  for (const entry of manifest.packages) {
+    expect(entry.attributions, `${entry.name}@${entry.version}`).not.toHaveLength(0);
+    expect(entry.source, `${entry.name}@${entry.version}`).toMatch(
+      /^(?:git|https?|ssh):\/\//
+    );
+    const heading = `## ${entry.name}@${entry.version}\n`;
+    const start = notices.indexOf(heading);
+    const end = notices.indexOf("\n## ", start + heading.length);
+    const section = notices.slice(start, end < 0 ? undefined : end);
+    expect(section.length, `${entry.name}@${entry.version}`).toBeGreaterThan(500);
+    for (const attribution of entry.attributions) {
+      expect(section).toContain(`Attribution: ${attribution.kind} ${attribution.source}`);
+    }
+  }
+
+  const abstractLogging = manifest.packages.find(({ name }) => name === "abstract-logging");
+  expect(abstractLogging?.attributions).toEqual([
+    expect.objectContaining({
+      kind: "override",
+      source: "https://jsumners.mit-license.org/",
+      reason: expect.stringContaining("published package")
+    })
+  ]);
+  expect(notices).toContain("Copyright © 2014 James Sumners james.sumners@gmail.com");
+
+  const isarray = manifest.packages.find(({ name }) => name === "isarray");
+  expect(isarray?.attributions).toEqual([
+    expect.objectContaining({ kind: "readme", source: "README.md#License" })
+  ]);
+  expect(notices).toContain("Copyright (c) 2013 Julian Gruber");
+});
+
+it("attributes the modulepreload runtime injected into the copied Vite production assets", async () => {
+  const assets = join(packageDirectory, "dist", "dashboard", "assets");
+  const productionJavaScript = (
+    await Promise.all(
+      (await readdir(assets))
+        .filter((name) => name.endsWith(".js"))
+        .map((name) => readFile(join(assets, name), "utf8"))
+    )
+  ).join("\n");
+  expect(productionJavaScript).toMatch(/relList[\s\S]+modulepreload[\s\S]+MutationObserver/);
+
+  const manifest = JSON.parse(
+    await readFile(join(packageDirectory, "dist", "third-party-manifest.json"), "utf8")
+  ) as {
+    packages: Array<{
+      name: string;
+      surfaces: string[];
+      attributions: Array<{ kind: string; source: string; rationale?: string }>;
+    }>;
+  };
+  const vite = manifest.packages.find(({ name }) => name === "vite");
+  expect(vite).toMatchObject({
+    surfaces: expect.arrayContaining(["dashboard-injected-runtime"]),
+    attributions: expect.arrayContaining([
+      expect.objectContaining({ kind: "file", source: "LICENSE.md" })
+    ])
+  });
+  expect(vite).toHaveProperty("rationale", expect.stringContaining("modulepreload"));
+  expect(manifest.packages.some(({ name }) => name === "rollup")).toBe(false);
+  expect(manifest.packages.some(({ name }) => name === "esbuild")).toBe(false);
 });
 
 it("includes required trust files in npm pack dry-run output", async () => {
@@ -147,6 +234,24 @@ it("includes required trust files in npm pack dry-run output", async () => {
   ]));
 });
 
+it("verifies the real npm-packed artifact", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "steward-real-npm-pack-"));
+  const cache = await mkdtemp(join(tmpdir(), "steward-npm-cache-"));
+  const { stdout } = await execFileAsync(
+    "npm",
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", directory],
+    {
+      cwd: packageDirectory,
+      env: { ...process.env, npm_config_cache: cache }
+    }
+  );
+  const result = JSON.parse(stdout) as Array<{ filename: string }>;
+  const artifact = result[0]?.filename;
+  expect(artifact).toBeDefined();
+  await expect(execFileAsync(process.execPath, [verifier, join(directory, artifact!)]))
+    .resolves.toMatchObject({ stdout: expect.stringContaining("Verified") });
+}, 120_000);
+
 it("rejects a tarball path traversal without extracting it", async () => {
   const directory = await mkdtemp(join(tmpdir(), "steward-malicious-pack-"));
   const artifact = join(directory, "malicious.tgz");
@@ -159,7 +264,8 @@ it("rejects a tarball path traversal without extracting it", async () => {
 it("verifies the real pnpm-packed artifact", async () => {
   const directory = await mkdtemp(join(tmpdir(), "steward-real-pack-"));
   await execFileAsync("pnpm", ["pack", "--pack-destination", directory], {
-    cwd: packageDirectory
+    cwd: packageDirectory,
+    env: { ...process.env, NODE_ENV: "production" }
   });
   const artifact = (await readdir(directory))
     .find((name) => name.endsWith(".tgz"));

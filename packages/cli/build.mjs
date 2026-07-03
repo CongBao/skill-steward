@@ -3,6 +3,15 @@ import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "nod
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import {
+  assertNoUnusedLicenseOverrides,
+  extractReadmeLicenseSection,
+  normalizeSourceUrl,
+  takeLicenseOverride,
+  validateAttributableLicenseText,
+  validateLicenseOverrides,
+  validateSpdxExpression
+} from "./license-compliance.mjs";
 
 const packageDirectory = fileURLToPath(new URL(".", import.meta.url));
 const workspaceDirectory = fileURLToPath(new URL("../../", import.meta.url));
@@ -14,7 +23,9 @@ const integrationsSource = fileURLToPath(new URL("../integrations/assets/", impo
 const integrationsDestination = join(outputDirectory, "integrations");
 const manifestPath = join(outputDirectory, "third-party-manifest.json");
 const noticesPath = join(outputDirectory, "THIRD_PARTY_NOTICES.txt");
+const licenseOverridesPath = join(packageDirectory, "license-overrides.json");
 const packageCache = new Map();
+const modulePreloadSignature = /relList[\s\S]+modulepreload[\s\S]+MutationObserver/;
 
 function compare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -107,21 +118,20 @@ function sourceUrl(manifest) {
     : manifest.repository?.url;
   const source = repository || manifest.homepage;
   if (source === undefined) return undefined;
-  if (typeof source !== "string" || isAbsolute(source) || /^[A-Za-z]:[\\/]/.test(source) || source.startsWith("file:")) {
-    throw new Error(`Package ${manifest.name}@${manifest.version} has an unsafe source URL`);
+  try {
+    return normalizeSourceUrl(source);
+  } catch (error) {
+    throw new Error(`Package ${manifest.name}@${manifest.version} has an unsafe source URL`, {
+      cause: error
+    });
   }
-  return source;
 }
 
 function declaredLicense(manifest) {
   if (typeof manifest.license !== "string" || manifest.license.trim() === "") {
     throw new Error(`Package ${manifest.name}@${manifest.version} has no declared license`);
   }
-  const license = manifest.license.trim();
-  if (/^SEE LICENSE IN\b/i.test(license)) {
-    throw new Error(`Package ${manifest.name}@${manifest.version} has no SPDX license expression`);
-  }
-  return license;
+  return validateSpdxExpression(manifest.license);
 }
 
 async function licenseFiles(root) {
@@ -130,6 +140,53 @@ async function licenseFiles(root) {
     .filter((entry) => entry.isFile() && /^(?:licen[cs]e|copying|notice)(?:$|[._-])/i.test(entry.name))
     .map((entry) => entry.name)
     .sort(compare);
+}
+
+async function licenseAttributions(identifier, root, overrides, usedOverrides) {
+  const files = await licenseFiles(root);
+  if (files.length > 0) {
+    return Promise.all(files.map(async (file) => ({
+      kind: "file",
+      source: file,
+      text: validateAttributableLicenseText(
+        await readFile(join(root, file), "utf8"),
+        `${identifier} ${file}`
+      )
+    })));
+  }
+
+  const readmes = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /^readme(?:$|[._-])/i.test(entry.name))
+    .map((entry) => entry.name)
+    .sort(compare);
+  for (const readme of readmes) {
+    const section = extractReadmeLicenseSection(await readFile(join(root, readme), "utf8"), readme);
+    if (section) {
+      try {
+        validateAttributableLicenseText(section.text, `${identifier} ${section.source}`, {
+          requireCopyright: true
+        });
+        return [section];
+      } catch {
+        // A link or SPDX label alone is not license text; an audited override may follow.
+      }
+    }
+  }
+
+  const override = takeLicenseOverride(overrides, identifier, usedOverrides);
+  if (override) return [override];
+  throw new Error(`Package ${identifier} has no complete attributable license text`);
+}
+
+async function assertViteModulePreloadRuntime() {
+  const assets = join(dashboardSource, "assets");
+  const scripts = (await readdir(assets))
+    .filter((name) => name.endsWith(".js"))
+    .sort(compare);
+  for (const script of scripts) {
+    if (modulePreloadSignature.test(await readFile(join(assets, script), "utf8"))) return;
+  }
+  throw new Error("The copied dashboard does not contain the audited Vite modulepreload runtime");
 }
 
 async function packageRootsFromMetafile(metafile, surface) {
@@ -144,12 +201,13 @@ async function packageRootsFromMetafile(metafile, surface) {
   return values;
 }
 
-async function runtimeClosure(cliMetafile, dashboardMetafile) {
+async function runtimeClosure(cliMetafile, dashboardMetafile, overrides) {
   const workspaces = await workspacePackages();
   const thirdParty = new Map();
   const visited = new Set();
+  const usedOverrides = new Set();
 
-  async function visit(value, surface) {
+  async function visit(value, surface, options = {}) {
     const key = `${value.root}\0${surface}`;
     if (visited.has(key)) return;
     visited.add(key);
@@ -157,10 +215,16 @@ async function runtimeClosure(cliMetafile, dashboardMetafile) {
     const isWorkspace = workspace?.root === value.root && insideWorkspace(value.root);
     if (!isWorkspace) {
       const identifier = `${value.manifest.name}@${value.manifest.version}`;
-      const existing = thirdParty.get(identifier) ?? { value, surfaces: new Set() };
+      const existing = thirdParty.get(identifier) ?? {
+        value,
+        surfaces: new Set(),
+        rationales: new Set()
+      };
       existing.surfaces.add(surface);
+      if (options.rationale) existing.rationales.add(options.rationale);
       thirdParty.set(identifier, existing);
     }
+    if (options.traverseDependencies === false) return;
     for (const dependency of Object.keys(value.manifest.dependencies ?? {}).sort(compare)) {
       await visit(await resolveDependency(dependency, value, workspaces), surface);
     }
@@ -172,18 +236,25 @@ async function runtimeClosure(cliMetafile, dashboardMetafile) {
   for (const input of await packageRootsFromMetafile(dashboardMetafile, "dashboard-bundle")) {
     await visit(input.owner, input.surface);
   }
-  await visit(await packageAt(dashboardPackageDirectory), "dashboard-runtime");
+  const dashboardPackage = await packageAt(dashboardPackageDirectory);
+  await visit(dashboardPackage, "dashboard-runtime");
+  await visit(
+    await resolveDependency("vite", dashboardPackage, workspaces),
+    "dashboard-injected-runtime",
+    {
+      traverseDependencies: false,
+      rationale: "Vite injects the modulepreload polyfill into the copied production dashboard JavaScript."
+    }
+  );
 
   const packages = [];
   for (const [identifier, entry] of [...thirdParty.entries()].sort(([left], [right]) => compare(left, right))) {
-    const files = await licenseFiles(entry.value.root);
-    const texts = [];
-    for (const file of files) {
-      texts.push({
-        file,
-        text: (await readFile(join(entry.value.root, file), "utf8")).replace(/\r\n/g, "\n").trimEnd()
-      });
-    }
+    const attributions = await licenseAttributions(
+      identifier,
+      entry.value.root,
+      overrides,
+      usedOverrides
+    );
     packages.push({
       identifier,
       name: entry.value.manifest.name,
@@ -191,10 +262,15 @@ async function runtimeClosure(cliMetafile, dashboardMetafile) {
       license: declaredLicense(entry.value.manifest),
       ...(sourceUrl(entry.value.manifest) ? { source: sourceUrl(entry.value.manifest) } : {}),
       surfaces: [...entry.surfaces].sort(compare),
-      licenseFiles: files,
-      texts
+      ...(
+        entry.rationales.size > 0
+          ? { rationale: [...entry.rationales].sort(compare).join(" ") }
+          : {}
+      ),
+      attributions
     });
   }
+  assertNoUnusedLicenseOverrides(overrides, usedOverrides);
   return packages;
 }
 
@@ -210,11 +286,15 @@ function renderNotices(packages) {
     lines.push(`License: ${entry.license}`);
     if (entry.source) lines.push(`Source: ${entry.source}`);
     lines.push(`Included in: ${entry.surfaces.join(", ")}`);
-    for (const license of entry.texts) {
+    if (entry.rationale) lines.push(`Runtime rationale: ${entry.rationale}`);
+    for (const attribution of entry.attributions) {
       lines.push("");
-      lines.push(`### ${license.file}`);
+      lines.push(`Attribution: ${attribution.kind} ${attribution.source}`);
+      if (attribution.reason) lines.push(`Audit reason: ${attribution.reason}`);
       lines.push("");
-      lines.push(license.text);
+      lines.push(`### ${attribution.source}`);
+      lines.push("");
+      lines.push(attribution.text);
     }
     lines.push("");
   }
@@ -253,10 +333,15 @@ const dashboardAnalysis = await build({
 if (!cliBuild.metafile || !dashboardAnalysis.metafile) {
   throw new Error("Runtime dependency analysis did not produce an esbuild metafile");
 }
-const dependencies = await runtimeClosure(cliBuild.metafile, dashboardAnalysis.metafile);
+await assertViteModulePreloadRuntime();
+const overrides = validateLicenseOverrides(await readJson(licenseOverridesPath));
+const dependencies = await runtimeClosure(cliBuild.metafile, dashboardAnalysis.metafile, overrides);
 const publicManifest = {
   schemaVersion: 1,
-  packages: dependencies.map(({ texts: _texts, identifier: _identifier, ...entry }) => entry)
+  packages: dependencies.map(({ identifier: _identifier, attributions, ...entry }) => ({
+    ...entry,
+    attributions: attributions.map(({ text: _text, ...attribution }) => attribution)
+  }))
 };
 await writeFile(manifestPath, `${JSON.stringify(publicManifest, null, 2)}\n`, "utf8");
 await writeFile(noticesPath, renderNotices(dependencies), "utf8");

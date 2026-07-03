@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
 
 const BLOCK_SIZE = 512;
@@ -11,6 +12,18 @@ const REQUIRED_FILES = [
   "package/dist/third-party-manifest.json",
   "package/package.json"
 ];
+const TRUSTED_FILES = [
+  ["package/LICENSE", "LICENSE"],
+  ["package/README.md", "README.md"],
+  ["package/dist/THIRD_PARTY_NOTICES.txt", "dist/THIRD_PARTY_NOTICES.txt"],
+  ["package/dist/third-party-manifest.json", "dist/third-party-manifest.json"]
+];
+const REQUIRED_RUNTIME_ROOTS = ["commander", "fastify", "react", "vite", "yaml", "zod"];
+const defaultTrustedPackageDirectory = fileURLToPath(new URL("../", import.meta.url));
+
+function compare(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function field(block, start, length) {
   return block.subarray(start, start + length).toString("utf8").replace(/\0.*$/s, "");
@@ -36,14 +49,23 @@ function parsePax(source) {
   while (offset < source.length) {
     const separator = source.indexOf(0x20, offset);
     if (separator < 0) throw new Error("Malformed PAX record length");
-    const length = Number.parseInt(source.subarray(offset, separator).toString("ascii"), 10);
+    const lengthBytes = source.subarray(offset, separator);
+    if (!/^[1-9][0-9]*$/.test(lengthBytes.toString("ascii"))) {
+      throw new Error("Malformed PAX record length");
+    }
+    const length = Number.parseInt(lengthBytes.toString("ascii"), 10);
     if (!Number.isSafeInteger(length) || length <= 0 || offset + length > source.length) {
       throw new Error("Malformed PAX record size");
+    }
+    if (source[offset + length - 1] !== 0x0a) {
+      throw new Error("Malformed PAX record newline terminator");
     }
     const record = source.subarray(separator + 1, offset + length - 1).toString("utf8");
     const equals = record.indexOf("=");
     if (equals < 1) throw new Error("Malformed PAX record value");
-    values[record.slice(0, equals)] = record.slice(equals + 1);
+    const key = record.slice(0, equals);
+    if (/\0|\r|\n/.test(key)) throw new Error("Malformed PAX record key");
+    values[key] = record.slice(equals + 1);
     offset += length;
   }
   return values;
@@ -69,24 +91,43 @@ function safeArchivePath(input) {
 
 export function parseTarEntries(compressed) {
   const archive = gunzipSync(compressed);
+  if (archive.length % BLOCK_SIZE !== 0) {
+    throw new Error("Tar archive has a partial trailing block");
+  }
   const files = new Map();
+  const seenPaths = new Set();
   let offset = 0;
   let zeroBlocks = 0;
+  let ended = false;
   let nextPath;
-  let pax = {};
+  let globalPax = {};
+  let localPax = {};
   while (offset + BLOCK_SIZE <= archive.length) {
     const header = archive.subarray(offset, offset + BLOCK_SIZE);
     offset += BLOCK_SIZE;
-    if (header.every((byte) => byte === 0)) {
-      zeroBlocks += 1;
-      if (zeroBlocks === 2) break;
+    if (ended) {
+      if (!header.every((byte) => byte === 0)) {
+        throw new Error("Tar archive contains non-zero trailing data after end markers");
+      }
       continue;
     }
-    zeroBlocks = 0;
+    if (header.every((byte) => byte === 0)) {
+      zeroBlocks += 1;
+      if (zeroBlocks === 2) ended = true;
+      continue;
+    }
+    if (zeroBlocks > 0) throw new Error("Tar archive is missing two consecutive end markers");
     const expectedChecksum = octal(header, 148, 8);
     if (checksum(header) !== expectedChecksum) throw new Error("Tar header checksum mismatch");
-    const size = octal(header, 124, 12);
     const type = String.fromCharCode(header[156] || 0);
+    const metadata = { ...globalPax, ...localPax };
+    const headerSize = octal(header, 124, 12);
+    const size = !["x", "g", "L"].includes(type) && metadata.size !== undefined
+      ? Number(metadata.size)
+      : headerSize;
+    if (!Number.isSafeInteger(size) || size < 0 || `${size}` !== `${metadata.size ?? size}`) {
+      throw new Error("Invalid PAX entry size");
+    }
     const rawName = field(header, 0, 100);
     const prefix = field(header, 345, 155);
     const headerPath = prefix ? `${prefix}/${rawName}` : rawName;
@@ -94,22 +135,31 @@ export function parseTarEntries(compressed) {
     const content = archive.subarray(offset, offset + size);
     offset += Math.ceil(size / BLOCK_SIZE) * BLOCK_SIZE;
 
-    if (type === "x" || type === "g") {
-      pax = { ...pax, ...parsePax(content) };
+    if (type === "x") {
+      localPax = parsePax(content);
+      continue;
+    }
+    if (type === "g") {
+      globalPax = { ...globalPax, ...parsePax(content) };
       continue;
     }
     if (type === "L") {
-      nextPath = content.toString("utf8").replace(/\0.*$/s, "").trimEnd();
+      nextPath = content.toString("utf8").replace(/\0.*$/s, "");
       continue;
     }
-    const path = safeArchivePath(pax.path ?? nextPath ?? headerPath);
-    pax = {};
+    if (!["0", "\0", "", "5"].includes(type)) {
+      throw new Error(`Unsupported tar entry type '${type}'`);
+    }
+    const path = safeArchivePath(metadata.path ?? nextPath ?? headerPath);
+    localPax = {};
     nextPath = undefined;
+    if (seenPaths.has(path)) throw new Error(`Duplicate tar path '${path}'`);
+    seenPaths.add(path);
     if (type === "0" || type === "\0" || type === "") {
-      if (files.has(path)) throw new Error(`Duplicate tar file '${path}'`);
       files.set(path, Buffer.from(content));
     }
   }
+  if (!ended) throw new Error("Tar archive is missing two end marker blocks");
   return files;
 }
 
@@ -137,10 +187,65 @@ function assertMetadata(packageJson) {
   }
 }
 
-export async function verifyPackedArtifact(path) {
+async function trustedBaseline(trustedPackageDirectory) {
+  const files = new Map();
+  for (const [archivePath, relativePath] of TRUSTED_FILES) {
+    const value = await readFile(join(trustedPackageDirectory, relativePath));
+    if (value.length === 0) throw new Error(`Trusted expected file is empty: ${relativePath}`);
+    files.set(archivePath, value);
+  }
+  const manifest = JSON.parse(
+    files.get("package/dist/third-party-manifest.json").toString("utf8")
+  );
+  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.packages) || manifest.packages.length === 0) {
+    throw new Error("Trusted expected dependency manifest is empty or invalid");
+  }
+  const identifiers = [];
+  const names = new Set();
+  for (const entry of manifest.packages) {
+    if (
+      typeof entry?.name !== "string"
+      || typeof entry?.version !== "string"
+      || typeof entry?.license !== "string"
+      || !Array.isArray(entry?.attributions)
+      || entry.attributions.length === 0
+    ) {
+      throw new Error("Trusted expected dependency manifest has incomplete attribution");
+    }
+    names.add(entry.name);
+    identifiers.push(`${entry.name}@${entry.version}`);
+  }
+  const sorted = [...identifiers].sort(compare);
+  if (new Set(identifiers).size !== identifiers.length || JSON.stringify(identifiers) !== JSON.stringify(sorted)) {
+    throw new Error("Trusted expected dependency manifest is not a unique deterministic set");
+  }
+  for (const name of REQUIRED_RUNTIME_ROOTS) {
+    if (!names.has(name)) throw new Error(`Trusted expected dependency manifest is missing ${name}`);
+  }
+  const notices = files.get("package/dist/THIRD_PARTY_NOTICES.txt").toString("utf8");
+  if (notices.trim() === "# Third-Party Notices") {
+    throw new Error("Trusted expected third-party notices are empty");
+  }
+  for (const identifier of identifiers) {
+    if (!notices.includes(`## ${identifier}\n`)) {
+      throw new Error(`Trusted expected notices do not cover ${identifier}`);
+    }
+  }
+  return { files, identifiers };
+}
+
+export async function verifyPackedArtifact(path, options = {}) {
   const files = parseTarEntries(await readFile(path));
   for (const required of REQUIRED_FILES) {
     if (!files.has(required)) throw new Error(`Missing ${required}`);
+  }
+  const trusted = await trustedBaseline(
+    options.trustedPackageDirectory ?? defaultTrustedPackageDirectory
+  );
+  for (const [archivePath, expected] of trusted.files) {
+    if (!files.get(archivePath)?.equals(expected)) {
+      throw new Error(`Packed ${archivePath} differs from the trusted expected build output`);
+    }
   }
   const packageJson = jsonFile(files, "package/package.json");
   assertMetadata(packageJson);
@@ -159,7 +264,7 @@ export async function verifyPackedArtifact(path) {
     }
     return `${entry.name}@${entry.version}`;
   });
-  const sorted = [...identifiers].sort((left, right) => left.localeCompare(right));
+  const sorted = [...identifiers].sort(compare);
   if (new Set(identifiers).size !== identifiers.length || JSON.stringify(identifiers) !== JSON.stringify(sorted)) {
     throw new Error("Third-party manifest must be unique and deterministically sorted");
   }
@@ -171,6 +276,9 @@ export async function verifyPackedArtifact(path) {
   }
   if (/(?:^|[\s('"`])(?:\/[Uu]sers\/|\/home\/|\/private\/|\/tmp\/|[A-Za-z]:[\\/])/m.test(notices)) {
     throw new Error("Third-party notices contain an absolute local path");
+  }
+  if (JSON.stringify(identifiers) !== JSON.stringify(trusted.identifiers)) {
+    throw new Error("Packed dependency manifest differs from the trusted expected package set");
   }
   return { files: files.size, packages: identifiers.length };
 }

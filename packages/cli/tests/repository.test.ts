@@ -208,8 +208,10 @@ describe("open-source repository", () => {
   it("verifies dry-run and real packed artifacts in clean-checkout CI", async () => {
     const workflow = await readFile(join(root, ".github/workflows/ci.yml"), "utf8");
     expect(workflow).toContain("npm pack --dry-run --ignore-scripts --json");
+    expect(workflow).toContain("npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm");
     expect(workflow).toContain("verify-packed-artifact.mjs");
-    expect(workflow).toContain("artifacts/skill-steward-");
+    expect(workflow).toContain("artifacts/npm/skill-steward-");
+    expect(workflow).toContain("artifacts/pnpm/skill-steward-");
     expect(workflow).toContain("windows-smoke:");
   });
 
