@@ -27,6 +27,7 @@ import {
   readCatalogSnapshot,
   readCatalogSources,
   ReviewedPlanStoreError,
+  withInstallationMutationLease,
   writeLatestReport,
   writeReviewedPlan,
   type ReviewedPlanEnvelope
@@ -493,92 +494,99 @@ async function applyInstallation(
     );
   }
   const contextNow = context.now;
-  const now = context.now?.() ?? new Date();
-  await staging.cleanupExpired();
-  let envelope: ReviewedPlanEnvelope<unknown>;
-  try {
-    envelope = await claimReviewedPlan(
-      context.stateDir,
-      { id: planId, kind: "installation", now }
-    );
-  } catch (error) {
-    if (
-      error instanceof ReviewedPlanStoreError
-      && (
-        error.code === "REVIEWED_PLAN_INVALID"
-        || error.code === "REVIEWED_PLAN_EXPIRED"
-      )
-    ) {
-      await expireAfterClaim(staging, planId, context);
+  const transaction = await withInstallationMutationLease(context.stateDir, async () => {
+    const now = context.now?.() ?? new Date();
+    await staging.cleanupExpired();
+    let envelope: ReviewedPlanEnvelope<unknown>;
+    try {
+      envelope = await claimReviewedPlan(
+        context.stateDir,
+        { id: planId, kind: "installation", now }
+      );
+    } catch (error) {
+      if (
+        error instanceof ReviewedPlanStoreError
+        && (
+          error.code === "REVIEWED_PLAN_INVALID"
+          || error.code === "REVIEWED_PLAN_EXPIRED"
+        )
+      ) {
+        await expireAfterClaim(staging, planId, context);
+      }
+      if (
+        error instanceof ReviewedPlanStoreError
+        && (
+          error.code === "REVIEWED_PLAN_INVALID"
+          || error.code === "REVIEWED_PLAN_EXPIRED"
+          || error.code === "REVIEWED_PLAN_KIND_MISMATCH"
+        )
+      ) {
+        throw consumedReviewedPlanError(error);
+      }
+      throw error;
     }
-    if (
-      error instanceof ReviewedPlanStoreError
-      && (
-        error.code === "REVIEWED_PLAN_INVALID"
-        || error.code === "REVIEWED_PLAN_EXPIRED"
-        || error.code === "REVIEWED_PLAN_KIND_MISMATCH"
-      )
-    ) {
-      throw consumedReviewedPlanError(error);
+    let payload: InstallationReviewedPayload;
+    let record: InstallationRecord;
+    try {
+      ({ payload, record } = await applyClaimedReviewedPlan(async () => {
+        const parsed = parseReviewedPayload(envelope.payload);
+        if (!matchesEnvelopeIdentity(envelope, parsed.plan)) {
+          throw new InstallCommandError(
+            "REVIEWED_PLAN_INVALID",
+            "Stored installation plan identity does not match its envelope"
+          );
+        }
+        const reviewedDestination = await resolveVerifiedInstallDestination({
+          route: parsed.route,
+          home: context.home
+        });
+        if (reviewedDestination.target !== parsed.plan.destination) {
+          throw new InstallCommandError(
+            "REVIEWED_PLAN_INVALID",
+            "Stored installation destination does not match its reviewed route"
+          );
+        }
+        const preview = await staging.resolve(envelope.id);
+        await assertContainedSource(preview.directory, parsed.plan.source);
+        const currentDestination = await resolveVerifiedInstallDestination({
+          route: parsed.route,
+          home: context.home
+        });
+        if (currentDestination.target !== parsed.plan.destination) {
+          throw new InstallCommandError(
+            "REVIEWED_PLAN_INVALID",
+            "Installation destination changed from its reviewed route"
+          );
+        }
+        return {
+          payload: parsed,
+          record: await applyInstallationPlan(parsed.plan, {
+            stateDirectory: context.stateDir,
+            ...(contextNow ? { now: () => contextNow().getTime() } : {})
+          })
+        };
+      }));
+    } catch (error) {
+      await expireAfterClaim(staging, envelope.id, context);
+      throw error;
     }
-    throw error;
-  }
-  let payload: InstallationReviewedPayload;
-  let record: InstallationRecord;
-  try {
-    ({ payload, record } = await applyClaimedReviewedPlan(async () => {
-      const parsed = parseReviewedPayload(envelope.payload);
-      if (!matchesEnvelopeIdentity(envelope, parsed.plan)) {
-        throw new InstallCommandError(
-          "REVIEWED_PLAN_INVALID",
-          "Stored installation plan identity does not match its envelope"
-        );
-      }
-      const reviewedDestination = await resolveVerifiedInstallDestination({
-        route: parsed.route,
-        home: context.home
-      });
-      if (reviewedDestination.target !== parsed.plan.destination) {
-        throw new InstallCommandError(
-          "REVIEWED_PLAN_INVALID",
-          "Stored installation destination does not match its reviewed route"
-        );
-      }
-      const preview = await staging.resolve(envelope.id);
-      await assertContainedSource(preview.directory, parsed.plan.source);
-      const currentDestination = await resolveVerifiedInstallDestination({
-        route: parsed.route,
-        home: context.home
-      });
-      if (currentDestination.target !== parsed.plan.destination) {
-        throw new InstallCommandError(
-          "REVIEWED_PLAN_INVALID",
-          "Installation destination changed from its reviewed route"
-        );
-      }
-      return {
-        payload: parsed,
-        record: await applyInstallationPlan(parsed.plan, {
-          stateDirectory: context.stateDir,
-          ...(contextNow ? { now: () => contextNow().getTime() } : {})
-        })
-      };
-    }));
-  } catch (error) {
     await expireAfterClaim(staging, envelope.id, context);
-    throw error;
-  }
-  await expireAfterClaim(staging, envelope.id, context);
-  const refreshResult = await refreshAfterCommit(payload.route.workspace, context);
+    return {
+      envelope,
+      payload,
+      record,
+      refreshResult: await refreshAfterCommit(payload.route.workspace, context)
+    };
+  });
   context.stdout(options.json
     ? `${JSON.stringify({
-        record,
-        planId: envelope.id,
-        ...refreshResult
+        record: transaction.record,
+        planId: transaction.envelope.id,
+        ...transaction.refreshResult
       }, null, 2)}\n`
     : [
-        `Installed '${terminalSafeText(payload.candidateName)}' (${terminalSafeText(record.id)}).`,
-        `Plan ID: ${terminalSafeText(envelope.id)}`,
+        `Installed '${terminalSafeText(transaction.payload.candidateName)}' (${terminalSafeText(transaction.record.id)}).`,
+        `Plan ID: ${terminalSafeText(transaction.envelope.id)}`,
         ""
       ].join("\n")
   );

@@ -100,6 +100,12 @@ export async function applyInstallationPlan(
   let backupMoved = false;
   let installed = false;
   try {
+    if ((await pathFingerprint(plan.destination)) !== plan.expectedDestinationFingerprint) {
+      throw new InstallerError(
+        "DESTINATION_DRIFT",
+        "Installation destination changed while the reviewed copy was prepared"
+      );
+    }
     if (backupDirectory) {
       await mkdir(dirname(backupDirectory), { recursive: true, mode: 0o700 });
       await rename(plan.destination, backupDirectory);

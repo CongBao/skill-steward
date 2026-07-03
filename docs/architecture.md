@@ -35,7 +35,7 @@ flowchart LR
 - `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English `do not use ... for/when ...` routing clauses, and installation penalties. Algorithm v4 requires at least two shared task terms for non-name matches and uses word-level Chinese routing instead of isolated-character overlap. It has no filesystem or network I/O.
 - `packages/evidence` defines strict content-free evidence, policy, lifecycle, metric, breakdown, and readiness schemas plus pure aggregation.
 - `packages/integrations` defines compact Hook protocols, the shared capability matrix, transactional Codex/Claude/Copilot configuration, readiness rollback, trust status, and companion-Skill file operations.
-- `packages/store` owns validated atomic reports, private reviewed-plan envelopes, catalog metadata, bounded history, labels, fragment-based integration records, the integration mutation lease, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
+- `packages/store` owns validated atomic reports, private reviewed-plan envelopes, catalog metadata, bounded history, labels, fragment-based integration records, the shared portfolio mutation lease, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
 - `packages/installer` owns persistent private source staging, ZIP/Git safeguards, inspection, destination plans, atomic transactions, journaling, and rollback.
 - `packages/governance` owns exact quarantine/restore plans, verified vault transactions, failure recovery, and the append-only governance journal.
 - `packages/dashboard-server` composes those packages behind a loopback security boundary and versioned API.
@@ -68,9 +68,11 @@ CLI installation, integration apply, evidence-policy, evidence-erasure, quaranti
 
 Catalog installation keeps the inspected source under `staging/<plan-id>/` across processes. Apply derives the destination again from the reviewed Harness, scope, workspace, and target name; verifies physical containment plus source and destination fingerprints; and removes only its own staging directory after success, terminal failure, or proven expiry. It does not fetch the source again at apply time.
 
+Installation apply and rollback use the same state-scoped cross-process lease as managed integration changes. CLI apply enters the lease before claiming its single-use plan and holds it through commit, journal append, staging cleanup, and portfolio refresh; dashboard commit and rollback use the same coordinator. After copying and verifying the source, the installer rechecks the destination immediately before backup and replacement. A stale concurrent plan therefore stops on destination drift, while a bounded busy result leaves an unclaimed CLI plan available for retry.
+
 ## Integration readiness and recovery
 
-Integration apply acquires `integration-mutation.lease` before claiming a reviewed plan. Integration remove acquires the same lease before changing managed files. The state-scoped lease serializes CLI and dashboard mutations across processes and remains owned through configuration, journal commit, initial scan, compensation, and shared companion cleanup. A busy apply stops without consuming its waiting plan; after entering the lease, it revalidates the plan so stale concurrent work fails on drift rather than racing a completed transaction.
+Integration apply acquires `integration-mutation.lease` before claiming a reviewed plan. Integration remove, installation apply, and installation rollback acquire that same physical lease before changing managed files. The state-scoped lease serializes CLI and dashboard portfolio mutations across processes. Integration holds it through configuration, journal commit, initial scan, compensation, and shared companion cleanup. A busy apply stops without consuming its waiting plan; after entering the lease, it revalidates the plan so stale concurrent work fails on drift rather than racing a completed transaction.
 
 Successful apply persists an initial portfolio report before reporting ready. If that readiness scan fails, the operation restores configuration and removes only the companion Skill created by that apply when both actions can be proven safe. Uncertain journal or compensation state is reported as rollback-incomplete and retains artifacts needed by an active Hook.
 
@@ -102,7 +104,7 @@ The default state directory is `~/.skill-steward`, configurable with `SKILL_STEW
 | `reviewed-plans/` | Private, expiring, atomically claimed exact mutation plans |
 | `staging/` | Private inspected installation sources retained until apply or proven expiry |
 | `integration-records/` | Immutable integration journal fragments with bounded cleanup |
-| `integration-mutation.lease` | Private cross-process owner and heartbeat for integration mutations |
+| `integration-mutation.lease` | Private cross-process owner and heartbeat shared by installation and integration mutations |
 | `integrations.json` | Read-compatible legacy integration journal, migrated through current readers |
 | `installations.jsonl` | Installation and rollback transaction journal |
 | `governance.jsonl` | Append-only quarantine, restore, and failed-boundary records |

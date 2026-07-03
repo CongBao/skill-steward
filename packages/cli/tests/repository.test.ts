@@ -126,6 +126,9 @@ describe("open-source repository", () => {
     expect(readme).toMatch(
       /A busy integration apply[^.]*does not consume its reviewed plan/i
     );
+    expect(readme).toMatch(
+      /Installation apply and rollback share one state-scoped cross-process lease/i
+    );
     expect(readme).toMatch(/A busy removal[^.]*before changing files/i);
     expect(readme).toMatch(
       /CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use/
@@ -207,6 +210,7 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("当前状态：活跃 Alpha");
     expect(chineseReadme).toContain("新增 Harness 集成");
     expect(chineseReadme).toMatch(/新增集成遇到忙碌[^。]*不会消耗[^。]*计划/);
+    expect(chineseReadme).toMatch(/安装、回滚和 Harness 集成共用同一把状态级跨进程锁/);
     expect(chineseReadme).toMatch(/移除集成遇到忙碌[^。]*改写配置之前停止/);
     expect(chineseReadme).toMatch(
       /CLI 的安装、集成应用、证据策略、证据清除、隔离和恢复计划保存在私有目录、会过期且只能使用一次/
@@ -336,8 +340,9 @@ describe("open-source repository", () => {
       /Integration apply acquires `integration-mutation\.lease` before claiming a reviewed plan/
     );
     expect(architecture).toMatch(
-      /Integration remove acquires the same lease before changing managed files/
+      /Integration remove, installation apply, and installation rollback acquire that same physical lease/
     );
+    expect(architecture).toMatch(/rechecks the destination immediately before backup and replacement/);
     expect(architecture).not.toMatch(/record fingerprints in `integrations\.json`/);
     expect(architecture).toMatch(/CLI installation, integration apply, evidence-policy/);
     expect(architecture).not.toMatch(/OpenSpec|Superpowers/);
@@ -352,6 +357,8 @@ describe("open-source repository", () => {
     expect(alphaTesting).toContain("runtime-audit.json");
     expect(alphaTesting).toMatch(/npm and pnpm tarballs/i);
     expect(alphaTesting).toMatch(/same operating-system user/i);
+    expect(alphaTesting).toContain("## Reviewed installation concurrency");
+    expect(alphaTesting).toMatch(/Exactly one process must succeed/);
     expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);
     for (const command of [
       "CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts",

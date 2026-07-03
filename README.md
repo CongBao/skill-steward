@@ -238,6 +238,8 @@ skill-steward install --plan <id> --confirm
 
 The preview keeps the inspected source in private staging until the plan is applied or expires. Apply reuses that staged content in a later process, checks source and destination fingerprints again, and never restages from the network behind the reviewed plan.
 
+Installation apply and rollback share one state-scoped cross-process lease with managed Harness changes. The CLI acquires it before consuming the reviewed plan and checks the destination again after preparing the verified copy. Concurrent replacements therefore serialize: a stale waiter stops on drift instead of overwriting the newer installation or recording the wrong backup.
+
 ZIP traversal, absolute paths, links, case-folding collisions, excessive entries, and expansion limits are rejected. Git staging is non-interactive, disables repository Hooks and submodules, and never executes source content.
 
 ## Reversible governance
@@ -277,7 +279,7 @@ Codex, Claude Code, and GitHub Copilot already own the execution environment and
 - Sanitized export and API responses never include the private HMAC salt.
 - Installation-source scripts, package managers, build commands, repository Hooks, and submodules are not executed.
 - CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use; confirmation never regenerates a plan from request arguments.
-- Integration apply uses a cross-process mutation lease and persists a cached portfolio before reporting ready.
+- Installation apply/rollback and managed integration changes share a cross-process mutation lease; integration apply also persists a cached portfolio before reporting ready.
 - Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
 - Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.
 

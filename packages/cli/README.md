@@ -44,6 +44,8 @@ skill-steward install --plan <id> --confirm
 
 The same `--plan <id> --confirm` contract applies to integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use. Integration removal remains an explicit Harness-scoped action:
 
+Installation apply, rollback, and managed integration changes share one state-scoped cross-process lease. A concurrent stale installation plan is revalidated after entering the lease and stops on destination drift instead of overwriting a newer commit.
+
 ```bash
 skill-steward integrate remove --harness <id> --confirm
 ```

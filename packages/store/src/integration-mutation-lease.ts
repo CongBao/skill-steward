@@ -597,3 +597,81 @@ export async function withIntegrationMutationLease<T>(
     }
   }
 }
+
+export type InstallationMutationLeaseOptions = IntegrationMutationLeaseOptions;
+
+type InstallationLeaseErrorCode =
+  | "INSTALLATION_BUSY"
+  | "INSTALLATION_LEASE_LOST"
+  | "INSTALLATION_LEASE_UNSAFE";
+
+export class InstallationMutationLeaseError extends Error {
+  public readonly code: InstallationLeaseErrorCode;
+
+  constructor(
+    code: InstallationLeaseErrorCode,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "InstallationMutationLeaseError";
+    this.code = code;
+  }
+}
+
+function installationLeaseError(error: IntegrationMutationLeaseError): InstallationMutationLeaseError {
+  switch (error.code) {
+    case "INTEGRATION_BUSY":
+      return new InstallationMutationLeaseError(
+        "INSTALLATION_BUSY",
+        "Another portfolio mutation is already in progress; retry this same reviewed plan after it finishes",
+        { cause: error }
+      );
+    case "INTEGRATION_LEASE_LOST":
+      return new InstallationMutationLeaseError(
+        "INSTALLATION_LEASE_LOST",
+        "The shared portfolio mutation lease was lost",
+        { cause: error }
+      );
+    case "INTEGRATION_LEASE_UNSAFE":
+      return new InstallationMutationLeaseError(
+        "INSTALLATION_LEASE_UNSAFE",
+        "The shared portfolio mutation lease state is unsafe",
+        { cause: error }
+      );
+  }
+}
+
+function translateInstallationLeaseError(error: unknown): unknown {
+  if (error instanceof IntegrationMutationLeaseError) {
+    return installationLeaseError(error);
+  }
+  if (error instanceof AggregateError) {
+    const translated = error.errors.map(translateInstallationLeaseError);
+    if (translated.every((value, index) => value === error.errors[index])) {
+      return error;
+    }
+    return new AggregateError(
+      translated,
+      "Installation mutation and lease release both failed",
+      { cause: error }
+    );
+  }
+  return error;
+}
+
+/**
+ * Serializes installations with every other portfolio mutation by reusing the
+ * same cross-process lease as Harness integration changes.
+ */
+export async function withInstallationMutationLease<T>(
+  stateDirectory: string,
+  operation: () => Promise<T>,
+  options: InstallationMutationLeaseOptions = {}
+): Promise<T> {
+  try {
+    return await withIntegrationMutationLease(stateDirectory, operation, options);
+  } catch (error) {
+    throw translateInstallationLeaseError(error);
+  }
+}

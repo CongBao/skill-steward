@@ -6,13 +6,13 @@ Alpha.3 verification completed on **2026-07-04 CST**; the document retains its o
 
 The Alpha.3 build is ready for continued public Alpha use and for daily dogfooding across its implemented scope. It is easy to understand after the new three-job introduction, produces useful first value from one scan, connects its recommendation flow to real Harness prompts, and puts unusually strong review, drift refusal, recovery, and privacy boundaries around local changes. It is worth keeping installed for portfolio review, explicit task Preflight, catalog discovery, and reversible Skill governance.
 
-The current product score is **8.5/10 under the expanded Alpha.3 qualitative rubric below**. The Alpha.2 post-fix score of **7.9/10** later in this document uses a different weighted rubric and is retained as historical evidence, not as a directly comparable numeric baseline. Alpha.3 adds persistent exact action plans, first-Hook readiness, real Harness/delivery evidence attribution, recommendation-to-install conversion, package-license completeness, responsive KPI configuration, and closes two defects found during installed-artifact dogfooding. The remaining ceiling is semantic task routing and native plugin inventory coverage, not the trust mechanics around the actions already supported.
+The current product score is **8.5/10 under the expanded Alpha.3 qualitative rubric below**. The Alpha.2 post-fix score of **7.9/10** later in this document uses a different weighted rubric and is retained as historical evidence, not as a directly comparable numeric baseline. Alpha.3 adds persistent exact action plans, first-Hook readiness, real Harness/delivery evidence attribution, recommendation-to-install conversion, package-license completeness, responsive KPI configuration, and closes three defects found during installed-artifact dogfooding and final review. The remaining ceiling is semantic task routing and native plugin inventory coverage, not the trust mechanics around the actions already supported.
 
 This verdict does not claim Beta completion. The next competitive phase is native plugin/Skill inventory coverage and visible coverage accounting, followed by a broader labeled recommendation corpus. Skill Steward should remain a Harness companion rather than becoming a prompt-running Harness itself.
 
 ## Alpha.3 scope and evidence
 
-The stage review used commit `ec65f4e` and the exact verified package `skill-steward-0.5.0-alpha.3.tgz` with SHA-256 `093c490271c0545404aa770352b8ff96e231da12ed82da94e2df2242db4900e9`. The tarball contained 11 expected package files and complete notices for 73 runtime packages, was installed globally, and reported `0.5.0-alpha.3` from `$HOME/.npm-global/bin/skill-steward`.
+The stage review used the Alpha.3 implementation through commit `ec65f4e` and the exact verified package `skill-steward-0.5.0-alpha.3.tgz` with SHA-256 `e85ec2edbe567731f10e1e588e6528bc0963560d0a2db98370d0f3ccbd0b4fd0`. The tarball contained 11 expected package files and complete notices for 73 runtime packages, was installed globally, and reported `0.5.0-alpha.3` from `$HOME/.npm-global/bin/skill-steward`.
 
 Hands-on work used an isolated HOME and state directory rather than test-only service mocks:
 
@@ -24,7 +24,7 @@ Hands-on work used an isolated HOME and state directory rather than test-only se
 - Responsive browser review covered 720, 866, 1100, 1280, and 1600 px. No page developed horizontal overflow. A fresh wide origin opened with a 210 px sidebar, automatically collapsed to 62 px at 720 px, and retained manual sidebar choices.
 - Settings exposed 16 KPI definitions with five recommended defaults. Selecting eight KPIs produced eight real Overview cards at both 720 and 1600 px without overflow.
 - English and Chinese Overview, Preflight, Evidence, Skills, History, and Settings states were inspected from the installed package. Browser logs contained no errors from the reviewed dashboard origin.
-- Full workspace verification rebuilt and typechecked all 13 projects and passed **530 tests**; four Windows-only tests were skipped on macOS and remain covered by the dedicated Windows CI job.
+- Full workspace verification rebuilt and typechecked all 13 projects and passed **536 tests**; four Windows-only tests were skipped on macOS and remain covered by the dedicated Windows CI job.
 
 ## Alpha.3 dogfood findings
 
@@ -32,11 +32,12 @@ Hands-on work used an isolated HOME and state directory rather than test-only se
 |---|---|---|
 | P1 | Long Chinese tasks expanded into single characters and arbitrary adjacent pairs, inflating task terms and giving an unrelated résumé Skill a false match. | Algorithm v4 now uses word-level Simplified- and Traditional-Chinese routing, removes generic workflow framing, preserves meaningful English `Skill` intent, and keeps non-reference ICU/CLDR/Unicode results in a separate algorithm evidence identity. |
 | P1 | The Evidence lifecycle badge counted all evidence events while its list counted only lifecycle reasons, producing a non-zero badge beside “No lifecycle events.” | The badge now sums lifecycle reasons only; a fixture with 30 total events and 21 lifecycle reasons locks the distinction. |
+| P1 | Two valid reviewed replacement plans could pass the same early destination check in different processes, both report success, and leave the second backup/journal describing the wrong predecessor. Dashboard installation and rollback also bypassed the integration mutation lease. | CLI and Dashboard installation apply/rollback now share the state-scoped cross-process lease with managed integrations. CLI locks before claim, and the installer rechecks destination drift after the verified copy. A real two-process regression proves exactly one replacement commits and its backup still matches the reviewed predecessor. |
 | P2 | Capability gaps are still lexical and ordered by task appearance, so labels such as `capture` can be less helpful than a semantic capability phrase. | Accepted for this deterministic release; evaluate semantic or hybrid gap labels only against labeled tasks. |
 | P2 | “Active Harnesses” measures Harness visibility in the scanned portfolio, not installed integration trust. | Keep integration truth in Settings for Alpha; rename or add KPI help when coverage accounting is implemented. |
 | P2 | Scan History shows portfolio snapshots but does not combine install, governance, policy, and integration transactions into one operational timeline. | Retain separate trusted journals now; consider a read-only unified activity view after native plugin coverage. |
 
-There were no open P0 findings and no open P1 regressions inside the Alpha.3 trust-loop stage. Both stage P1 findings were reproduced from the installed package, fixed with failing tests, re-reviewed independently, rebuilt into a new tarball, reinstalled, and verified again in the browser.
+There were no open P0 findings and no open P1 regressions inside the Alpha.3 trust-loop stage. All three stage P1 findings were reproduced or independently demonstrated, fixed with failing tests, and included in the full verification and review gates. The concurrency fix was rebuilt into the exact tarball named above, reinstalled globally, and checked against the same bundled `main.js` bytes as the verified package.
 
 The broader product still has one open **P1 before Beta**: native plugin manifests and nested Skill roots are not yet inventoried comprehensively enough to prove what each Harness can actually see. That gap is the next development phase, not a closed Alpha.3 item. The P2 items in the table remain accepted Alpha limitations; semantic ranking and unified activity history follow after coverage is explicit.
 
@@ -47,7 +48,7 @@ The broader product still has one open **P1 before Beta**: native plugin manifes
 | Comprehension | 8.7/10 | The three jobs and non-Harness boundary are clear; some KPI and History semantics still need short explanations. |
 | Time to first value | 8.3/10 | Scan and explicit Preflight are fast and local; npm publication and a single release install command remain absent. |
 | Recommendation quality | 7.8/10 | Real installed/available comparison, marginal value, risks, and Chinese routing work; cross-language semantics and broad labeled evidence do not yet exist. |
-| Trust and reversibility | 9.2/10 | Persistent exact plans, single-use claim, source/destination drift refusal, verified staging, quarantine/restore, rollback, and explicit trust states are the strongest part of the product. |
+| Trust and reversibility | 9.3/10 | Persistent exact plans, single-use claim, shared cross-process mutation serialization, post-copy drift refusal, verified staging, quarantine/restore, rollback, and explicit trust states are the strongest part of the product. |
 | Harness integration | 8.7/10 | Codex and Claude recommend-and-observe, Copilot is honestly observe-only, and first-prompt readiness is real; native plugin inventory remains incomplete. |
 | Evidence usefulness | 8.6/10 | Harness/delivery/algorithm attribution and 1/1 provenance conversion were verified; evidence remains explicitly descriptive rather than an automatic tuner. |
 | Interface and configuration | 8.8/10 | Adaptive sidebar behavior, 16 configurable KPIs, bilingual states, and all five viewport checks are strong. |

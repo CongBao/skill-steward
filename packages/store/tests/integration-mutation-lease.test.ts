@@ -34,6 +34,9 @@ type WithLease = <T>(
 const withLease = (store as unknown as {
   withIntegrationMutationLease: WithLease;
 }).withIntegrationMutationLease;
+const withInstallationLease = (store as unknown as {
+  withInstallationMutationLease: WithLease;
+}).withInstallationMutationLease;
 const leaseFixture = fileURLToPath(
   new URL("./fixtures/integration-lease-holder.mjs", import.meta.url)
 );
@@ -132,6 +135,45 @@ describe("integration mutation lease", () => {
       throw new Error("operation failed");
     })).rejects.toThrow("operation failed");
     await expect(withLease(state, async () => "entered")).resolves.toBe("entered");
+  });
+
+  it("shares one portfolio lock with installations and reports the installation domain", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-installation-lease-busy-"));
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const first = withLease(state, () => firstGate, {
+      waitMs: 1_000,
+      pollMs: 2,
+      heartbeatMs: 5
+    });
+    await waitFor(join(state, "integration-mutation.lease"));
+
+    await expect(withInstallationLease(state, async () => undefined, {
+      waitMs: 15,
+      pollMs: 2,
+      heartbeatMs: 5
+    })).rejects.toMatchObject({
+      code: "INSTALLATION_BUSY",
+      message: expect.stringContaining("portfolio mutation")
+    });
+    releaseFirst();
+    await first;
+    await expect(withInstallationLease(state, async () => "entered"))
+      .resolves.toBe("entered");
+  });
+
+  it("preserves a domain AggregateError when lease release succeeds", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-installation-domain-error-"));
+    const domainError = new AggregateError(
+      [new Error("destination rollback failed")],
+      "installation domain failure"
+    );
+
+    const failure = await withInstallationLease(state, async () => {
+      throw domainError;
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBe(domainError);
   });
 
   it("still releases when work outlives its acquisition wait budget", async () => {

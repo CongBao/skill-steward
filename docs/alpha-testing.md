@@ -41,6 +41,10 @@ Scan an empty set of Skill roots. The result must be unscored and actionable: it
 7. Run a generic one-term match against a project-scoped Skill. It must remain excluded unless stronger task evidence or a name match exists.
 8. Inspect normal CLI output for a run ID, readable reasons, a bounded excluded section, and a direct feedback command. Keep complete reason codes in `--json` output.
 
+## Reviewed installation concurrency
+
+In a disposable HOME, create two different replacement plans for the same installed Skill while both plans still name its original fingerprint. Start the larger copy first and apply the second plan after the first temporary copy appears. Exactly one process must succeed. The waiter must stop with `DESTINATION_DRIFT`; installation history must contain one committed record, and that record's backup must still match the original fingerprint. Repeat commit and rollback through the Dashboard while another portfolio mutation owns the state lease; both must wait or return the retryable `INSTALLATION_BUSY` conflict instead of bypassing serialization.
+
 ## Harness bridge
 
 Always review the plan before apply:

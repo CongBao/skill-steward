@@ -11,6 +11,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - CLI installation, governance, integration apply, evidence-policy, and evidence-erasure now use exact, single-use reviewed plans that persist privately across processes and apply only through the emitted `--plan <id> --confirm` command.
 - Catalog installation retains the inspected source in private staging until apply or expiry, then rechecks source, destination, route, provenance, and filesystem safety without restaging from the network.
 - Managed integration apply persists an initial portfolio scan before reporting ready, rolls back safely on readiness failure, and serializes CLI and dashboard mutations through a private cross-process lease without consuming a waiting plan.
+- Installation apply and rollback now share that state-scoped lease across CLI and dashboard processes. Apply acquires it before claiming a reviewed plan and revalidates the destination after copy, so concurrent replacements cannot both commit or corrupt backup provenance.
 - Integration history uses private immutable journal fragments with bounded recovery and cleanup rather than concurrent rewrites of one shared record.
 - Preflight evidence preserves normalized Harness and CLI/dashboard/Hook delivery attribution while continuing to exclude raw task content.
 
@@ -28,6 +29,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 - Reviewed plans use strict private envelopes, atomic single-use claim, bounded fail-safe cleanup, and domain fingerprint revalidation; a claimed plan that fails validation is not silently regenerated.
 - Integration readiness, journal commit, compensation, and shared companion cleanup preserve original failures and report rollback-incomplete state when safe recovery cannot be proven.
+- A busy installation remains retryable without consuming its waiting CLI plan; a stale waiter that later enters the lease is refused on destination drift.
 
 ### Limitations
 
