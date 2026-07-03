@@ -49,6 +49,7 @@ describe("open-source repository", () => {
       "## Screenshots",
       "## Installation",
       "## Quick start",
+      "## Task preflight",
       "## Supported harnesses",
       "## How safe installation works",
       "## Comparison",
@@ -60,6 +61,8 @@ describe("open-source repository", () => {
     expect(readme).toContain("[简体中文](README.zh-CN.md)");
     expect(readme).not.toContain("not a design mockup or a real user's portfolio");
     expect(readme).not.toContain("OpenSpec");
+    expect(readme).toContain("skill-steward preflight");
+    expect(readme).toContain("raw task text is never written to disk");
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.md", readme);
@@ -72,6 +75,7 @@ describe("open-source repository", () => {
       "## 界面截图",
       "## 安装",
       "## 快速开始",
+      "## 任务预检",
       "## 支持的 Harness",
       "## 安全安装如何工作",
       "## 竞品比较",
@@ -83,6 +87,8 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("[English](README.md)");
     expect(chineseReadme).not.toContain("并非设计稿");
     expect(chineseReadme).not.toContain("OpenSpec");
+    expect(chineseReadme).toContain("skill-steward preflight");
+    expect(chineseReadme).toContain("原始任务文本不会写入磁盘");
     for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
     for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.zh-CN.md", chineseReadme);
@@ -100,6 +106,10 @@ describe("open-source repository", () => {
   it("keeps internal planning references out of the public documentation tree", async () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
+    expect(changelog).toContain("## [0.3.0-alpha.1]");
+    const architecture = await readFile(join(root, "docs/architecture.md"), "utf8");
+    expect(architecture).toContain("packages/preflight");
+    expect(architecture).toContain("preflights.json");
     const internalEntries = await readdir(join(root, "docs/superpowers"), {
       recursive: true,
       withFileTypes: true

@@ -17,7 +17,14 @@ describe("built CLI", () => {
     };
     const { stdout } = await execFileAsync(process.execPath, [binary, "--version"]);
 
+    expect(manifest.version).toBe("0.3.0-alpha.1");
     expect(stdout.trim()).toBe(manifest.version);
+  });
+
+  it("lists task preflight in packaged help", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [binary, "--help"]);
+    expect(stdout).toContain("preflight");
+    expect(stdout).toMatch(/Recommend a minimal set of Skills for a\s+task/);
   });
 
   it("runs as an ESM executable", async () => {

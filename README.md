@@ -14,6 +14,7 @@ Skill Steward gives that portfolio one control plane without becoming another ag
 
 - scans standard user and project Skill directories for 30 harnesses, plus shared locations such as `.agents/skills`;
 - fingerprints complete Skill bundles and reports structural, reference, portability, size, and overlap risks deterministically—no LLM required;
+- analyzes a concrete task and recommends an explainable minimal set of relevant Skills before work begins;
 - presents an explainable Audit Cockpit with 16 configurable KPIs, Chinese/English copy, and system/light/dark appearance;
 - inspects local folders, ZIP files, and public HTTPS Git repositories before installation;
 - requires an explicit harness, scope, conflict decision, and final confirmation;
@@ -81,6 +82,7 @@ Or stay in the terminal:
 skill-steward doctor --json
 skill-steward discover --json
 skill-steward scan
+skill-steward preflight --task "Review this TypeScript change for security regressions"
 skill-steward report --format markdown
 skill-steward diff --format json
 ```
@@ -90,6 +92,22 @@ The dashboard opens on `127.0.0.1`, inventories standard user and project roots,
 ```bash
 SKILL_STEWARD_HOME=/path/to/private/state skill-steward dashboard --no-open
 ```
+
+## Task preflight
+
+Task preflight answers a narrower question than the portfolio health score: which installed Skills add distinct value to the task in front of you?
+
+Open **Preflight** in the dashboard, or run:
+
+```bash
+skill-steward preflight --task "Review this pull request for security regressions and missing tests"
+skill-steward preflight --task-file ./task.txt --max-skills 3
+printf '%s' "Review this pull request" | skill-steward preflight --stdin --json
+```
+
+Every run refreshes the local portfolio, ranks candidates using routing metadata, scope, existing findings, redundancy, and estimated context cost, then recommends at most five Skills. Each selected and excluded candidate includes machine-readable reasons. The deterministic baseline works offline and does not require an LLM.
+
+The raw task text is never written to disk. Skill Steward stores only a task hash, aggregate counts, numeric candidate scores, selected Skill IDs, and optional feedback in the bounded local evidence file. The recommendation estimates relevance and context savings; it does not claim that a task will succeed.
 
 ## Supported harnesses
 
@@ -129,6 +147,7 @@ Skill Steward combines cross-harness discovery, deterministic audit, context-cos
 - UI assets and APIs are same-origin; the packaged UI loads no remote fonts, scripts, images, or analytics.
 - Mutations require a random per-process token held by the local page.
 - Complete Skill bodies are not returned by dashboard read APIs.
+- Task preflight keeps task text in process memory; persisted evidence excludes task text and extracted terms.
 - Installation-source scripts, hooks, submodules, package managers, and build commands are never executed.
 - Every source and destination fingerprint is revalidated immediately before commit or rollback.
 
@@ -139,13 +158,14 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. The detailed
 - The public Git adapter accepts credential-free HTTPS repositories only; private credentials and SSH are intentionally out of scope for the first release.
 - Marketplace and registry sources are future adapters.
 - Health measures deterministic portfolio hygiene; runtime task success is outside that score.
+- Task preflight uses deterministic lexical routing signals and does not yet observe actual Harness invocation outcomes.
 - Finding explanations are currently emitted by the engine in English; complete finding localization is planned.
 
 ## Roadmap
 
 1. Harden the local audit and installation foundation with more adversarial fixtures and signed release artifacts.
-2. Add invocation-time preflight adapters without coupling to a single harness.
-3. Learn from user labels and task outcomes while keeping raw Skill and conversation content local.
+2. Add safe disable, quarantine, scope migration, uninstall, and restore actions around reviewed recommendations.
+3. Add invocation-time preflight adapters and learn from task outcomes while keeping raw Skill and conversation content local.
 4. Add optional registries, update checks, policies, team baselines, and supply-chain attestations behind explicit adapters.
 
 See [CHANGELOG.md](CHANGELOG.md) for released behavior.

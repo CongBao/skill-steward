@@ -4,6 +4,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.3.0-alpha.1] - 2026-07-03
+
+### Added
+
+- Deterministic task preflight with bilingual Latin/CJK routing analysis and explainable minimal Skill-set recommendations.
+- Task-specific relevance, unique coverage, risk, redundancy, scope fit, context estimates, and projected portfolio conflicts.
+- Local Preflight dashboard route, token-protected APIs, and CLI support for direct text, UTF-8 files, and stdin.
+- Bounded privacy-preserving evidence and useful/incomplete/incorrect feedback without persisting raw task text or extracted terms.
+
 ## [0.2.0-alpha.1] - 2026-07-02
 
 ### Added
