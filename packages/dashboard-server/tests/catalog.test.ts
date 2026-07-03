@@ -51,20 +51,20 @@ describe("catalog routes", () => {
     const listed = await app.inject({ method: "GET", url: "/api/v1/catalog/sources" });
     expect(listed.statusCode).toBe(200);
     expect(listed.json().data.sources).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "openai-curated", enabled: false })
+      expect.objectContaining({ id: "openai-plugins", enabled: false })
     ]));
     expect((await app.inject({
       method: "POST",
-      url: "/api/v1/catalog/sources/openai-curated/enable"
+      url: "/api/v1/catalog/sources/openai-plugins/enable"
     })).statusCode).toBe(401);
 
     const enabled = await app.inject({
       method: "POST",
-      url: "/api/v1/catalog/sources/openai-curated/enable",
+      url: "/api/v1/catalog/sources/openai-plugins/enable",
       headers: { "x-skill-steward-token": "token" }
     });
     expect(enabled.statusCode).toBe(200);
-    expect(enabled.json().data).toMatchObject({ id: "openai-curated", enabled: true });
+    expect(enabled.json().data).toMatchObject({ id: "openai-plugins", enabled: true });
 
     const refreshed = await app.inject({
       method: "POST",
@@ -74,7 +74,7 @@ describe("catalog routes", () => {
     expect(refreshed.statusCode).toBe(200);
     expect(refreshed.json().data).toMatchObject({
       sources: expect.arrayContaining([
-        expect.objectContaining({ sourceId: "openai-curated", status: "ready", skillCount: 1 })
+        expect.objectContaining({ sourceId: "openai-plugins", status: "ready", skillCount: 1 })
       ])
     });
   });

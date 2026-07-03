@@ -58,15 +58,15 @@ describe("catalog command", () => {
     expect(await run(["catalog", "list", "--json"], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
       sources: expect.arrayContaining([
-        expect.objectContaining({ id: "openai-curated", enabled: false })
+        expect.objectContaining({ id: "openai-plugins", enabled: false })
       ])
     });
-    expect(await run(["catalog", "enable", "openai-curated"], current.context)).toBe(0);
+    expect(await run(["catalog", "enable", "openai-plugins"], current.context)).toBe(0);
     current.stdout.splice(0);
     expect(await run(["catalog", "refresh", "--json"], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({
       sources: expect.arrayContaining([
-        expect.objectContaining({ sourceId: "openai-curated", status: "ready" })
+        expect.objectContaining({ sourceId: "openai-plugins", status: "ready" })
       ]),
       skills: [expect.objectContaining({ name: "testing-review" })]
     });

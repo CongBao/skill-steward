@@ -2,12 +2,12 @@ import { catalogSourceSchema, type CatalogSource } from "./domain.js";
 
 export const catalogSourcePresets: CatalogSource[] = [
   {
-    id: "openai-curated",
-    name: "OpenAI curated Skills",
+    id: "openai-plugins",
+    name: "OpenAI Plugins",
     kind: "git",
-    url: "https://github.com/openai/skills.git",
+    url: "https://github.com/openai/plugins.git",
     ref: "main",
-    subdirectory: "skills/.curated",
+    subdirectory: "plugins",
     enabled: false,
     trust: "vendor",
     preset: true

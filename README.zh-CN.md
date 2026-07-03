@@ -2,30 +2,32 @@
 
 [English](README.md) | 简体中文
 
-面向 Codex、Claude Code、GitHub Copilot 等 Harness 的本地优先 Agent Skills 资产健康与安全安装工具。
+一个本地优先的跨 Harness 控制平面，用来管理 Agent Skills。Skill Steward 与 Codex、Claude Code、GitHub Copilot 等 Harness 集成，但不会取代它们，也不负责执行编码任务。
 
 > 当前状态：活跃 Alpha。现在可以从源码或本地 tarball 安装；npm 包尚未发布。
 
 ## 为什么选择 Skill Steward
 
-Agent Skill 装起来很快，长期维护却很容易失控。同一台机器上可能同时存在共享 Skill、特定 Harness 的 Skill、项目副本、失效引用、触发范围重叠，以及占用大量上下文的内容包。
+Codex、Claude Code 和 GitHub Copilot 都已经有各自成熟度不断提高的 Skill 与插件生态。真正仍然分散的是跨生态管理：同一台机器上的重复 Skill、不明确的作用域、相互冲突的触发条件、上下文成本，以及散落在不同目录中的任务能力。
 
-Skill Steward 为这些本地 Skill 提供统一的管理视图，同时保持独立于执行任务的 Harness：
+Skill Steward 提供一个统一的本地决策层：
 
-- 扫描 30 种 Harness 的标准用户级和项目级 Skill 目录，并覆盖 `.agents/skills` 等共享位置；
-- 对完整 Skill 目录生成指纹，确定性检查结构、引用、可移植性、体积和触发重叠，不依赖 LLM；
-- 针对一个具体任务，在执行前推荐可解释且尽可能精简的相关 Skill 集合；
-- 提供可解释的 Audit Cockpit，内置 16 项可配置 KPI、中英双语以及跟随系统/浅色/深色外观；
-- 安装前检查本地文件夹、ZIP 文件和公开 HTTPS Git 仓库；
-- 明确选择 Harness、作用域和冲突处理方式，确认后才写入文件；
-- 通过原子创建或替换、自动备份、来源记录和漂移保护完成安装与回滚；
-- 只监听回环地址，不上传遥测数据或 Skill 内容。
+- 盘点 30 种 Harness 的标准用户级和项目级 Skill 目录；
+- 检查完整内容包的结构、引用、可移植性、体积、重叠、脚本和可执行文件；
+- 通过主动启用的公共来源发现尚未安装的 Skills；
+- 将任务预检结果分为**立即使用**、**建议安装**、**能力缺口**和**未选候选项**；
+- 接入 Codex 和 Claude Code 的 `UserPromptSubmit` Hook，并提供共享配套 Skill 与 CLI 作为其他入口；
+- 在生成安装计划前，按记录的版本重新获取并检查候选项；
+- 通过备份、来源记录、漂移检测和回滚执行经确认的修改；
+- 让 CLI、回环 API、Hook、配套 Skill 和 Dashboard 共用同一套服务。
+
+当前分析是确定性的，不需要 LLM。实际选择和执行 Skill 的仍然是用户使用的 Harness。
 
 ## 界面截图
 
-![Skill Steward 浅色概览页](docs/images/overview-light-zh-CN.png)
+![包含已安装和可发现 Skills 的任务预检](docs/images/preflight-discovery-light-zh-CN.png)
 
-![Skill Steward 中文深色安装流程](docs/images/skills-install-dark-zh-CN.png)
+![Codex 与 Claude Code 集成设置](docs/images/integrations-dark-zh-CN.png)
 
 ## 安装
 
@@ -45,13 +47,13 @@ pnpm build
 node packages/cli/dist/main.js dashboard
 ```
 
-也可以使用 SSH 克隆：
+也可以使用 SSH：
 
 ```bash
 git clone git@github.com:CongBao/skill-steward.git
 ```
 
-如果不希望自动打开浏览器，可以使用 `--no-open`，再自行打开终端中输出的回环地址：
+如果只想输出回环地址而不自动打开浏览器：
 
 ```bash
 node packages/cli/dist/main.js dashboard --no-open --port 4762
@@ -66,28 +68,26 @@ npm install --global ./artifacts/skill-steward-*.tgz
 skill-steward dashboard
 ```
 
-npm 包尚未发布。在正式发布前，请从源码或本地 tarball 安装。
-
 ## 快速开始
 
-启动 Audit Cockpit：
+启动本地 Dashboard：
 
 ```bash
 skill-steward dashboard
 ```
 
-也可以只使用终端命令：
+也可以完全使用无界面的流程：
 
 ```bash
 skill-steward doctor --json
 skill-steward discover --json
 skill-steward scan
-skill-steward preflight --task "检查这次 TypeScript 变更的安全回归"
+skill-steward catalog list
+skill-steward preflight --task "检查这次 TypeScript 变更的安全回归和缺失测试" --harness codex
 skill-steward report --format markdown
-skill-steward diff --format json
 ```
 
-Dashboard 监听 `127.0.0.1`，扫描标准用户目录和项目目录，并将报告保存在 `~/.skill-steward`。可以单独修改状态目录，不影响 Skill 扫描位置：
+状态默认保存在 `~/.skill-steward`。可以单独修改状态目录，不影响 Skill 扫描位置：
 
 ```bash
 SKILL_STEWARD_HOME=/path/to/private/state skill-steward dashboard --no-open
@@ -95,78 +95,120 @@ SKILL_STEWARD_HOME=/path/to/private/state skill-steward dashboard --no-open
 
 ## 任务预检
 
-任务预检回答的是比健康分更具体的问题：对于眼前这个任务，哪些已安装 Skills 能提供独特价值？
+任务预检会在 Harness 开始工作前回答两个问题：
 
-可以在 Dashboard 中打开**任务预检**，也可以使用 CLI：
+1. 哪些已安装 Skills 现在就能带来独特价值？
+2. 哪些尚未安装的 Skills 有可能补上明确的能力缺口？
 
 ```bash
-skill-steward preflight --task "检查这个 Pull Request 的安全回归和缺失测试"
+skill-steward preflight \
+  --task "检查这个 Pull Request 的安全回归和缺失测试" \
+  --harness codex
+
 skill-steward preflight --task-file ./task.txt --max-skills 3
 printf '%s' "检查这个 Pull Request" | skill-steward preflight --stdin --json
+skill-steward preflight --task "检查这个 Pull Request" --installed-only
 ```
 
-每次分析都会先刷新本地 Skill 组合，再根据路由描述、作用域、已有问题、冗余程度和估算上下文成本排序，最多推荐五个 Skills。每个入选和未选候选项都会提供机器可读的原因。确定性基线可离线运行，不依赖 LLM。
+已安装候选项优先排序。可发现候选项会承担安装成本扣分；存在严重风险、与目标 Harness 不兼容，或与已安装内容重复时，不会进入安装建议。结果会展示相关性、独特覆盖、风险、冗余、上下文估算、来源版本、兼容性和机器可读原因。
 
-原始任务文本不会写入磁盘。Skill Steward 只在有上限的本地证据文件中保存任务哈希、汇总数量、候选项数值评分、入选 Skill ID 和可选反馈。结果表示相关性和预计上下文节省，不代表任务一定成功。
+原始任务文本不会写入磁盘。持久化证据只包含哈希、ID、汇总数量、数值评分、来源 ID 和可选反馈。
+
+### 主动启用的发现来源
+
+内置来源默认全部停用：
+
+- [OpenAI Plugins](https://github.com/openai/plugins)，索引插件包内的 Skills；
+- [Anthropic Skills](https://github.com/anthropics/skills)；
+- [Awesome GitHub Copilot](https://github.com/github/awesome-copilot)，标记为社区来源。
+
+需要明确启用并刷新：
+
+```bash
+skill-steward catalog enable openai-plugins
+skill-steward catalog refresh
+skill-steward catalog list --json
+```
+
+自定义来源必须是不含凭据的公共 HTTPS Git 仓库，添加后仍保持停用。只有目录刷新会访问网络；Hook 和任务预检都读取已经校验的本地缓存，任务提交时不访问网络。“已知发布者”只说明仓库归属，不代表内容安全。
+
+## Harness 集成
+
+Skill Steward 当前可以管理 Codex 和 Claude Code 的原生提示词 Hook：
+
+```bash
+skill-steward integrate status
+skill-steward integrate plan --harness codex
+skill-steward integrate apply --harness codex --confirm
+
+skill-steward integrate plan --harness claude-code
+skill-steward integrate apply --harness claude-code --confirm
+```
+
+计划会在写入前展示准确的配置位置、备份位置和修改内容。已有的无关设置与 Hook 会保留。外部修改导致配置漂移时，移除操作会停止：
+
+```bash
+skill-steward integrate remove --harness codex --confirm
+```
+
+托管 Hook 采用失败开放策略，只读取本地缓存，并注入精简建议，不把原始任务文本或目录 URL 写入上下文。Codex 可能要求用户检查并信任新 Hook。GitHub Copilot 的目录会被扫描，也能看到共享配套 Skill，但本版本尚未管理 Copilot 的原生提示词 Hook。
 
 ## 支持的 Harness
 
-目前支持 30 种 Harness：Amazon Q、Antigravity、Auggie、Bob、Claude Code、Cline、CodeBuddy、Codex、ForgeCode、Continue、CoStrict、Crush、Cursor、Factory、Gemini CLI、GitHub Copilot、iFlow、Junie、Kilo Code、Kimi、Kiro、Lingma、Vibe、OpenCode、Pi、Qoder、Qwen Code、RooCode、Trae 和 Windsurf。
+目录规则覆盖 30 种 Harness：Amazon Q、Antigravity、Auggie、Bob、Claude Code、Cline、CodeBuddy、Codex、ForgeCode、Continue、CoStrict、Crush、Cursor、Factory、Gemini CLI、GitHub Copilot、iFlow、Junie、Kilo Code、Kimi、Kiro、Lingma、Vibe、OpenCode、Pi、Qoder、Qwen Code、RooCode、Trae 和 Windsurf。
 
-Skill Steward 还支持共享 `.agents/skills`、Codex 的用户级和项目级目录、Claude Code 的个人和项目目录，以及 GitHub Copilot 的个人和项目目录。新增 Harness 只需增加目录适配器，不需要重写扫描器。
+这表示 Skill Steward 能够盘点这些 Harness 的已知目录，并将 Skill 安装到明确目标。原生任务提交集成的范围更窄：Codex 和 Claude Code Hook，以及共享配套 Skill 与 CLI。
 
 ## 安全安装如何工作
 
-Skills 页面将安装过程拆成六个可见阶段：
+Skill Steward 绝不会自动安装推荐项。目录候选项必须与手动提供的文件夹、ZIP 或公共 Git 来源一样，经过完整检查流程：
 
-1. **来源**——选择本地文件夹、ZIP 文件或公开 HTTPS Git 仓库，可以指定 ref 和子目录。
-2. **检查**——查看候选 Skill、文件数量、估算上下文、脚本、可执行文件、指纹、引用和检查结果。
-3. **目标**——选择一个 Harness，以及全局或明确的项目作用域。
-4. **冲突**——内容相同时不重复写入；内容不同时必须改名，或明确选择带备份的替换。
-5. **确认**——核对目标路径和文件系统操作，再确认执行。
-6. **结果**——获得事务 ID、刷新后的扫描结果、安装历史和可用的回滚操作。
+1. **检查**——解析记录的 commit，重新核对指纹、文件、脚本、可执行项、引用和问题。
+2. **目标**——选择 Harness、全局/项目作用域、工作区和目标名称。
+3. **冲突**——相同内容不重复写入；不同内容必须改名或明确选择替换。
+4. **确认**——查看准确的文件系统操作并确认。
+5. **提交**——原子创建或替换，记录来源并重新扫描资产组合。
+6. **回滚**——只有目标漂移检查通过时才恢复备份。
 
-ZIP 中的路径穿越、绝对路径、链接、大小写折叠冲突、过多条目和异常膨胀会被拒绝。Git 暂存过程采用非交互方式，禁用 hooks 和 submodules，记录解析后的 commit，且不执行仓库内容。安装后的目标一旦发生变化，回滚会停止，避免覆盖用户修改。
+ZIP 中的路径穿越、绝对路径、链接、大小写折叠冲突、过多条目和异常膨胀会被拒绝。Git 暂存使用非交互模式，禁用仓库 Hook 和 submodule，也不会执行来源内容。
 
 ## 竞品比较
 
-下表基于 2026-07-02 查阅的官方文档：
+2026-07-03 对官方资料的复核显示，主流 Harness 都已经支持 Skills，并拥有各自的发现或扩展机制。Skill Steward 的竞争点是跨 Harness 的策略与证据层：
 
-| 产品 | 官方定位 | Skill 来源与作用域 | 跨 Harness 资产检查 | 本地事务式替换与回滚 |
+| 产品 | 任务时外部发现 | 原生工作流集成 | 跨 Harness 分析 | 可逆安装 |
 |---|---|---|---|---|
-| **Skill Steward** | 本地清单、可解释的健康信号、经检查的安装 | 文件夹、ZIP、公开 Git；30 种工具；全局/项目 | **支持** | **支持** |
-| [Codex Agent Skills](https://developers.openai.com/codex/skills) | 在 Codex 中发现和使用 Skill，覆盖仓库、用户、管理员和插件目录 | Codex 目录及 Skill/插件分发 | 仅覆盖 Codex 作用域 | 无跨 Harness 事务日志 |
-| [Claude Code Agent Skills](https://code.claude.com/docs/en/skills) | 在 Claude Code 中发现和使用项目、个人及插件 Skill | 项目、个人、插件和企业级优先级 | 仅覆盖 Claude Code 作用域 | 无跨 Harness 事务日志 |
-| [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/add-skills) | 通过 Copilot 和 `gh skill` 搜索、预览、安装及更新 Skill | 仓库与个人作用域，保留 source/ref 来源信息 | 支持多个兼容目录，但不提供通用资产健康看板 | `gh skill` 管理自身安装与更新；Skill Steward 为目录目标补充文件系统备份和回滚 |
-
-Skill Steward 将跨 Harness 发现、确定性检查、上下文成本可见性、安装前检查和回滚放在同一个本地工作流中；实际执行 Skill 的仍是用户选择的 Harness。
+| **Skill Steward** | 主动启用的公共 Git 本地索引；统一比较已安装和可发现候选项 | Codex、Claude Code 提示词 Hook；配套 Skill、CLI、API、Dashboard | **以同一套清单和评分模型覆盖 30 种目录规则** | **经检查的计划、备份、来源记录、漂移检测和回滚** |
+| [Codex Skills 与 Plugins](https://developers.openai.com/codex/plugins) | 插件目录与 Marketplace 浏览；安装后使用 | 原生 Skills、Plugins 和生命周期 Hook | Codex 范围 | 原生启停与卸载；不使用 Skill Steward 的跨 Harness 事务日志 |
+| [Claude Code Skills 与 Plugins](https://code.claude.com/docs/en/discover-plugins) | Marketplace 注册与具体插件安装分离 | 原生 Skills、Plugins、Marketplace 和 Hook | Claude Code 范围 | 原生更新与移除；不使用 Skill Steward 的跨 Harness 事务日志 |
+| [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) | `gh skill` 可从 GitHub 仓库发现和安装 Skills | Copilot CLI/云 Agent 的原生 Skills 与 Hook | Copilot 兼容作用域 | 原生 Skill 管理；不使用 Skill Steward 的跨 Harness 事务日志 |
 
 ## 隐私与安全
 
-- Web 服务默认只监听 `127.0.0.1`，并拒绝不符合预期的 Host 和 Origin。
-- UI 资源和 API 使用同源地址；打包后的 UI 不加载远程字体、脚本、图片或分析服务。
-- 修改操作需要当前进程随机生成并注入本地页面的令牌。
-- Dashboard 的读取接口不会返回完整 Skill 正文。
-- 任务预检只在进程内存中保留任务文本，持久化证据不包含任务文本和提取出的关键词。
-- 不执行安装来源中的脚本、hooks、submodules、包管理器或构建命令。
-- 提交安装或回滚前都会重新验证来源和目标指纹。
+- 服务只监听 `127.0.0.1`，并拒绝不符合预期的 Host 和 Origin。
+- 打包 UI 使用同源资源，不加载远程字体、脚本、图片或分析服务。
+- 修改操作需要当前进程生成并注入页面的随机令牌。
+- Dashboard 读取接口不会返回完整 Skill 正文。
+- 提示词提交时只使用缓存状态，不联系目录来源。
+- 持久化证据不包含任务文本、提取词、描述、原因、URL 或本地路径。
+- 不执行安装来源中的脚本、包管理器、构建命令、仓库 Hook 或 submodule。
 
 安全问题请按照 [SECURITY.md](SECURITY.md) 说明提交。包结构与信任边界详见 [docs/architecture.md](docs/architecture.md)。
 
 ## 当前限制
 
-- Git 适配器只接受不含凭据的公开 HTTPS 仓库；首个版本不处理私有仓库凭据和 SSH 来源。
-- Marketplace 和 Registry 来源将在后续通过适配器加入。
-- 健康分衡量确定性的 Skill 资产卫生状况，不评价运行时任务能否成功完成。
-- 任务预检目前使用确定性的词法路由信号，尚未观察 Harness 的真实调用结果。
-- 引擎目前使用英文输出检查结果说明，完整本地化仍在计划中。
+- 任务评分是确定性的词法基线，不使用 LLM，也尚未衡量实际任务成功率。
+- 托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code。
+- 目录刷新只支持不含凭据的公共 HTTPS Git 来源，不支持私有仓库或 SSH。
+- 目录记录是元数据快照，不是安全背书；生成安装计划前始终重新检查来源。
+- Dashboard 使用中文时，底层问题说明仍然是英文。
 
 ## 路线图
 
-1. 通过更多对抗性测试样例和签名发布产物加固本地检查与安装基础。
-2. 围绕经确认的建议增加安全禁用、隔离、作用域迁移、卸载和恢复操作。
-3. 增加调用前预检适配器，并在原始 Skill 与会话内容留在本机的前提下利用任务结果改进信号质量。
-4. 通过显式适配器加入可选 Registry、更新检查、策略、团队基线和供应链证明。
+1. 在不保留原始提示词的前提下，从本地调用与任务结果信号中学习。
+2. 增加经确认的停用、隔离、作用域迁移、卸载和恢复操作。
+3. 只为能够充分验证生命周期与信任模型的 Harness 增加原生适配器。
+4. 增加签名发布产物、策略基线和供应链证明。
 
 版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 

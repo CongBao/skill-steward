@@ -18,25 +18,25 @@ it("shows publisher classification and explicitly enables and refreshes sources"
       ? {
           schemaVersion: 1,
           generatedAt: "2026-07-03T00:00:00.000Z",
-          sources: [{ sourceId: "openai-curated", status: "ready", skillCount: 12 }],
+          sources: [{ sourceId: "openai-plugins", status: "ready", skillCount: 12 }],
           skills: []
         }
       : url.endsWith("/enable")
         ? {
-            id: "openai-curated",
-            name: "OpenAI curated Skills",
+            id: "openai-plugins",
+            name: "OpenAI Plugins",
             kind: "git",
-            url: "https://github.com/openai/skills.git",
+            url: "https://github.com/openai/plugins.git",
             enabled: true,
             trust: "vendor",
             preset: true
           }
         : {
             sources: [{
-              id: "openai-curated",
-              name: "OpenAI curated Skills",
+              id: "openai-plugins",
+              name: "OpenAI Plugins",
               kind: "git",
-              url: "https://github.com/openai/skills.git",
+              url: "https://github.com/openai/plugins.git",
               enabled: false,
               trust: "vendor",
               preset: true
@@ -53,9 +53,9 @@ it("shows publisher classification and explicitly enables and refreshes sources"
     </QueryClientProvider>
   );
 
-  expect(await screen.findByText("OpenAI curated Skills")).toBeVisible();
+  expect(await screen.findByText("OpenAI Plugins")).toBeVisible();
   expect(screen.getByText("Known publisher · not a safety guarantee")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Enable OpenAI curated Skills" }));
+  await user.click(screen.getByRole("button", { name: "Enable OpenAI Plugins" }));
   await user.click(screen.getByRole("button", { name: "Refresh enabled sources" }));
   expect(confirm).toHaveBeenCalled();
   expect(fetchMock).toHaveBeenCalledWith(

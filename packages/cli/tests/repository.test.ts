@@ -3,8 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(process.cwd(), "../..");
-const englishScreenshots = ["overview-light-en.png", "skills-install-dark-en.png"];
-const chineseScreenshots = ["overview-light-zh-CN.png", "skills-install-dark-zh-CN.png"];
+const englishScreenshots = ["preflight-discovery-light-en.png", "integrations-dark-en.png"];
+const chineseScreenshots = ["preflight-discovery-light-zh-CN.png", "integrations-dark-zh-CN.png"];
 const required = [
   "LICENSE",
   "README.zh-CN.md",
@@ -63,6 +63,17 @@ describe("open-source repository", () => {
     expect(readme).not.toContain("OpenSpec");
     expect(readme).toContain("skill-steward preflight");
     expect(readme).toContain("raw task text is never written to disk");
+    expect(readme).toContain("cross-Harness control plane");
+    expect(readme).toContain("Use now");
+    expect(readme).toContain("Consider installing");
+    expect(readme).toContain("Codex and Claude Code `UserPromptSubmit` Hooks");
+    expect(readme).toContain("no prompt-time network access");
+    expect(readme).toContain("never installs a recommendation automatically");
+    expect(readme).toContain("External task-time discovery");
+    expect(readme).toContain("Native workflow integration");
+    expect(readme).toContain("Cross-Harness analysis");
+    expect(readme).toContain("Reversible installation");
+    expect(readme).not.toMatch(/universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.md", readme);
@@ -89,6 +100,17 @@ describe("open-source repository", () => {
     expect(chineseReadme).not.toContain("OpenSpec");
     expect(chineseReadme).toContain("skill-steward preflight");
     expect(chineseReadme).toContain("原始任务文本不会写入磁盘");
+    expect(chineseReadme).toContain("跨 Harness 控制平面");
+    expect(chineseReadme).toContain("立即使用");
+    expect(chineseReadme).toContain("建议安装");
+    expect(chineseReadme).toContain("Codex 和 Claude Code 的 `UserPromptSubmit` Hook");
+    expect(chineseReadme).toContain("任务提交时不访问网络");
+    expect(chineseReadme).toContain("绝不会自动安装推荐项");
+    expect(chineseReadme).toContain("任务时外部发现");
+    expect(chineseReadme).toContain("原生工作流集成");
+    expect(chineseReadme).toContain("跨 Harness 分析");
+    expect(chineseReadme).toContain("可逆安装");
+    expect(chineseReadme).not.toMatch(/通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);
     for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
     for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.zh-CN.md", chineseReadme);
@@ -106,10 +128,12 @@ describe("open-source repository", () => {
   it("keeps internal planning references out of the public documentation tree", async () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
-    expect(changelog).toContain("## [0.3.0-alpha.1]");
+    expect(changelog).toContain("## [0.4.0-alpha.1]");
     const architecture = await readFile(join(root, "docs/architecture.md"), "utf8");
     expect(architecture).toContain("packages/preflight");
     expect(architecture).toContain("preflights.json");
+    expect(architecture).toContain("packages/catalog");
+    expect(architecture).toContain("packages/integrations");
     const internalEntries = await readdir(join(root, "docs/superpowers"), {
       recursive: true,
       withFileTypes: true

@@ -56,7 +56,17 @@ export async function readCatalogSources(
 ): Promise<CatalogSource[]> {
   try {
     const source = await readFile(join(stateDirectory, CATALOG_SOURCES_FILE), "utf8");
-    return catalogSourcesFileSchema.parse(JSON.parse(source)).sources;
+    const persisted = catalogSourcesFileSchema.parse(JSON.parse(source)).sources;
+    const migrated = persisted.map((entry) => {
+      if (!entry.preset) return entry;
+      const currentId = entry.id === "openai-curated" ? "openai-plugins" : entry.id;
+      const current = catalogSourcePresets.find(({ id }) => id === currentId);
+      return current ? { ...current, enabled: entry.enabled } : entry;
+    });
+    return catalogSourcesFileSchema.parse({
+      schemaVersion: 1,
+      sources: migrated
+    }).sources;
   } catch (error) {
     if (isMissing(error)) {
       return catalogSourcesFileSchema.parse({

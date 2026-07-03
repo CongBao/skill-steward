@@ -77,7 +77,7 @@ it("wires fresh task preflight into the dashboard application", async () => {
   const catalog = await app.inject({ method: "GET", url: "/api/v1/catalog/sources" });
   expect(catalog.statusCode).toBe(200);
   expect(catalog.json().data.sources).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: "openai-curated", enabled: false })
+    expect.objectContaining({ id: "openai-plugins", enabled: false })
   ]));
   const integrations = await app.inject({ method: "GET", url: "/api/v1/integrations" });
   expect(integrations.statusCode).toBe(200);

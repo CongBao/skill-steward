@@ -109,9 +109,9 @@ describe("preflight v2 domain", () => {
       contextTokens: 200,
       decision: "install",
       source: {
-        sourceId: "openai-curated",
+        sourceId: "openai-plugins",
         trust: "vendor",
-        url: "https://github.com/openai/skills.git",
+        url: "https://github.com/openai/plugins.git",
         revision: "a".repeat(40),
         relativePath: "testing"
       },

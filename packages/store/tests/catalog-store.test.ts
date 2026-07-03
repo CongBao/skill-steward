@@ -61,4 +61,31 @@ describe("catalog store", () => {
     await writeFile(join(state, "catalog-sources.json"), "not-json", "utf8");
     await expect(readCatalogSources(state)).rejects.toBeInstanceOf(Error);
   });
+
+  it("migrates the deprecated OpenAI Skills preset while preserving opt-in", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-catalog-migration-"));
+    await writeFile(join(state, "catalog-sources.json"), JSON.stringify({
+      schemaVersion: 1,
+      sources: [{
+        id: "openai-curated",
+        name: "OpenAI curated Skills",
+        kind: "git",
+        url: "https://github.com/openai/skills.git",
+        ref: "main",
+        subdirectory: "skills/.curated",
+        enabled: true,
+        trust: "vendor",
+        preset: true
+      }]
+    }), "utf8");
+    expect(await readCatalogSources(state)).toEqual([
+      expect.objectContaining({
+        id: "openai-plugins",
+        name: "OpenAI Plugins",
+        url: "https://github.com/openai/plugins.git",
+        subdirectory: "plugins",
+        enabled: true
+      })
+    ]);
+  });
 });

@@ -1,7 +1,7 @@
 {
   "name": "skill-steward",
-  "version": "0.3.0-alpha.1",
-  "description": "Local-first portfolio health and safe installation for Agent Skills across harnesses",
+  "version": "0.4.0-alpha.1",
+  "description": "Local-first discovery, preflight, and reversible Skill operations across AI harnesses",
   "license": "MIT",
   "keywords": [
     "agent-skills",

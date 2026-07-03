@@ -30,17 +30,21 @@ describe("catalog domain", () => {
 
   it("ships three disabled known-publisher presets", () => {
     expect(catalogSourcePresets.map(({ id }) => id)).toEqual([
-      "openai-curated",
+      "openai-plugins",
       "anthropic-skills",
       "github-awesome-copilot"
     ]);
     expect(catalogSourcePresets.every(({ enabled }) => !enabled)).toBe(true);
+    expect(catalogSourcePresets[0]).toMatchObject({
+      url: "https://github.com/openai/plugins.git",
+      subdirectory: "plugins"
+    });
   });
 
   it("validates metadata-only catalog records and snapshots", () => {
     const skill = catalogSkillRecordSchema.parse({
       id: "catalog:review",
-      sourceId: "openai-curated",
+      sourceId: "openai-plugins",
       sourceRevision: "a".repeat(40),
       relativePath: "review",
       name: "review",

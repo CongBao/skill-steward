@@ -63,9 +63,9 @@ const result = {
       contextTokens: 180,
       decision: "install",
       source: {
-        sourceId: "openai-curated",
+        sourceId: "openai-plugins",
         trust: "vendor",
-        url: "https://github.com/openai/skills.git",
+        url: "https://github.com/openai/plugins.git",
         revision: "c".repeat(40),
         relativePath: "testing"
       },
