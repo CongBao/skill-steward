@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PreflightResult } from "@skill-steward/preflight";
@@ -11,154 +11,198 @@ import {
 } from "../src/preflight-store.js";
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
+const rawTask = "PRIVATE migrate cryptography customer data";
+const sourceUrl = "https://example.com/private-skills.git";
 
 function result(id: string, createdAt: string): PreflightResult {
   return {
-    schemaVersion: 1,
-    algorithmVersion: 1,
+    schemaVersion: 2,
+    algorithmVersion: 2,
     id,
     generatedAt: createdAt,
     portfolioFingerprint: hash("a"),
     taskHash: hash("c"),
-    taskCharacterCount: 31,
+    taskCharacterCount: rawTask.length,
     taskTermCount: 4,
-    selectedSkillIds: ["security-review"],
+    useCandidateIds: ["security-review"],
+    installCandidateIds: ["catalog-testing"],
     candidates: [
       {
-        skillId: "security-review",
+        candidateId: "security-review",
+        availability: "installed",
+        installedSkillId: "security-review",
         name: "security-review",
         description: "PRIVATE customer migration plan",
         scope: "project",
-        visibleTo: ["codex"],
+        compatibleHarnesses: ["codex"],
+        compatibility: "declared",
+        scripts: [],
+        executables: [],
+        highestSeverity: null,
         relevance: 0.8,
         uniqueCoverage: 0.5,
         riskPenalty: 0,
         redundancyPenalty: 0,
+        installPenalty: 0,
         contextTokens: 240,
-        decision: "selected",
-        reasons: [
-          {
-            code: "TASK_TERM_MATCH",
-            detail: "PRIVATE customer migration plan"
-          }
-        ]
+        decision: "use",
+        reasons: [{ code: "TASK_TERM_MATCH", detail: "cryptography customer" }]
       },
       {
-        skillId: "testing",
+        candidateId: "catalog-testing",
+        availability: "available",
+        catalogSkillId: "catalog-testing",
         name: "testing",
-        description: "Test changes",
-        scope: "global",
-        visibleTo: ["claude"],
-        relevance: 0.3,
-        uniqueCoverage: 0,
+        description: "Review available Skill",
+        scope: "unknown",
+        compatibleHarnesses: [],
+        compatibility: "unknown",
+        scripts: ["scripts/private.sh"],
+        executables: ["scripts/private.sh"],
+        highestSeverity: "warning",
+        relevance: 0.7,
+        uniqueCoverage: 0.25,
         riskPenalty: 0.07,
-        redundancyPenalty: 0.1,
+        redundancyPenalty: 0,
+        installPenalty: 0.08,
         contextTokens: 180,
-        decision: "excluded",
-        reasons: [
-          {
-            code: "REDUNDANT_WITH_SELECTED",
-            detail: "PRIVATE customer overlap"
-          }
-        ]
+        decision: "install",
+        source: {
+          sourceId: "private-source",
+          trust: "user",
+          url: sourceUrl,
+          revision: "d".repeat(40),
+          relativePath: "secret/testing"
+        },
+        reasons: [{ code: "INSTALL_REQUIRED", detail: "Review available Skill" }]
       }
     ],
     conflicts: [],
-    selectedContextTokens: 240,
-    plausibleContextTokens: 420,
+    capabilityGaps: ["customer"],
+    installedCoverage: 0.5,
+    projectedCoverage: 0.75,
+    selectedContextTokens: 420,
+    plausibleContextTokens: 600,
     estimatedContextSaved: 180
   };
 }
 
+function legacyFile() {
+  return {
+    schemaVersion: 1,
+    records: [{
+      id: "legacy-run",
+      createdAt: "2026-07-02T00:00:00.000Z",
+      algorithmVersion: 1,
+      portfolioFingerprint: hash("a"),
+      taskHash: hash("b"),
+      taskCharacterCount: 20,
+      taskTermCount: 3,
+      selectedSkillIds: ["legacy-skill"],
+      candidates: [{
+        skillId: "legacy-skill",
+        relevance: 0.8,
+        uniqueCoverage: 0.5,
+        riskPenalty: 0,
+        redundancyPenalty: 0,
+        contextTokens: 200,
+        decision: "selected"
+      }],
+      selectedContextTokens: 200,
+      plausibleContextTokens: 200,
+      estimatedContextSaved: 0
+    }]
+  };
+}
+
 describe("preflight evidence store", () => {
-  it("persists only sanitized bounded evidence with private permissions", async () => {
-    expect(appendPreflightEvidence).toBeDefined();
-    const stateDir = await mkdtemp(join(tmpdir(), "steward-preflight-store-"));
-    await appendPreflightEvidence(
-      stateDir,
-      result("run-1", "2026-07-03T00:00:00.000Z"),
-      { limit: 2 }
+  it("reads legacy evidence and appends sanitized version-2 evidence", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-migrate-"));
+    await writeFile(
+      join(state, "preflights.json"),
+      `${JSON.stringify(legacyFile(), null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 }
     );
-    await appendPreflightEvidence(
-      stateDir,
-      result("run-2", "2026-07-03T01:00:00.000Z"),
-      { limit: 2 }
-    );
-    await appendPreflightEvidence(
-      stateDir,
-      result("run-3", "2026-07-03T02:00:00.000Z"),
-      { limit: 2 }
-    );
+    await appendPreflightEvidence(state, result("run-2", "2026-07-03T01:00:00.000Z"));
 
-    const path = join(stateDir, "preflights.json");
-    const disk = await readFile(path, "utf8");
-    expect(disk).not.toContain("PRIVATE customer migration plan");
-    expect(disk).not.toContain("customer");
-    expect(disk).not.toContain("description");
-    expect(JSON.parse(disk)).toMatchObject({ schemaVersion: 1 });
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-
-    const records = await readPreflightEvidence(stateDir);
-    expect(records.map(({ id }) => id)).toEqual(["run-3", "run-2"]);
-    expect(records[0]?.candidates[0]).toEqual({
-      skillId: "security-review",
-      relevance: 0.8,
-      uniqueCoverage: 0.5,
-      riskPenalty: 0,
-      redundancyPenalty: 0,
-      contextTokens: 240,
-      decision: "selected"
+    const records = await readPreflightEvidence(state);
+    expect(records).toHaveLength(2);
+    expect(records.map(({ schemaVersion }) => schemaVersion)).toEqual([2, 1]);
+    const disk = await readFile(join(state, "preflights.json"), "utf8");
+    for (const secret of [
+      rawTask,
+      sourceUrl,
+      "secret/testing",
+      "scripts/private.sh",
+      "TASK_TERM_MATCH",
+      "Review available Skill",
+      "cryptography customer"
+    ]) {
+      expect(disk).not.toContain(secret);
+    }
+    expect(JSON.parse(disk).records[0]).toMatchObject({
+      schemaVersion: 2,
+      useCandidateIds: ["security-review"],
+      installCandidateIds: ["catalog-testing"]
     });
+    expect((await stat(join(state, "preflights.json"))).mode & 0o777).toBe(0o600);
   });
 
-  it("records validated feedback without exposing task content", async () => {
-    const stateDir = await mkdtemp(join(tmpdir(), "steward-preflight-feedback-"));
-    await appendPreflightEvidence(
-      stateDir,
-      result("run-1", "2026-07-03T00:00:00.000Z")
-    );
+  it("persists bounded version-2 evidence", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-bound-"));
+    await appendPreflightEvidence(state, result("run-1", "2026-07-03T00:00:00.000Z"), { limit: 2 });
+    await appendPreflightEvidence(state, result("run-2", "2026-07-03T01:00:00.000Z"), { limit: 2 });
+    await appendPreflightEvidence(state, result("run-3", "2026-07-03T02:00:00.000Z"), { limit: 2 });
+    expect((await readPreflightEvidence(state)).map(({ id }) => id)).toEqual([
+      "run-3",
+      "run-2"
+    ]);
+    await expect(appendPreflightEvidence(state, result("run-4", "2026-07-03T03:00:00.000Z"), {
+      limit: 201
+    })).rejects.toThrow("between 1 and 200");
+  });
+
+  it("records candidate feedback for new and legacy evidence", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-feedback-"));
+    await writeFile(join(state, "preflights.json"), `${JSON.stringify(legacyFile())}\n`, {
+      encoding: "utf8",
+      mode: 0o600
+    });
+    await appendPreflightEvidence(state, result("run-1", "2026-07-03T00:00:00.000Z"));
     await recordPreflightFeedback(
-      stateDir,
+      state,
       "run-1",
-      { label: "incomplete", selectedSkillIds: ["testing"] },
+      { label: "incomplete", candidateIds: ["catalog-testing"] },
       new Date("2026-07-03T01:00:00.000Z")
     );
-
-    expect((await readPreflightEvidence(stateDir))[0]?.feedback).toEqual({
-      label: "incomplete",
-      selectedSkillIds: ["testing"],
-      createdAt: "2026-07-03T01:00:00.000Z"
-    });
-    expect(await readFile(join(stateDir, "preflights.json"), "utf8")).not.toContain(
-      "PRIVATE"
+    await recordPreflightFeedback(
+      state,
+      "legacy-run",
+      { label: "useful", candidateIds: ["legacy-skill"] },
+      new Date("2026-07-03T02:00:00.000Z")
     );
+    const records = await readPreflightEvidence(state);
+    expect(records[0]?.feedback).toMatchObject({ candidateIds: ["catalog-testing"] });
+    expect(records[1]?.feedback).toMatchObject({ selectedSkillIds: ["legacy-skill"] });
   });
 
-  it("rejects unknown runs and Skill IDs without changing the file", async () => {
-    const stateDir = await mkdtemp(join(tmpdir(), "steward-preflight-invalid-"));
-    await appendPreflightEvidence(
-      stateDir,
-      result("run-1", "2026-07-03T00:00:00.000Z")
-    );
-    const path = join(stateDir, "preflights.json");
+  it("rejects unknown runs and candidate IDs without changing the file", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-invalid-"));
+    await appendPreflightEvidence(state, result("run-1", "2026-07-03T00:00:00.000Z"));
+    const path = join(state, "preflights.json");
     const before = await readFile(path, "utf8");
-
-    await expect(
-      recordPreflightFeedback(
-        stateDir,
-        "missing",
-        { label: "useful", selectedSkillIds: [] },
-        new Date()
-      )
-    ).rejects.toMatchObject({ code: "PREFLIGHT_NOT_FOUND" });
-    await expect(
-      recordPreflightFeedback(
-        stateDir,
-        "run-1",
-        { label: "incorrect", selectedSkillIds: ["unknown"] },
-        new Date()
-      )
-    ).rejects.toBeInstanceOf(PreflightEvidenceError);
+    await expect(recordPreflightFeedback(
+      state,
+      "missing",
+      { label: "useful", candidateIds: [] },
+      new Date()
+    )).rejects.toMatchObject({ code: "PREFLIGHT_NOT_FOUND" });
+    await expect(recordPreflightFeedback(
+      state,
+      "run-1",
+      { label: "incorrect", candidateIds: ["unknown"] },
+      new Date()
+    )).rejects.toBeInstanceOf(PreflightEvidenceError);
     expect(await readFile(path, "utf8")).toBe(before);
   });
 });
