@@ -43,6 +43,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
   await writeFile(join(companionSkillDirectory, "SKILL.md"), "---\nname: skill-steward-preflight\ndescription: Preflight tasks\n---\nRun preflight.\n");
   let readinessFailure: (() => Promise<void>) | undefined;
   let domainFailureAfterCommit: Error | undefined;
+  let uncertainJournalCommit = false;
   let companionCleanupFailure = false;
   let readinessCalls = 0;
   let idIndex = 0;
@@ -63,7 +64,15 @@ async function fixture(ids: string[] = ["integration-record"]) {
   }, {
     applyPlan: async (plan, options) => {
       appliedPlanIds.push((plan as { id: string }).id);
-      const record = await applyIntegrationPlan(plan, options);
+      const record = await applyIntegrationPlan(plan, options, uncertainJournalCommit
+        ? {
+            appendRecord: async () => {
+              throw Object.assign(new Error("journal commit cannot be proven"), {
+                code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
+              });
+            }
+          }
+        : {});
       if (domainFailureAfterCommit) throw domainFailureAfterCommit;
       return record;
     },
@@ -90,6 +99,9 @@ async function fixture(ids: string[] = ["integration-record"]) {
     },
     failDomainAfterCommit(error: Error) {
       domainFailureAfterCommit = error;
+    },
+    failJournalCommitUncertain() {
+      uncertainJournalCommit = true;
     },
     failCompanionCleanup() {
       companionCleanupFailure = true;
@@ -415,6 +427,25 @@ describe("Harness integration routes", () => {
     ));
 
     const failed = await applyRequest(app, "codex", "integration-record", headers);
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+    expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
+      .toContain("skill-steward hook prompt --harness codex");
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .resolves.toBeUndefined();
+  });
+
+  it("retains config and companion when journal commit is uncertain", async () => {
+    const { app, home, failJournalCommitUncertain } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    const planned = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    });
+    failJournalCommitUncertain();
+
+    const failed = await applyRequest(app, "codex", planned.json().data.id, headers);
     expect(failed.statusCode).toBe(409);
     expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))

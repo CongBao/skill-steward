@@ -43,10 +43,12 @@ export interface IntegrateApplyOptions {
 }
 
 export interface IntegrateApplyDependencies {
+  applyPlan: typeof applyIntegrationPlan;
   removeCompanion: typeof removeManagedCompanionSkill;
 }
 
 const integrateApplyDefaults: IntegrateApplyDependencies = {
+  applyPlan: applyIntegrationPlan,
   removeCompanion: removeManagedCompanionSkill
 };
 
@@ -214,8 +216,9 @@ export async function integratePlanCommand(
 export async function integrateApplyCommand(
   options: IntegrateApplyOptions,
   context: CliContext,
-  dependencies: IntegrateApplyDependencies = integrateApplyDefaults
+  dependencyOverrides: Partial<IntegrateApplyDependencies> = {}
 ): Promise<number> {
+  const dependencies = { ...integrateApplyDefaults, ...dependencyOverrides };
   try {
     if (options.plan === undefined) {
       throw new IntegrateCommandError(
@@ -245,7 +248,7 @@ export async function integrateApplyCommand(
       const installed = await installSharedSkill(context);
       let applied = false;
       try {
-        const record = await applyIntegrationPlan(plan, configOptions(context));
+        const record = await dependencies.applyPlan(plan, configOptions(context));
         applied = true;
         try {
           await initialReadinessScan(context);

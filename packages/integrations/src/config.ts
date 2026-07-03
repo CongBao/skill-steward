@@ -50,6 +50,18 @@ function errorCode(error: unknown): string | undefined {
     : undefined;
 }
 
+function journalCommitIsUncertain(error: unknown): boolean {
+  return errorCode(error) === "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN";
+}
+
+function uncertainJournalError(error: unknown, action: "apply" | "remove"): IntegrationError {
+  return new IntegrationError(
+    "INTEGRATION_ROLLBACK_FAILED",
+    `Integration ${action} reached journal publication, but commit could not be proven; configuration was retained to avoid contradicting a possibly committed record`,
+    { cause: error }
+  );
+}
+
 export async function rethrowAfterIntegrationApplyFailure(input: {
   error: unknown;
   companionCreated: boolean;
@@ -713,6 +725,7 @@ export async function applyIntegrationPlan(
   try {
     await dependencies.appendRecord(options.stateDirectory, record);
   } catch (error) {
+    if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "apply");
     if (plan.changes.length > 0) {
       try {
         await restoreIntegrationTarget(plan, options.home);
@@ -736,8 +749,10 @@ export async function applyIntegrationPlan(
 
 export async function rollbackIntegrationPlan(
   inputPlan: unknown,
-  options: IntegrationConfigOptions
+  options: IntegrationConfigOptions,
+  dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
+  const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
   const parsedPlan = integrationPlanSchema.safeParse(inputPlan);
   if (!parsedPlan.success) {
     throw new IntegrationError(
@@ -771,7 +786,12 @@ export async function rollbackIntegrationPlan(
     installedEntryFingerprint: plan.installedEntryFingerprint,
     createdAt: now.toISOString()
   };
-  await appendIntegrationRecord(options.stateDirectory, record);
+  try {
+    await dependencies.appendRecord(options.stateDirectory, record);
+  } catch (error) {
+    if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
+    throw error;
+  }
   return record;
 }
 
@@ -885,8 +905,10 @@ export async function integrationStatus(
 
 export async function removeIntegration(
   inputHarness: IntegrationHarness,
-  options: IntegrationConfigOptions
+  options: IntegrationConfigOptions,
+  dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
+  const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
   const harness = integrationHarnessSchema.parse(inputHarness);
   const targetPath = integrationTarget(harness, options.home);
   await assertSafeTarget(targetPath, options.home);
@@ -898,6 +920,29 @@ export async function removeIntegration(
     );
   }
   const before = await readConfig(targetPath);
+  const commitRemoval = async (record: IntegrationRecord): Promise<IntegrationRecord> => {
+    try {
+      await dependencies.appendRecord(options.stateDirectory, record);
+      return record;
+    } catch (error) {
+      if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
+      try {
+        await atomicWrite(targetPath, before.source, options.home);
+      } catch (rollbackError) {
+        throw new IntegrationError(
+          "INTEGRATION_ROLLBACK_FAILED",
+          `Integration configuration was removed, its journal failed, and restoration was incomplete: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          {
+            cause: new AggregateError(
+              [error, rollbackError],
+              "Integration removal journal commit and configuration restoration both failed"
+            )
+          }
+        );
+      }
+      throw error;
+    }
+  };
   if (harness === "github-copilot") {
     const expectedFingerprint = hash(stableJson(copilotHookConfig()));
     if (
@@ -924,8 +969,7 @@ export async function removeIntegration(
       installedEntryFingerprint: latest.installedEntryFingerprint,
       createdAt: now.toISOString()
     };
-    await appendIntegrationRecord(options.stateDirectory, record);
-    return record;
+    return commitRemoval(record);
   }
   const groups = installedBundle(before.config, harness);
   if (
@@ -960,6 +1004,5 @@ export async function removeIntegration(
     installedEntryFingerprint: latest.installedEntryFingerprint,
     createdAt: now.toISOString()
   };
-  await appendIntegrationRecord(options.stateDirectory, record);
-  return record;
+  return commitRemoval(record);
 }

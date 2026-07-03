@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readIntegrationRecords } from "@skill-steward/store";
-import { describe, expect, it } from "vitest";
+import { build } from "esbuild";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyIntegrationPlan,
   integrationPlanSchema,
@@ -15,12 +16,39 @@ import {
   rollbackIntegrationPlan
 } from "../src/config.js";
 
-const applyFixture = fileURLToPath(
+const applyFixtureSource = fileURLToPath(
   new URL("./fixtures/integration-apply.mjs", import.meta.url)
 );
+const storeSource = fileURLToPath(
+  new URL("../../store/src/index.ts", import.meta.url)
+);
+let fixtureDirectory = "";
+let applyFixture = "";
+
+beforeAll(async () => {
+  fixtureDirectory = await mkdtemp(join(tmpdir(), "steward-integration-fixtures-"));
+  applyFixture = join(fixtureDirectory, "integration-apply.mjs");
+  await build({
+    entryPoints: [applyFixtureSource],
+    outfile: applyFixture,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    logLevel: "silent",
+    banner: {
+      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+    },
+    alias: { "@skill-steward/store": storeSource }
+  });
+});
+
+afterAll(async () => {
+  if (fixtureDirectory) await rm(fixtureDirectory, { recursive: true, force: true });
+});
 
 async function waitForFile(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+  for (let attempt = 0; attempt < 5_000; attempt += 1) {
     try {
       await access(path);
       return;
@@ -111,6 +139,12 @@ describe.each(["codex", "claude-code"] as const)("%s integration config", (harne
     expect(JSON.stringify(afterRemoval)).not.toContain("skill-steward hook prompt");
     expect(JSON.stringify(afterRemoval)).not.toContain("skill-steward hook lifecycle");
   });
+});
+
+it("runs the integration worker from current source instead of package dist", async () => {
+  const source = await readFile(applyFixtureSource, "utf8");
+  expect(source).toContain("../../src/config.ts");
+  expect(source).not.toContain("../../dist/");
 });
 
 it("refuses malformed configuration without changing it", async () => {
@@ -211,6 +245,24 @@ it("rolls back an applied plan to exact reviewed bytes or a missing target", asy
   await expect(access(target(cleanHome, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it("keeps rollback configuration consistent with an uncertain removed record", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-rollback-uncertain-"));
+  const options = { home, stateDirectory: join(home, "state") };
+  const plan = await planIntegration("codex", options);
+  await applyIntegrationPlan(plan, options);
+  const uncertain = Object.assign(new Error("rollback record may be committed"), {
+    code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
+  });
+
+  await expect(rollbackIntegrationPlan(plan, options, {
+    appendRecord: async () => { throw uncertain; }
+  })).rejects.toMatchObject({
+    code: "INTEGRATION_ROLLBACK_FAILED",
+    cause: uncertain
+  });
+  await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it("restores configuration when the post-apply journal cannot commit", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-journal-rollback-"));
   const stateDirectory = join(home, "state");
@@ -280,6 +332,31 @@ it("preserves journal and rollback failures in one cause chain", async () => {
   expect(await readFile(plan.targetPath, "utf8")).toContain("changedDuringJournal");
 });
 
+it("does not roll back configuration when journal commit is uncertain", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-uncertain-commit-"));
+  const stateDirectory = join(home, "state");
+  const options = {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z")
+  };
+  const plan = await planIntegration("codex", options);
+  const uncertain = Object.assign(new Error("owned fragment cleanup failed"), {
+    code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
+  });
+
+  const failure = await applyIntegrationPlan(plan, options, {
+    appendRecord: async () => { throw uncertain; }
+  }).catch((error: unknown) => error);
+
+  expect(failure).toMatchObject({
+    code: "INTEGRATION_ROLLBACK_FAILED",
+    cause: uncertain
+  });
+  expect(await readFile(plan.targetPath, "utf8"))
+    .toContain("skill-steward hook prompt --harness codex");
+});
+
 it("cleans companions only when the domain proves configuration rollback", async () => {
   const journalFailure = Object.assign(new Error("journal is unreadable"), { code: "EISDIR" });
   const cleaned = await rethrowAfterIntegrationApplyFailure({
@@ -345,7 +422,11 @@ it.each([
 }) => {
   const home = await mkdtemp(join(tmpdir(), `steward-${harness}-ancestor-`));
   const outside = await mkdtemp(join(tmpdir(), "steward-outside-"));
-  await symlink(outside, join(home, ancestor), "dir");
+  await symlink(
+    outside,
+    join(home, ancestor),
+    process.platform === "win32" ? "junction" : "dir"
+  );
 
   await expect(planIntegration(harness, {
     home,
@@ -359,7 +440,11 @@ it("rechecks a newly symlinked missing Copilot ancestor before apply", async () 
   const outside = await mkdtemp(join(tmpdir(), "steward-outside-race-"));
   const options = { home, stateDirectory: join(home, "state") };
   const plan = await planIntegration("github-copilot", options);
-  await symlink(outside, join(home, ".copilot"), "dir");
+  await symlink(
+    outside,
+    join(home, ".copilot"),
+    process.platform === "win32" ? "junction" : "dir"
+  );
 
   await expect(applyIntegrationPlan(plan, options)).rejects.toMatchObject({
     code: "INTEGRATION_UNSAFE_PATH"
@@ -375,6 +460,51 @@ it("creates normal missing Copilot ancestor directories", async () => {
   await expect(access(join(home, ".copilot", "hooks", "skill-steward.json")))
     .resolves.toBeUndefined();
 });
+
+describe.each(["codex", "claude-code", "github-copilot"] as const)(
+  "%s removal journal failures",
+  (harness) => {
+    const installedTarget = (home: string) => harness === "github-copilot"
+      ? join(home, ".copilot", "hooks", "skill-steward.json")
+      : target(home, harness);
+
+    it("restores installed configuration when a removed record was not published", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-remove-journal-`));
+      const options = { home, stateDirectory: join(home, "state") };
+      await applyIntegrationPlan(await planIntegration(harness, options), options);
+      const path = installedTarget(home);
+      const before = await readFile(path, "utf8");
+      const journalFailure = new Error("removed record was not published");
+
+      await expect(removeIntegration(harness, options, {
+        appendRecord: async () => { throw journalFailure; }
+      })).rejects.toBe(journalFailure);
+      expect(await readFile(path, "utf8")).toBe(before);
+    });
+
+    it("does not restore configuration when removed-record commit is uncertain", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-remove-uncertain-`));
+      const options = { home, stateDirectory: join(home, "state") };
+      await applyIntegrationPlan(await planIntegration(harness, options), options);
+      const path = installedTarget(home);
+      const uncertain = Object.assign(new Error("removed record may be committed"), {
+        code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
+      });
+
+      await expect(removeIntegration(harness, options, {
+        appendRecord: async () => { throw uncertain; }
+      })).rejects.toMatchObject({
+        code: "INTEGRATION_ROLLBACK_FAILED",
+        cause: uncertain
+      });
+      if (harness === "github-copilot") {
+        await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        expect(await readFile(path, "utf8")).not.toContain("skill-steward hook");
+      }
+    });
+  }
+);
 
 it("keeps concurrent cross-Harness apply journals removable", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-concurrent-apply-"));

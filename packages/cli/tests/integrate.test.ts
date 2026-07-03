@@ -1,6 +1,7 @@
 import { access, mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { applyIntegrationPlan } from "@skill-steward/integrations";
 import { readLatestReport } from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
@@ -243,6 +244,34 @@ describe("integrate command", () => {
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);
+  });
+
+  it("retains config and companion when journal commit is uncertain", async () => {
+    const plan = await preview("codex");
+    const uncertain = Object.assign(new Error("journal commit cannot be proven"), {
+      code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
+    });
+    let cleanupCalled = false;
+
+    expect(await integrateApplyCommand({
+      plan: plan.id,
+      confirm: true,
+      json: false
+    }, current.context, {
+      applyPlan: (reviewedPlan, options) => applyIntegrationPlan(reviewedPlan, options, {
+        appendRecord: async () => { throw uncertain; }
+      }),
+      removeCompanion: async () => {
+        cleanupCalled = true;
+        return true;
+      }
+    })).toBe(1);
+    expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
+    expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(true);
+    expect(await exists(join(
+      current.home, ".agents", "skills", "skill-steward-preflight"
+    ))).toBe(true);
+    expect(cleanupCalled).toBe(false);
   });
 
   it("preserves a pre-existing companion and integration during failed readiness", async () => {

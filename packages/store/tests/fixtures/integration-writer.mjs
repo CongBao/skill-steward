@@ -1,6 +1,6 @@
 import { access, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { appendIntegrationRecord } from "../../dist/src/integration-store.js";
+import { appendIntegrationRecord } from "../../src/integration-store.ts";
 
 const [stateDirectory, harness, prefix, readyPath, barrierPath, countText] = process.argv.slice(2);
 const count = Number(countText);

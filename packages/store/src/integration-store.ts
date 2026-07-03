@@ -6,6 +6,7 @@ import {
   open,
   readdir,
   readFile,
+  realpath,
   rename,
   unlink
 } from "node:fs/promises";
@@ -44,6 +45,23 @@ const integrationFragmentSchema = z.object({
 
 export type IntegrationRecord = z.infer<typeof integrationRecordSchema>;
 
+export class IntegrationJournalCommitUncertainError extends Error {
+  readonly code = "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN";
+
+  constructor(commitError: unknown, cleanupError: unknown) {
+    super(
+      "Integration record publication failed and removal of its owned fragment could not be proven",
+      {
+        cause: new AggregateError(
+          [commitError, cleanupError],
+          "Integration record publication and owned-fragment cleanup both failed"
+        )
+      }
+    );
+    this.name = "IntegrationJournalCommitUncertainError";
+  }
+}
+
 interface IntegrationFragment {
   fileName: string;
   publishedAt: bigint;
@@ -61,6 +79,25 @@ interface DirectoryIdentity {
   device: number;
   inode: number;
 }
+
+interface IntegrationStoreContext {
+  platform: NodeJS.Platform;
+}
+
+export interface IntegrationRecordStore {
+  readIntegrationRecords(stateDirectory: string): Promise<IntegrationRecord[]>;
+  appendIntegrationRecord(
+    stateDirectory: string,
+    input: IntegrationRecord,
+    options?: { limit?: number }
+  ): Promise<void>;
+  latestIntegrationRecord(
+    stateDirectory: string,
+    harness: IntegrationRecord["harness"]
+  ): Promise<IntegrationRecord | null>;
+}
+
+const defaultContext: IntegrationStoreContext = { platform: process.platform };
 
 function recordsPath(stateDirectory: string): string {
   const statePath = resolve(stateDirectory);
@@ -94,8 +131,25 @@ async function assertSameDirectory(
 
 async function secureDirectory(
   path: string,
-  expected: DirectoryIdentity
+  statePath: string,
+  expected: DirectoryIdentity,
+  context: IntegrationStoreContext
 ): Promise<void> {
+  if (context.platform === "win32") {
+    await assertSameDirectory(path, expected);
+    const [physicalState, physicalDirectory] = await Promise.all([
+      realpath(statePath),
+      realpath(path)
+    ]);
+    if (dirname(physicalDirectory).toLowerCase() !== physicalState.toLowerCase()) {
+      throw new Error("Integration record directory escaped the state directory");
+    }
+    await assertSameDirectory(path, expected);
+    if ((await realpath(path)).toLowerCase() !== physicalDirectory.toLowerCase()) {
+      throw new Error("Integration record directory changed during the operation");
+    }
+    return;
+  }
   const handle = await open(
     path,
     constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
@@ -110,6 +164,10 @@ async function secureDirectory(
       throw new Error("Integration record directory changed during the operation");
     }
     await handle.chmod(0o700);
+    const secured = await handle.stat();
+    if ((secured.mode & 0o777) !== 0o700) {
+      throw new Error("Integration record directory must have private permissions");
+    }
   } finally {
     await handle.close();
   }
@@ -118,7 +176,8 @@ async function secureDirectory(
 
 async function openRecordsDirectory(
   stateDirectory: string,
-  create: boolean
+  create: boolean,
+  context: IntegrationStoreContext
 ): Promise<{ directory: string; identity: DirectoryIdentity } | null> {
   const statePath = resolve(stateDirectory);
   if (create) {
@@ -147,7 +206,7 @@ async function openRecordsDirectory(
     if (!create && isMissing(error)) return null;
     throw error;
   }
-  await secureDirectory(directory, identity);
+  await secureDirectory(directory, statePath, identity, context);
   return { directory, identity };
 }
 
@@ -161,15 +220,18 @@ async function readLegacyRecords(stateDirectory: string): Promise<IntegrationRec
   }
 }
 
-async function readFragments(stateDirectory: string): Promise<IntegrationFragment[]> {
-  const storage = await openRecordsDirectory(stateDirectory, false);
+async function readFragments(
+  stateDirectory: string,
+  context: IntegrationStoreContext
+): Promise<IntegrationFragment[]> {
+  const storage = await openRecordsDirectory(stateDirectory, false, context);
   if (!storage) return [];
   const { directory, identity } = storage;
   const entries = await readdir(directory, { withFileTypes: true });
   await assertSameDirectory(directory, identity);
   const fragments = await Promise.all(entries.flatMap((entry) =>
     entry.isFile() && fragmentNamePattern.test(entry.name)
-      ? [readFragment(directory, entry.name).catch((error) => {
+      ? [readFragment(directory, entry.name, context).catch((error) => {
         if (isMissing(error)) return null;
         throw error;
       })]
@@ -186,12 +248,16 @@ async function readFragments(stateDirectory: string): Promise<IntegrationFragmen
 
 async function readFragment(
   directory: string,
-  fileName: string
+  fileName: string,
+  context: IntegrationStoreContext
 ): Promise<IntegrationFragment> {
   const path = join(directory, fileName);
   const metadata = await lstat(path, { bigint: true });
   if (metadata.isSymbolicLink() || !metadata.isFile()) {
     throw new Error("Integration record fragment must be a regular file");
+  }
+  if (context.platform !== "win32" && (metadata.mode & 0o777n) !== 0o600n) {
+    throw new Error("Integration record fragment must have private permissions");
   }
   const fragment = integrationFragmentSchema.parse(
     JSON.parse(await readFile(path, "utf8"))
@@ -204,8 +270,11 @@ async function readFragment(
   };
 }
 
-async function cleanupOldFragments(stateDirectory: string): Promise<void> {
-  const fragments = await readFragments(stateDirectory);
+async function cleanupOldFragments(
+  stateDirectory: string,
+  context: IntegrationStoreContext
+): Promise<void> {
+  const fragments = await readFragments(stateDirectory, context);
   const directory = recordsPath(stateDirectory);
   await Promise.all(fragments.slice(MAX_RECORDS).map(async ({ fileName }) => {
     try {
@@ -216,11 +285,12 @@ async function cleanupOldFragments(stateDirectory: string): Promise<void> {
   }));
 }
 
-export async function readIntegrationRecords(
-  stateDirectory: string
+async function readIntegrationRecordsWithContext(
+  stateDirectory: string,
+  context: IntegrationStoreContext
 ): Promise<IntegrationRecord[]> {
   const [fragments, legacy] = await Promise.all([
-    readFragments(stateDirectory),
+    readFragments(stateDirectory, context),
     readLegacyRecords(stateDirectory)
   ]);
   const limit = fragments[0]?.limit ?? MAX_RECORDS;
@@ -235,10 +305,11 @@ export async function readIntegrationRecords(
   return records;
 }
 
-export async function appendIntegrationRecord(
+async function appendIntegrationRecordWithContext(
   stateDirectory: string,
   input: IntegrationRecord,
-  options: { limit?: number } = {}
+  options: { limit?: number },
+  context: IntegrationStoreContext
 ): Promise<void> {
   const limit = options.limit ?? MAX_RECORDS;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORDS) {
@@ -250,22 +321,23 @@ export async function appendIntegrationRecord(
     record: integrationRecordSchema.parse(input)
   });
   await readLegacyRecords(stateDirectory);
-  await readFragments(stateDirectory);
+  await readFragments(stateDirectory, context);
   const serialized = `${JSON.stringify(fragment, null, 2)}\n`;
-  const storage = await openRecordsDirectory(stateDirectory, true);
+  const storage = await openRecordsDirectory(stateDirectory, true, context);
   if (!storage) throw new Error("Integration record directory was not created");
   const { directory, identity } = storage;
   const unique = randomUUID();
   const temporary = join(directory, `.${process.pid}-${unique}.tmp`);
   const handle = await open(temporary, "wx", 0o600);
   let published = false;
+  let destination: string | undefined;
   try {
     await handle.writeFile(serialized, "utf8");
     await handle.sync();
-    await handle.chmod(0o600);
+    if (context.platform !== "win32") await handle.chmod(0o600);
     await handle.close();
     processSequence += 1;
-    const destination = join(
+    destination = join(
       directory,
       `${Date.now()}-${process.pid}-${String(processSequence).padStart(12, "0")}-${unique}.json`
     );
@@ -276,10 +348,24 @@ export async function appendIntegrationRecord(
     if (publishedMetadata.isSymbolicLink() || !publishedMetadata.isFile()) {
       throw new Error("Integration record fragment must be a regular file");
     }
-    if ((publishedMetadata.mode & 0o777) !== 0o600) {
+    if (
+      context.platform !== "win32"
+      && (publishedMetadata.mode & 0o777) !== 0o600
+    ) {
       throw new Error("Integration record fragment must have private permissions");
     }
-    await cleanupOldFragments(stateDirectory);
+    await cleanupOldFragments(stateDirectory, context);
+  } catch (error) {
+    if (published && destination) {
+      try {
+        await unlink(destination);
+      } catch (cleanupError) {
+        if (!isMissing(cleanupError)) {
+          throw new IntegrationJournalCommitUncertainError(error, cleanupError);
+        }
+      }
+    }
+    throw error;
   } finally {
     try {
       await handle.close();
@@ -296,11 +382,49 @@ export async function appendIntegrationRecord(
   }
 }
 
+async function latestIntegrationRecordWithContext(
+  stateDirectory: string,
+  harness: IntegrationRecord["harness"],
+  context: IntegrationStoreContext
+): Promise<IntegrationRecord | null> {
+  return (await readIntegrationRecordsWithContext(stateDirectory, context)).find(
+    (record) => record.harness === harness
+  ) ?? null;
+}
+
+export function createIntegrationRecordStore(
+  options: { platform?: NodeJS.Platform } = {}
+): IntegrationRecordStore {
+  const context: IntegrationStoreContext = {
+    platform: options.platform ?? process.platform
+  };
+  return {
+    readIntegrationRecords: (stateDirectory) =>
+      readIntegrationRecordsWithContext(stateDirectory, context),
+    appendIntegrationRecord: (stateDirectory, input, appendOptions = {}) =>
+      appendIntegrationRecordWithContext(stateDirectory, input, appendOptions, context),
+    latestIntegrationRecord: (stateDirectory, harness) =>
+      latestIntegrationRecordWithContext(stateDirectory, harness, context)
+  };
+}
+
+export async function readIntegrationRecords(
+  stateDirectory: string
+): Promise<IntegrationRecord[]> {
+  return readIntegrationRecordsWithContext(stateDirectory, defaultContext);
+}
+
+export async function appendIntegrationRecord(
+  stateDirectory: string,
+  input: IntegrationRecord,
+  options: { limit?: number } = {}
+): Promise<void> {
+  return appendIntegrationRecordWithContext(stateDirectory, input, options, defaultContext);
+}
+
 export async function latestIntegrationRecord(
   stateDirectory: string,
   harness: IntegrationRecord["harness"]
 ): Promise<IntegrationRecord | null> {
-  return (await readIntegrationRecords(stateDirectory)).find(
-    (record) => record.harness === harness
-  ) ?? null;
+  return latestIntegrationRecordWithContext(stateDirectory, harness, defaultContext);
 }

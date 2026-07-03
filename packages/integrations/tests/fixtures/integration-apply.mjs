@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   applyIntegrationPlan,
   planIntegration
-} from "../../dist/src/config.js";
+} from "../../src/config.ts";
 
 const [home, stateDirectory, harness, readyPath, barrierPath, countText] = process.argv.slice(2);
 await writeFile(readyPath, "ready\n", "utf8");

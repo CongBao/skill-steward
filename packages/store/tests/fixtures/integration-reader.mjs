@@ -1,6 +1,6 @@
 import { access, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { readIntegrationRecords } from "../../dist/src/integration-store.js";
+import { readIntegrationRecords } from "../../src/integration-store.ts";
 
 const [stateDirectory, readyPath, barrierPath, countText] = process.argv.slice(2);
 await writeFile(readyPath, "ready\n", "utf8");
