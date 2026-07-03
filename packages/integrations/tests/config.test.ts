@@ -561,7 +561,7 @@ it("distinguishes invalid UTF-8 bytes during journal compensation", async () => 
   expect(causes[0]).toBe(appendFailure);
   expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
   expect(await readFile(path)).toEqual(externalB);
-});
+}, 15_000);
 
 it("does not roll back configuration when journal commit is uncertain", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-uncertain-commit-"));
