@@ -4,6 +4,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.5.0-alpha.1] - 2026-07-03
+
 ### Added
 
 - Local privacy-safe recommendation evidence with explicit feedback, correction metrics, provenance-only install conversion, lifecycle reasons, Harness/algorithm breakdowns, and 7/30-day windows.

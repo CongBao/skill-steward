@@ -152,7 +152,7 @@ describe("open-source repository", () => {
   it("keeps internal planning references out of the public documentation tree", async () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
-    expect(changelog).toContain("## [0.4.0-alpha.1]");
+    expect(changelog).toContain("## [0.5.0-alpha.1]");
     expect(changelog).toContain("privacy-safe recommendation evidence");
     expect(changelog).toContain("reversible quarantine and restore");
     const architecture = await readFile(join(root, "docs/architecture.md"), "utf8");
