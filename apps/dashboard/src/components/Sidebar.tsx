@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Boxes,
+  ChartNoAxesCombined,
   ChevronLeft,
   ChevronRight,
   History,
@@ -50,6 +51,7 @@ export function Sidebar() {
   const navigation = [
     ["/", t("nav.overview"), LayoutDashboard],
     ["/preflight", t("nav.preflight"), RouteIcon],
+    ["/evidence", t("nav.evidence"), ChartNoAxesCombined],
     ["/skills", t("nav.skills"), Boxes],
     ["/findings", t("nav.findings"), AlertTriangle],
     ["/history", t("nav.history"), History],

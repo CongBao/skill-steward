@@ -395,3 +395,119 @@ export function labelFinding(
     body: JSON.stringify({ label })
   });
 }
+
+export interface EvidenceMetric {
+  numerator: number;
+  denominator: number;
+  value: number | null;
+}
+
+export interface EvidenceMetrics {
+  feedbackRate: EvidenceMetric;
+  usefulRate: EvidenceMetric;
+  incompleteRate: EvidenceMetric;
+  incorrectRate: EvidenceMetric;
+  correctionPrecision: EvidenceMetric;
+  correctionRecall: EvidenceMetric;
+  correctionF1: EvidenceMetric;
+  installConversion: EvidenceMetric;
+}
+
+export interface EvidenceTotals {
+  preflights: number;
+  labeled: number;
+  portfolios: number;
+  events: number;
+}
+
+export interface EvidenceBreakdown {
+  key: string;
+  totals: EvidenceTotals;
+  metrics: EvidenceMetrics;
+}
+
+export interface EvidenceSummary {
+  schemaVersion: 1;
+  generatedAt: string;
+  period: { from: string | null; to: string | null };
+  totals: EvidenceTotals;
+  metrics: EvidenceMetrics;
+  lifecycleReasons: Partial<Record<"complete" | "error" | "abort" | "timeout" | "user-exit" | "other", number>>;
+  harnesses: EvidenceBreakdown[];
+  algorithms: EvidenceBreakdown[];
+  windows: { last7Days: EvidenceBreakdown; last30Days: EvidenceBreakdown };
+  readiness: {
+    status: "insufficient-evidence" | "ready-for-calibration";
+    reasons: string[];
+  };
+}
+
+export type EvidenceMode = "minimal" | "learning";
+
+export interface EvidencePolicy {
+  schemaVersion: 1;
+  mode: EvidenceMode;
+  retentionDays: number;
+  maxEvents: number;
+}
+
+export interface EvidencePolicyPlan {
+  schemaVersion: 1;
+  id: string;
+  before: EvidencePolicy;
+  beforeFingerprint: string;
+  after: EvidencePolicy;
+  afterFingerprint: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface EvidenceErasePlan {
+  schemaVersion: 1;
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  paths: Array<{
+    kind: "preflights" | "events" | "salt";
+    path: string;
+    exists: boolean;
+    fingerprint: string | null;
+  }>;
+}
+
+export function fetchEvidenceSummary(): Promise<EvidenceSummary> {
+  return apiRequest("/api/v1/evidence/summary");
+}
+
+export function fetchEvidencePolicy(): Promise<EvidencePolicy> {
+  return apiRequest("/api/v1/evidence/policy");
+}
+
+export function planEvidencePolicy(change: Omit<EvidencePolicy, "schemaVersion">): Promise<EvidencePolicyPlan> {
+  return apiRequest("/api/v1/evidence/policy/plan", {
+    method: "POST",
+    body: JSON.stringify(change)
+  });
+}
+
+export function applyEvidencePolicy(planId: string): Promise<EvidencePolicy> {
+  return apiRequest("/api/v1/evidence/policy/apply", {
+    method: "POST",
+    body: JSON.stringify({ planId })
+  });
+}
+
+export function compactEvidence(): Promise<{ before: number; kept: number; removed: number }> {
+  return apiRequest("/api/v1/evidence/compact", { method: "POST" });
+}
+
+export function planEvidenceErase(): Promise<EvidenceErasePlan> {
+  return apiRequest("/api/v1/evidence/erase/plan", { method: "POST" });
+}
+
+export function applyEvidenceErase(planId: string): Promise<{ erased: true }> {
+  return apiRequest("/api/v1/evidence/erase/apply", {
+    method: "POST",
+    body: JSON.stringify({ planId })
+  });
+}

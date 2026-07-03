@@ -6,9 +6,15 @@ import { SettingsPage } from "./SettingsPage.js";
 
 beforeEach(() => {
   localStorage.clear();
-  vi.stubGlobal("fetch", vi.fn(async () => ({
+  vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => ({
     ok: true,
-    json: async () => ({ data: [], error: null, meta: { apiVersion: 1 } })
+    json: async () => ({
+      data: String(input).endsWith("/api/v1/evidence/policy")
+        ? { schemaVersion: 1, mode: "minimal", retentionDays: 30, maxEvents: 5_000 }
+        : [],
+      error: null,
+      meta: { apiVersion: 1 }
+    })
   })));
 });
 
