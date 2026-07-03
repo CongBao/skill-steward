@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@skill-steward/preflight": "workspace:*",
+    "@skill-steward/store": "workspace:*",
     "zod": "^3.25.67"
   }
 }
