@@ -209,7 +209,7 @@ export async function run(
 
   integrate
     .command("plan")
-    .requiredOption("--harness <id>", "codex or claude-code")
+    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--json", "JSON output", false)
     .action(async (options: { harness: string; json: boolean }) => {
       exitCode = await integratePlanCommand(options.harness, options.json, context);
@@ -243,7 +243,7 @@ export async function run(
 
   integrate
     .command("apply")
-    .requiredOption("--harness <id>", "codex or claude-code")
+    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--confirm", "confirm the reviewed integration plan", false)
     .action(async (options: { harness: string; confirm: boolean }) => {
       exitCode = await integrateApplyCommand(options.harness, options.confirm, context);
@@ -251,7 +251,7 @@ export async function run(
 
   integrate
     .command("status")
-    .option("--harness <id>", "codex or claude-code")
+    .option("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--json", "JSON output", false)
     .action(async (options: { harness?: string; json: boolean }) => {
       exitCode = await integrateStatusCommand(options.harness, options.json, context);
@@ -259,7 +259,7 @@ export async function run(
 
   integrate
     .command("remove")
-    .requiredOption("--harness <id>", "codex or claude-code")
+    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
     .option("--confirm", "confirm integration removal", false)
     .action(async (options: { harness: string; confirm: boolean }) => {
       exitCode = await integrateRemoveCommand(options.harness, options.confirm, context);
