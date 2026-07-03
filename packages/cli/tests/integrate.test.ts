@@ -1,7 +1,10 @@
 import { access, mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { applyIntegrationPlan } from "@skill-steward/integrations";
+import {
+  applyIntegrationPlan,
+  rollbackIntegrationPlan
+} from "@skill-steward/integrations";
 import { readLatestReport } from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
@@ -268,6 +271,36 @@ describe("integrate command", () => {
     })).toBe(1);
     expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(true);
+    expect(await exists(join(
+      current.home, ".agents", "skills", "skill-steward-preflight"
+    ))).toBe(true);
+    expect(cleanupCalled).toBe(false);
+  });
+
+  it("retains installed artifacts when readiness rollback cannot journal removal", async () => {
+    const plan = await preview("codex");
+    await writeFile(join(current.context.stateDir, "latest-report.json"), "not-json", "utf8");
+    const appendFailure = new Error("removed record was not committed");
+    let cleanupCalled = false;
+
+    expect(await integrateApplyCommand({
+      plan: plan.id,
+      confirm: true,
+      json: false
+    }, current.context, {
+      rollbackPlan: (reviewedPlan, options) => rollbackIntegrationPlan(
+        reviewedPlan,
+        options,
+        { appendRecord: async () => { throw appendFailure; } }
+      ),
+      removeCompanion: async () => {
+        cleanupCalled = true;
+        return true;
+      }
+    })).toBe(1);
+    expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
+    expect(await readFile(join(current.home, ".codex", "hooks.json"), "utf8"))
+      .toContain("skill-steward hook prompt --harness codex");
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);

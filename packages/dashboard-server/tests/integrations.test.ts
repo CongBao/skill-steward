@@ -5,7 +5,8 @@ import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
   applyIntegrationPlan,
   IntegrationError,
-  removeManagedCompanionSkill
+  removeManagedCompanionSkill,
+  rollbackIntegrationPlan
 } from "@skill-steward/integrations";
 import { readLatestReport, writeLatestReport } from "@skill-steward/store";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,6 +45,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
   let readinessFailure: (() => Promise<void>) | undefined;
   let domainFailureAfterCommit: Error | undefined;
   let uncertainJournalCommit = false;
+  let rollbackJournalFailure = false;
   let companionCleanupFailure = false;
   let readinessCalls = 0;
   let idIndex = 0;
@@ -76,6 +78,13 @@ async function fixture(ids: string[] = ["integration-record"]) {
       if (domainFailureAfterCommit) throw domainFailureAfterCommit;
       return record;
     },
+    rollbackPlan: (plan, options) => rollbackIntegrationPlan(
+      plan,
+      options,
+      rollbackJournalFailure
+        ? { appendRecord: async () => { throw new Error("removed record was not committed"); } }
+        : {}
+    ),
     removeCompanion: async (options) => companionCleanupFailure
       ? false
       : removeManagedCompanionSkill(options)
@@ -102,6 +111,9 @@ async function fixture(ids: string[] = ["integration-record"]) {
     },
     failJournalCommitUncertain() {
       uncertainJournalCommit = true;
+    },
+    failRollbackJournal() {
+      rollbackJournalFailure = true;
     },
     failCompanionCleanup() {
       companionCleanupFailure = true;
@@ -444,6 +456,26 @@ describe("Harness integration routes", () => {
       headers
     });
     failJournalCommitUncertain();
+
+    const failed = await applyRequest(app, "codex", planned.json().data.id, headers);
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+    expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
+      .toContain("skill-steward hook prompt --harness codex");
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .resolves.toBeUndefined();
+  });
+
+  it("retains installed artifacts when readiness rollback cannot journal removal", async () => {
+    const { app, home, failReadiness, failRollbackJournal } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    const planned = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    });
+    failReadiness();
+    failRollbackJournal();
 
     const failed = await applyRequest(app, "codex", planned.json().data.id, headers);
     expect(failed.statusCode).toBe(409);

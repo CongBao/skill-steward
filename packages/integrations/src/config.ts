@@ -790,7 +790,25 @@ export async function rollbackIntegrationPlan(
     await dependencies.appendRecord(options.stateDirectory, record);
   } catch (error) {
     if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
-    throw error;
+    try {
+      await atomicWrite(plan.targetPath, stableJson(plan.afterConfig), options.home);
+    } catch (compensationError) {
+      throw new IntegrationError(
+        "INTEGRATION_ROLLBACK_FAILED",
+        `Integration rollback could not journal removal or restore the installed configuration: ${compensationError instanceof Error ? compensationError.message : String(compensationError)}`,
+        {
+          cause: new AggregateError(
+            [error, compensationError],
+            "Integration rollback journal and installed-configuration compensation both failed"
+          )
+        }
+      );
+    }
+    throw new IntegrationError(
+      "INTEGRATION_ROLLBACK_FAILED",
+      "Integration rollback could not journal removal; the installed configuration was restored to match the retained record",
+      { cause: error }
+    );
   }
   return record;
 }

@@ -263,6 +263,78 @@ it("keeps rollback configuration consistent with an uncertain removed record", a
   await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+describe.each(["codex", "claude-code", "github-copilot"] as const)(
+  "%s definite rollback journal failure",
+  (harness) => {
+    it("restores the installed config that matches the retained record", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-rollback-journal-`));
+      const stateDirectory = join(home, "state");
+      const options = { home, stateDirectory };
+      const plan = await planIntegration(harness, options);
+      await applyIntegrationPlan(plan, options);
+      const appendFailure = new Error("removed record was not committed");
+
+      await expect(rollbackIntegrationPlan(plan, options, {
+        appendRecord: async () => { throw appendFailure; }
+      })).rejects.toMatchObject({
+        code: "INTEGRATION_ROLLBACK_FAILED",
+        cause: appendFailure
+      });
+      expect(JSON.parse(await readFile(plan.targetPath, "utf8"))).toEqual(plan.afterConfig);
+      await expect(integrationStatus(harness, options)).resolves.toMatchObject({
+        status: harness === "codex" ? "needs-trust" : "installed"
+      });
+    });
+  }
+);
+
+describe.each(["codex", "claude-code"] as const)(
+  "%s existing-config rollback journal failure",
+  (harness) => {
+    it("restores the installed config instead of the backed-up pre-apply config", async () => {
+      const home = await mkdtemp(join(tmpdir(), `steward-${harness}-rollback-backup-`));
+      const stateDirectory = join(home, "state");
+      await seed(home, harness);
+      const options = { home, stateDirectory };
+      const plan = await planIntegration(harness, options);
+      expect(plan.backupPath).toBeDefined();
+      await applyIntegrationPlan(plan, options);
+      await expect(access(plan.backupPath!)).resolves.toBeUndefined();
+      const appendFailure = new Error("removed record was not committed");
+
+      await expect(rollbackIntegrationPlan(plan, options, {
+        appendRecord: async () => { throw appendFailure; }
+      })).rejects.toMatchObject({
+        code: "INTEGRATION_ROLLBACK_FAILED",
+        cause: appendFailure
+      });
+      expect(JSON.parse(await readFile(plan.targetPath, "utf8"))).toEqual(plan.afterConfig);
+      await expect(access(plan.backupPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  }
+);
+
+it("preserves both causes when installed-config compensation also fails", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-rollback-double-failure-"));
+  const options = { home, stateDirectory: join(home, "state") };
+  const plan = await planIntegration("codex", options);
+  await applyIntegrationPlan(plan, options);
+  const appendFailure = new Error("removed record was not committed");
+
+  const failure = await rollbackIntegrationPlan(plan, options, {
+    appendRecord: async () => {
+      await mkdir(plan.targetPath, { recursive: true });
+      throw appendFailure;
+    }
+  }).catch((error: unknown) => error);
+
+  expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+  expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+  const causes = ((failure as Error).cause as AggregateError).errors;
+  expect(causes[0]).toBe(appendFailure);
+  expect(causes[1]).toBeDefined();
+});
+
 it("restores configuration when the post-apply journal cannot commit", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-journal-rollback-"));
   const stateDirectory = join(home, "state");

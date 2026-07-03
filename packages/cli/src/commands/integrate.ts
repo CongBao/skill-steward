@@ -44,11 +44,13 @@ export interface IntegrateApplyOptions {
 
 export interface IntegrateApplyDependencies {
   applyPlan: typeof applyIntegrationPlan;
+  rollbackPlan: typeof rollbackIntegrationPlan;
   removeCompanion: typeof removeManagedCompanionSkill;
 }
 
 const integrateApplyDefaults: IntegrateApplyDependencies = {
   applyPlan: applyIntegrationPlan,
+  rollbackPlan: rollbackIntegrationPlan,
   removeCompanion: removeManagedCompanionSkill
 };
 
@@ -156,7 +158,7 @@ async function rollbackFailedReadiness(
   const failures: string[] = [];
   if (plan.changes.length > 0) {
     try {
-      await rollbackIntegrationPlan(plan, configOptions(context));
+      await dependencies.rollbackPlan(plan, configOptions(context));
     } catch (error) {
       failures.push(`configuration: ${errorText(error)}`);
     }
