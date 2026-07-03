@@ -62,6 +62,23 @@ async function fixture() {
       compatibility: "declared"
     }]
   });
+  await writeFile(join(stateDir, "preflights.json"), `${JSON.stringify({
+    schemaVersion: 3,
+    records: [{
+      schemaVersion: 3,
+      id: "run-1",
+      createdAt: "2026-07-03T00:00:00.000Z",
+      portfolioFingerprint: `sha256:${"b".repeat(64)}`,
+      taskHash: `sha256:${"c".repeat(64)}`,
+      taskCharacterCount: 20,
+      taskTermCount: 3,
+      algorithmVersion: 2,
+      harness: "codex",
+      candidateIds: ["testing-available"],
+      useCandidateIds: [],
+      installCandidateIds: ["testing-available"]
+    }]
+  }, null, 2)}\n`, "utf8");
   const stdout: string[] = [];
   const stderr: string[] = [];
   const context: CliContext = {
@@ -94,6 +111,7 @@ describe("catalog install command", () => {
       "--catalog-candidate", "testing-available",
       "--harness", "codex",
       "--scope", "global",
+      "--preflight", "run-1",
       "--json"
     ];
     expect(await run(args, current.context)).toBe(0);
@@ -107,8 +125,19 @@ describe("catalog install command", () => {
     expect(await run([...args, "--confirm"], current.context)).toBe(0);
     expect(await exists(destination)).toBe(true);
     expect(await readInstallationHistory(current.stateDir)).toEqual([
-      expect.objectContaining({ status: "installed", destination })
+      expect.objectContaining({
+        status: "installed",
+        destination,
+        provenance: {
+          preflightId: "run-1",
+          candidateId: "testing-available",
+          sourceId: "fixture-catalog",
+          sourceRevision: "a".repeat(40)
+        }
+      })
     ]);
+    expect(await readFile(join(current.stateDir, "installations.jsonl"), "utf8"))
+      .not.toContain("https://example.com");
   });
 
   it("requires replace for a differing destination", async () => {
@@ -131,5 +160,18 @@ describe("catalog install command", () => {
     expect(await readFile(join(destination, "SKILL.md"), "utf8")).toContain(
       "Find missing tests"
     );
+  });
+
+  it("rejects provenance that does not name an explicit recommendation", async () => {
+    expect(await run([
+      "install",
+      "--catalog-candidate", "testing-available",
+      "--harness", "codex",
+      "--scope", "global",
+      "--preflight", "missing",
+      "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.join("")).toContain("PREFLIGHT_NOT_FOUND");
+    expect(await readInstallationHistory(current.stateDir)).toEqual([]);
   });
 });

@@ -10,7 +10,7 @@ import {
   stat
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { InstallerError } from "./domain.js";
+import { installationProvenanceSchema, InstallerError } from "./domain.js";
 import {
   appendInstallationRecord,
   type InstallationRecord
@@ -64,6 +64,9 @@ export async function applyInstallationPlan(
   plan: InstallationPlan,
   options: ApplyInstallationOptions
 ): Promise<InstallationRecord> {
+  const provenance = plan.provenance
+    ? installationProvenanceSchema.parse(plan.provenance)
+    : undefined;
   if (plan.status !== "ready" || (plan.action !== "create" && plan.action !== "replace")) {
     throw new InstallerError("PLAN_NOT_COMMITTABLE", "Installation plan is not ready to commit");
   }
@@ -113,7 +116,8 @@ export async function applyInstallationPlan(
       installedFingerprint: plan.sourceFingerprint,
       previousFingerprint: plan.expectedDestinationFingerprint,
       backupDirectory,
-      createdAt: new Date(now()).toISOString()
+      createdAt: new Date(now()).toISOString(),
+      ...(provenance ? { provenance } : {})
     };
     await appendInstallationRecord(options.stateDirectory, record);
     return record;

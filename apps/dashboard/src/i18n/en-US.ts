@@ -164,6 +164,7 @@ export const enUS = {
   "install.tokens": "estimated tokens",
   "install.noFindings": "No validation findings",
   "install.riskNotice": "Skills can contain instructions and executable scripts. Review the complete source before use.",
+  "install.preflightProvenance": "Recommended by Task Preflight",
   "page.findings.title": "Findings",
   "page.findings.description": "Review evidence and decide what needs attention.",
   "findings.all": "All severities",

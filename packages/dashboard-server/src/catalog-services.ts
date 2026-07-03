@@ -8,8 +8,12 @@ import {
   type CatalogSource,
   type RefreshCatalogInput
 } from "@skill-steward/catalog";
-import type { InstallCandidate } from "@skill-steward/installer";
 import {
+  installationProvenanceSchema,
+  type InstallCandidate
+} from "@skill-steward/installer";
+import {
+  assertPreflightInstallationRecommendation,
   readCatalogSnapshot,
   readCatalogSources,
   writeCatalogSnapshot,
@@ -27,6 +31,7 @@ export type CatalogServiceErrorCode =
   | "CATALOG_PRESET_REMOVE_FORBIDDEN"
   | "CATALOG_CANDIDATE_NOT_FOUND"
   | "CATALOG_CANDIDATE_DRIFTED"
+  | "CATALOG_PROVENANCE_INVALID"
   | "CATALOG_INSTALLATION_UNAVAILABLE";
 
 export class CatalogServiceError extends Error {
@@ -49,7 +54,7 @@ export interface CatalogServices {
   enable(id: string, enabled: boolean): Promise<CatalogSource>;
   remove(id: string): Promise<void>;
   refresh(): Promise<CatalogSnapshot>;
-  inspectCandidate(id: string): Promise<CatalogCandidateInspection>;
+  inspectCandidate(id: string, preflightId?: string): Promise<CatalogCandidateInspection>;
 }
 
 export interface CatalogServiceOptions {
@@ -148,7 +153,7 @@ export function createCatalogServices(
       await writeCatalogSnapshot(options.stateDirectory, snapshot);
       return snapshot;
     },
-    async inspectCandidate(id) {
+    async inspectCandidate(id, preflightId) {
       const current = await list();
       const candidate = current.snapshot?.skills.find((skill) => skill.id === id);
       if (!candidate) {
@@ -171,9 +176,31 @@ export function createCatalogServices(
         );
       }
       const gitSource = catalogCandidateSource(candidate, source);
+      const provenance = preflightId
+        ? installationProvenanceSchema.parse({
+            preflightId,
+            candidateId: candidate.id,
+            sourceId: candidate.sourceId,
+            sourceRevision: candidate.sourceRevision
+          })
+        : undefined;
+      if (provenance) {
+        try {
+          await assertPreflightInstallationRecommendation(
+            options.stateDirectory,
+            provenance.preflightId,
+            provenance.candidateId
+          );
+        } catch {
+          throw new CatalogServiceError(
+            "CATALOG_PROVENANCE_INVALID",
+            "Catalog candidate was not an explicit installation recommendation in that preflight"
+          );
+        }
+      }
       let preview: InspectionResult;
       try {
-        preview = await options.inspectInstallation(gitSource);
+        preview = await options.inspectInstallation(gitSource, provenance);
       } catch {
         throw new CatalogServiceError(
           "CATALOG_CANDIDATE_DRIFTED",

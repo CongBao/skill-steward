@@ -111,6 +111,7 @@ export async function run(
     .requiredOption("--harness <id>")
     .requiredOption("--scope <scope>", "global or project")
     .option("--workspace <path>")
+    .option("--preflight <id>", "link an explicit Task Preflight recommendation")
     .option("--target-name <name>")
     .option("--replace", "replace a differing destination with backup", false)
     .option("--confirm", "confirm the reviewed installation", false)
@@ -120,6 +121,7 @@ export async function run(
       harness: string;
       scope: string;
       workspace?: string;
+      preflight?: string;
       targetName?: string;
       replace: boolean;
       confirm: boolean;

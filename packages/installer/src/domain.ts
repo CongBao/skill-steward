@@ -47,6 +47,15 @@ export const installationSourceSchema = z.discriminatedUnion("kind", [
 
 export type InstallationSource = z.infer<typeof installationSourceSchema>;
 
+export const installationProvenanceSchema = z.object({
+  preflightId: z.string().min(1).max(256),
+  candidateId: z.string().min(1).max(256),
+  sourceId: z.string().min(1).max(256),
+  sourceRevision: z.string().regex(/^[a-f0-9]{40,64}$/i)
+}).strict();
+
+export type InstallationProvenance = z.infer<typeof installationProvenanceSchema>;
+
 export class InstallerError extends Error {
   readonly code: string;
 

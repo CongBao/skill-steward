@@ -121,6 +121,14 @@ export interface InspectionResult {
   expiresAt: number;
   source: Record<string, unknown>;
   candidates: InstallCandidate[];
+  provenance?: InstallationProvenance;
+}
+
+export interface InstallationProvenance {
+  preflightId: string;
+  candidateId: string;
+  sourceId: string;
+  sourceRevision: string;
 }
 
 export interface InstallationPlanResult {
@@ -130,6 +138,7 @@ export interface InstallationPlanResult {
   destination: string;
   expectedDestinationFingerprint?: string | null;
   changes: Array<{ operation: "backup" | "create"; path: string }>;
+  provenance?: InstallationProvenance;
 }
 
 export interface InstallationTransaction {
@@ -137,6 +146,7 @@ export interface InstallationTransaction {
   status: "installed" | "rolled-back";
   destination?: string;
   backupDirectory?: string | null;
+  provenance?: InstallationProvenance;
 }
 
 export type PreflightReasonCode =
@@ -289,9 +299,13 @@ export function refreshCatalog(): Promise<CatalogSnapshot> {
   return apiRequest("/api/v1/catalog/refresh", { method: "POST" });
 }
 
-export function inspectCatalogCandidate(id: string): Promise<InspectionResult & { catalogCandidateId: string }> {
+export function inspectCatalogCandidate(
+  id: string,
+  preflightId?: string
+): Promise<InspectionResult & { catalogCandidateId: string }> {
   return apiRequest(`/api/v1/catalog/candidates/${encodeURIComponent(id)}/inspect-installation`, {
-    method: "POST"
+    method: "POST",
+    ...(preflightId ? { body: JSON.stringify({ preflightId }) } : {})
   });
 }
 

@@ -86,11 +86,23 @@ export function registerCatalogRoutes(
     }
   });
 
-  app.post<{ Params: { id: string } }>(
+  app.post<{ Params: { id: string }; Body: unknown }>(
     "/api/v1/catalog/candidates/:id/inspect-installation",
     async (request, reply) => {
       try {
-        return apiSuccess(await services.inspectCandidate(request.params.id));
+        const body = typeof request.body === "object" && request.body !== null
+          ? request.body as Record<string, unknown>
+          : {};
+        if (body.preflightId !== undefined && typeof body.preflightId !== "string") {
+          return reply.code(400).send(apiFailure(
+            "INVALID_INSTALL_PROVENANCE",
+            "preflightId must be a string"
+          ));
+        }
+        return apiSuccess(await services.inspectCandidate(
+          request.params.id,
+          typeof body.preflightId === "string" ? body.preflightId : undefined
+        ));
       } catch (error) {
         return sendCatalogError(reply, error);
       }

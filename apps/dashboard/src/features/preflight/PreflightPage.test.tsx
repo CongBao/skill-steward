@@ -183,7 +183,10 @@ describe("PreflightPage v2", () => {
     await user.click(screen.getByRole("button", { name: "Inspect test-review installation" }));
     expect(mockedFetch).toHaveBeenCalledWith(
       "/api/v1/catalog/candidates/testing/inspect-installation",
-      expect.objectContaining({ method: "POST" })
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ preflightId: "run-1" })
+      })
     );
   });
 

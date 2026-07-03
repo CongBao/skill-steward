@@ -80,7 +80,10 @@ export function createPreflightServices(
           now()
         );
       } catch (error) {
-        if (error instanceof PreflightEvidenceError) {
+        if (
+          error instanceof PreflightEvidenceError
+          && error.code !== "INVALID_INSTALL_PROVENANCE"
+        ) {
           throw new PreflightServiceError(error.code, error.message);
         }
         throw error;

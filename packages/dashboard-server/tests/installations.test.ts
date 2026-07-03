@@ -1,6 +1,13 @@
+import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDashboardApp } from "../src/app.js";
-import type { InstallationServices } from "../src/installation-services.js";
+import { readInstallationHistory } from "@skill-steward/installer";
+import {
+  createInstallationServices,
+  type InstallationServices
+} from "../src/installation-services.js";
 
 function services(): InstallationServices {
   return {
@@ -106,5 +113,49 @@ describe("installation routes", () => {
         })
       ).json()
     ).toMatchObject({ data: { status: "rolled-back" } });
+  });
+
+  it("carries validated catalog provenance from preview through the journal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "steward-install-provenance-"));
+    const source = join(root, "source");
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: recommended-review\ndescription: Review changes\n---\n"
+    );
+    const provenance = {
+      preflightId: "run-1",
+      candidateId: "testing-available",
+      sourceId: "fixture-catalog",
+      sourceRevision: "a".repeat(40)
+    };
+    const stateDirectory = join(root, "state");
+    const installationServices = createInstallationServices({
+      stateDirectory,
+      home: root,
+      workspace: root,
+      stageGit: async (directory) => {
+        const staged = join(directory, "source");
+        await cp(source, staged, { recursive: true });
+        return { sourceDirectory: staged, commitSha: "a".repeat(40) };
+      }
+    });
+    const preview = await installationServices.inspectGit({
+      kind: "git",
+      url: "https://example.com/skills.git",
+      ref: "a".repeat(40)
+    }, provenance);
+    const candidate = preview.candidates[0]!;
+    const plan = await installationServices.plan({
+      previewId: preview.previewId,
+      candidateId: candidate.id,
+      harness: "codex",
+      scope: "global",
+      targetName: candidate.name
+    });
+    await installationServices.commit(plan.id);
+    expect(await readInstallationHistory(stateDirectory)).toEqual([
+      expect.objectContaining({ provenance })
+    ]);
   });
 });

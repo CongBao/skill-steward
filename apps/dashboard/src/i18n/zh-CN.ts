@@ -166,6 +166,7 @@ export const zhCN: { readonly [Key in keyof typeof enUS]: string } = {
   "install.tokens": "估算 tokens",
   "install.noFindings": "未发现校验问题",
   "install.riskNotice": "Skills 可能包含指令和可执行脚本，使用前请检查完整来源。",
+  "install.preflightProvenance": "来自任务预检推荐",
   "page.findings.title": "问题",
   "page.findings.description": "查看证据并判断需要优先处理的事项。",
   "findings.all": "全部严重性",

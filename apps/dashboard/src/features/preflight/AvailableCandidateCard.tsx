@@ -8,11 +8,20 @@ import {
 import { SeverityBadge } from "../../components/SeverityBadge.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 
-export function AvailableCandidateCard({ candidate }: { candidate: PreflightCandidate }) {
+export function AvailableCandidateCard({
+  candidate,
+  preflightId
+}: {
+  candidate: PreflightCandidate;
+  preflightId?: string;
+}) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const inspect = useMutation({
-    mutationFn: () => inspectCatalogCandidate(candidate.catalogSkillId ?? candidate.candidateId),
+    mutationFn: () => inspectCatalogCandidate(
+      candidate.catalogSkillId ?? candidate.candidateId,
+      preflightId
+    ),
     onSuccess: (installationPreview) => navigate("/skills", { state: { installationPreview } })
   });
   const source = candidate.source;

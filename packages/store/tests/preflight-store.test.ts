@@ -5,6 +5,7 @@ import type { PreflightResult } from "@skill-steward/preflight";
 import { describe, expect, it } from "vitest";
 import {
   appendPreflightEvidence,
+  assertPreflightInstallationRecommendation,
   PreflightEvidenceError,
   readPreflightEvidence,
   recordPreflightFeedback
@@ -276,5 +277,25 @@ describe("preflight evidence store", () => {
       new Date()
     )).rejects.toBeInstanceOf(PreflightEvidenceError);
     expect(await readFile(path, "utf8")).toBe(before);
+  });
+
+  it("validates only explicit installation recommendations for provenance", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-provenance-"));
+    await appendPreflightEvidence(state, result("run-1", "2026-07-03T00:00:00.000Z"));
+    await expect(assertPreflightInstallationRecommendation(
+      state,
+      "run-1",
+      "catalog-testing"
+    )).resolves.toBeUndefined();
+    await expect(assertPreflightInstallationRecommendation(
+      state,
+      "run-1",
+      "security-review"
+    )).rejects.toMatchObject({ code: "INVALID_INSTALL_PROVENANCE" });
+    await expect(assertPreflightInstallationRecommendation(
+      state,
+      "missing",
+      "catalog-testing"
+    )).rejects.toMatchObject({ code: "PREFLIGHT_NOT_FOUND" });
   });
 });

@@ -165,7 +165,7 @@ export function InstallSkillFlow({ onClose, initialInspection }: { onClose(): vo
       ) : null}
 
       {step === "confirm" && plan ? (
-        <section className="install-section"><div className="plan-summary"><span>{plan.action}</span><code>{plan.destination}</code>{plan.changes.map((change, index) => <div key={`${change.operation}-${index}`}><strong>{change.operation}</strong><code>{change.path}</code></div>)}</div><label className="confirmation"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />{t("install.reviewed")}</label><footer><button className="button primary" disabled={!confirmed || commit.isPending} onClick={() => commit.mutate()}>{commit.isPending ? t("install.installing") : t("install.submit")}</button></footer></section>
+        <section className="install-section"><div className="plan-summary"><span>{plan.action}</span><code>{plan.destination}</code>{plan.provenance ? <div><strong>{t("install.preflightProvenance")}</strong><code>{plan.provenance.preflightId}</code></div> : null}{plan.changes.map((change, index) => <div key={`${change.operation}-${index}`}><strong>{change.operation}</strong><code>{change.path}</code></div>)}</div><label className="confirmation"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />{t("install.reviewed")}</label><footer><button className="button primary" disabled={!confirmed || commit.isPending} onClick={() => commit.mutate()}>{commit.isPending ? t("install.installing") : t("install.submit")}</button></footer></section>
       ) : null}
 
       {step === "result" && result ? (

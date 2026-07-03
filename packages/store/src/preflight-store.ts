@@ -118,7 +118,8 @@ export class PreflightEvidenceError extends Error {
   constructor(
     public readonly code:
       | "PREFLIGHT_NOT_FOUND"
-      | "INVALID_FEEDBACK_CANDIDATE",
+      | "INVALID_FEEDBACK_CANDIDATE"
+      | "INVALID_INSTALL_PROVENANCE",
     message: string
   ) {
     super(message);
@@ -311,4 +312,27 @@ export async function readPreflightEvidence(
   stateDirectory: string
 ): Promise<PreflightEvidenceRecord[]> {
   return (await readFileState(stateDirectory)).records;
+}
+
+export async function assertPreflightInstallationRecommendation(
+  stateDirectory: string,
+  preflightId: string,
+  candidateId: string
+): Promise<void> {
+  const record = (await readFileState(stateDirectory)).records.find(({ id }) => id === preflightId);
+  if (!record) {
+    throw new PreflightEvidenceError(
+      "PREFLIGHT_NOT_FOUND",
+      "Preflight evidence was not found"
+    );
+  }
+  const installCandidateIds = record.schemaVersion === 1
+    ? []
+    : record.installCandidateIds;
+  if (!installCandidateIds.includes(candidateId)) {
+    throw new PreflightEvidenceError(
+      "INVALID_INSTALL_PROVENANCE",
+      "Candidate was not an explicit installation recommendation in this preflight"
+    );
+  }
 }
