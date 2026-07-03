@@ -160,6 +160,15 @@ importers:
         specifier: ^3.25.67
         version: 3.25.76
 
+  packages/integrations:
+    dependencies:
+      '@skill-steward/preflight':
+        specifier: workspace:*
+        version: link:../preflight
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
   packages/preflight:
     dependencies:
       '@skill-steward/catalog':
