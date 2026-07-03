@@ -170,6 +170,12 @@ export interface PreflightCandidate {
   redundancyPenalty: number;
   installPenalty: number;
   contextTokens: number;
+  features: {
+    taskCoverage: number;
+    skillPrecision: number;
+    nameMatch: boolean;
+    projectScopeFit: boolean;
+  };
   decision: "use" | "install" | "excluded";
   source?: {
     sourceId: string;
@@ -182,7 +188,7 @@ export interface PreflightCandidate {
 }
 
 export interface PreflightResult {
-  schemaVersion: 2;
+  schemaVersion: 3;
   algorithmVersion: 2;
   id: string;
   generatedAt: string;

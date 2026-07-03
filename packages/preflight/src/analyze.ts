@@ -24,9 +24,12 @@ interface ScoredCandidate {
   matchedTaskTerms: Set<string>;
   relevance: number;
   adjustedRelevance: number;
+  taskCoverage: number;
+  skillPrecision: number;
   riskPenalty: number;
   installPenalty: number;
   nameMatch: boolean;
+  projectScopeFit: boolean;
   plausible: boolean;
   critical: boolean;
   initialReasons: PreflightReason[];
@@ -115,12 +118,12 @@ function scoreCandidates(
     const taskCoverage = ratio(matchedTaskTerms.size, taskTerms.size);
     const skillPrecision = ratio(matchedTaskTerms.size, routeTerms.size);
     const nameMatch = matchesName(normalizedTask, taskTerms, candidate);
-    const projectFit = candidate.scope === "project" ? 1 : 0;
+    const projectScopeFit = candidate.scope === "project";
     const relevance = clamp(
       taskCoverage * PREFLIGHT_CONFIG.taskCoverageWeight +
       skillPrecision * PREFLIGHT_CONFIG.skillPrecisionWeight +
       (nameMatch ? PREFLIGHT_CONFIG.nameMatchWeight : 0) +
-      projectFit * PREFLIGHT_CONFIG.projectScopeWeight
+      (projectScopeFit ? PREFLIGHT_CONFIG.projectScopeWeight : 0)
     );
     const riskPenalty = candidateRisk(candidate.findings);
     const installPenalty = candidate.availability === "available"
@@ -142,7 +145,7 @@ function scoreCandidates(
         detail: `Task matches '${candidate.name}' routing metadata.`
       });
     }
-    if (projectFit) {
+    if (projectScopeFit) {
       initialReasons.push({
         code: "PROJECT_SCOPE_FIT",
         detail: "Project-scoped Skill is available in the current workspace."
@@ -179,9 +182,12 @@ function scoreCandidates(
       matchedTaskTerms,
       relevance,
       adjustedRelevance,
+      taskCoverage,
+      skillPrecision,
       riskPenalty,
       installPenalty,
       nameMatch,
+      projectScopeFit,
       plausible: candidate.harnessCompatible && !critical &&
         (nameMatch || adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold),
       critical,
@@ -370,6 +376,12 @@ function presentCandidates(
       redundancyPenalty: stableNumber(redundancyPenalty),
       installPenalty: stableNumber(candidate.installPenalty),
       contextTokens: candidate.candidate.contextTokens,
+      features: {
+        taskCoverage: stableNumber(candidate.taskCoverage),
+        skillPrecision: stableNumber(candidate.skillPrecision),
+        nameMatch: candidate.nameMatch,
+        projectScopeFit: candidate.projectScopeFit
+      },
       decision,
       ...(candidate.candidate.source ? { source: candidate.candidate.source } : {}),
       reasons

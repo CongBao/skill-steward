@@ -6,7 +6,7 @@ import {
 } from "@skill-steward/engine";
 import { z } from "zod";
 
-export const PREFLIGHT_SCHEMA_VERSION = 2 as const;
+export const PREFLIGHT_SCHEMA_VERSION = 3 as const;
 export const PREFLIGHT_ALGORITHM_VERSION = 2 as const;
 
 export const preflightReasonCodeSchema = z.enum([
@@ -29,6 +29,13 @@ export const preflightReasonSchema = z.object({
 
 export const candidateAvailabilitySchema = z.enum(["installed", "available"]);
 export const candidateDecisionSchema = z.enum(["use", "install", "excluded"]);
+
+export const preflightCandidateFeatureSchema = z.object({
+  taskCoverage: z.number().min(0).max(1),
+  skillPrecision: z.number().min(0).max(1),
+  nameMatch: z.boolean(),
+  projectScopeFit: z.boolean()
+}).strict();
 
 const candidateSourceSchema = z.object({
   sourceId: z.string().min(1),
@@ -57,6 +64,7 @@ export const preflightCandidateSchema = z.object({
   redundancyPenalty: z.number().min(0).max(1),
   installPenalty: z.number().min(0).max(1),
   contextTokens: z.number().int().nonnegative(),
+  features: preflightCandidateFeatureSchema,
   decision: candidateDecisionSchema,
   source: candidateSourceSchema.optional(),
   reasons: z.array(preflightReasonSchema).min(1)
@@ -170,6 +178,7 @@ export type CandidateAvailability = z.infer<typeof candidateAvailabilitySchema>;
 export type CandidateDecision = z.infer<typeof candidateDecisionSchema>;
 export type PreflightReasonCode = z.infer<typeof preflightReasonCodeSchema>;
 export type PreflightReason = z.infer<typeof preflightReasonSchema>;
+export type PreflightCandidateFeature = z.infer<typeof preflightCandidateFeatureSchema>;
 export type PreflightRequest = z.infer<typeof preflightRequestSchema>;
 export type PreflightFeedback = z.infer<typeof preflightFeedbackSchema>;
 export type PreflightCandidate = z.infer<typeof preflightCandidateSchema>;

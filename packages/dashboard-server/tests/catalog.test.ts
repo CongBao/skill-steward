@@ -199,7 +199,7 @@ describe("catalog routes", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       useCandidateIds: ["security-installed"],
       installCandidateIds: ["testing-available"]
     });

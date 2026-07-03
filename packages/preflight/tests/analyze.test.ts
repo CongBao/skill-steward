@@ -105,7 +105,7 @@ const fixed = {
   catalogSources: [catalogSource]
 };
 
-describe("analyzePreflight v2", () => {
+describe("analyzePreflight v3", () => {
   it("selects a minimal installed set and explains exclusions", () => {
     const result = analyzePreflight({
       ...fixed,
@@ -144,8 +144,15 @@ describe("analyzePreflight v2", () => {
       harness: "codex"
     });
 
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
     expect(result.algorithmVersion).toBe(2);
+    expect(result.candidates[0]?.features).toEqual(expect.objectContaining({
+      taskCoverage: expect.any(Number),
+      skillPrecision: expect.any(Number),
+      nameMatch: expect.any(Boolean),
+      projectScopeFit: expect.any(Boolean)
+    }));
+    expect(JSON.stringify(result.candidates[0]?.features)).not.toContain("security");
     expect(result.candidates.find(({ name }) => name === "security-installed"))
       .toMatchObject({ availability: "installed", decision: "use" });
     expect(result.candidates.find(({ name }) => name === "security-available"))

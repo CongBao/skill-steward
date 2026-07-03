@@ -1,6 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  evidencePolicySchema,
+  evidencePreflightSchema,
+  type EvidenceHarness,
+  type EvidencePolicy
+} from "@skill-steward/evidence";
+import {
   preflightFeedbackSchema,
   preflightResultSchema,
   type PreflightFeedback,
@@ -85,9 +91,10 @@ const evidenceRecordV2Schema = z.object({
   feedback: evidenceFeedbackV2Schema.optional()
 });
 
-const evidenceRecordSchema = z.discriminatedUnion("schemaVersion", [
+const evidenceRecordSchema = z.union([
   evidenceRecordV1Schema,
-  evidenceRecordV2Schema
+  evidenceRecordV2Schema,
+  evidencePreflightSchema
 ]);
 
 const evidenceFileV1Schema = z.object({
@@ -97,6 +104,11 @@ const evidenceFileV1Schema = z.object({
 
 const evidenceFileV2Schema = z.object({
   schemaVersion: z.literal(2),
+  records: z.array(evidenceRecordSchema).max(MAX_RECORDS)
+});
+
+const evidenceFileV3Schema = z.object({
+  schemaVersion: z.literal(3),
   records: z.array(evidenceRecordSchema).max(MAX_RECORDS)
 });
 
@@ -120,7 +132,7 @@ function isMissing(error: unknown): boolean {
 
 async function readFileState(
   stateDirectory: string
-): Promise<{ schemaVersion: 2; records: PreflightEvidenceRecord[] }> {
+): Promise<{ schemaVersion: 3; records: PreflightEvidenceRecord[] }> {
   try {
     const source = await readFile(join(stateDirectory, PREFLIGHT_FILE), "utf8");
     const value: unknown = JSON.parse(source);
@@ -132,15 +144,24 @@ async function readFileState(
     ) {
       const legacy = evidenceFileV1Schema.parse(value);
       return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         records: legacy.records.map((record) =>
           evidenceRecordV1Schema.parse({ schemaVersion: 1, ...record })
         )
       };
     }
-    return evidenceFileV2Schema.parse(value);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "schemaVersion" in value &&
+      value.schemaVersion === 2
+    ) {
+      const legacy = evidenceFileV2Schema.parse(value);
+      return { schemaVersion: 3, records: legacy.records };
+    }
+    return evidenceFileV3Schema.parse(value);
   } catch (error) {
-    if (isMissing(error)) return { schemaVersion: 2, records: [] };
+    if (isMissing(error)) return { schemaVersion: 3, records: [] };
     throw error;
   }
 }
@@ -152,7 +173,7 @@ async function atomicWrite(
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   const destination = join(stateDirectory, PREFLIGHT_FILE);
   const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
-  const payload = evidenceFileV2Schema.parse({ schemaVersion: 2, records });
+  const payload = evidenceFileV3Schema.parse({ schemaVersion: 3, records });
   await writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600
@@ -160,10 +181,14 @@ async function atomicWrite(
   await rename(temporary, destination);
 }
 
-function sanitize(result: PreflightResult): PreflightEvidenceRecord {
+function sanitize(
+  result: PreflightResult,
+  policy: EvidencePolicy,
+  harness: EvidenceHarness | undefined
+): PreflightEvidenceRecord {
   const parsed = preflightResultSchema.parse(result);
-  return evidenceRecordV2Schema.parse({
-    schemaVersion: 2,
+  return evidencePreflightSchema.parse({
+    schemaVersion: 3,
     id: parsed.id,
     createdAt: parsed.generatedAt,
     algorithmVersion: parsed.algorithmVersion,
@@ -171,48 +196,47 @@ function sanitize(result: PreflightResult): PreflightEvidenceRecord {
     taskHash: parsed.taskHash,
     taskCharacterCount: parsed.taskCharacterCount,
     taskTermCount: parsed.taskTermCount,
+    ...(harness ? { harness } : {}),
+    candidateIds: parsed.candidates.map(({ candidateId }) => candidateId),
     useCandidateIds: parsed.useCandidateIds,
     installCandidateIds: parsed.installCandidateIds,
-    candidates: parsed.candidates.map(({
-      candidateId,
-      availability,
-      relevance,
-      uniqueCoverage,
-      riskPenalty,
-      redundancyPenalty,
-      installPenalty,
-      contextTokens,
-      decision,
-      source
-    }) => ({
-      candidateId,
-      availability,
-      relevance,
-      uniqueCoverage,
-      riskPenalty,
-      redundancyPenalty,
-      installPenalty,
-      contextTokens,
-      decision,
-      ...(source ? { sourceId: source.sourceId } : {})
-    })),
-    installedCoverage: parsed.installedCoverage,
-    projectedCoverage: parsed.projectedCoverage,
-    selectedContextTokens: parsed.selectedContextTokens,
-    estimatedContextSaved: parsed.estimatedContextSaved
+    ...(policy.mode === "learning" ? {
+      candidateFeatures: parsed.candidates.map((candidate) => ({
+        candidateId: candidate.candidateId,
+        availability: candidate.availability,
+        ...candidate.features,
+        relevance: candidate.relevance,
+        uniqueCoverage: candidate.uniqueCoverage,
+        riskPenalty: candidate.riskPenalty,
+        redundancyPenalty: candidate.redundancyPenalty,
+        installPenalty: candidate.installPenalty,
+        contextTokens: candidate.contextTokens,
+        decision: candidate.decision
+      }))
+    } : {})
   });
 }
 
 export async function appendPreflightEvidence(
   stateDirectory: string,
   result: PreflightResult,
-  options: { limit?: number } = {}
+  options: {
+    policy?: EvidencePolicy;
+    harness?: EvidenceHarness;
+    limit?: number;
+  } = {}
 ): Promise<void> {
   const limit = options.limit ?? MAX_RECORDS;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORDS) {
     throw new Error(`Preflight evidence limit must be between 1 and ${MAX_RECORDS}`);
   }
-  const record = sanitize(result);
+  const policy = evidencePolicySchema.parse(options.policy ?? {
+    schemaVersion: 1,
+    mode: "minimal",
+    retentionDays: 30,
+    maxEvents: 5_000
+  });
+  const record = sanitize(result, policy, options.harness);
   const current = await readFileState(stateDirectory);
   const records = [
     record,
@@ -240,7 +264,9 @@ export async function recordPreflightFeedback(
   const candidateIds = new Set(
     record.schemaVersion === 1
       ? record.candidates.map(({ skillId }) => skillId)
-      : record.candidates.map(({ candidateId }) => candidateId)
+      : record.schemaVersion === 2
+        ? record.candidates.map(({ candidateId }) => candidateId)
+        : record.candidateIds
   );
   if (parsed.candidateIds.some((candidateId) => !candidateIds.has(candidateId))) {
     throw new PreflightEvidenceError(
@@ -258,13 +284,24 @@ export async function recordPreflightFeedback(
           createdAt: now.toISOString()
         }
       })
-    : evidenceRecordV2Schema.parse({
+    : record.schemaVersion === 2
+      ? evidenceRecordV2Schema.parse({
         ...record,
         feedback: {
           ...parsed,
           createdAt: now.toISOString()
         }
-      });
+      })
+      : evidencePreflightSchema.parse({
+          ...record,
+          feedback: {
+            schemaVersion: 1,
+            preflightId: record.id,
+            recordedAt: now.toISOString(),
+            label: parsed.label,
+            candidateIds: parsed.candidateIds
+          }
+        });
   const records = [...current.records];
   records[index] = updated;
   await atomicWrite(stateDirectory, records);

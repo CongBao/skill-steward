@@ -131,7 +131,7 @@ describe("preflight command", () => {
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       candidates: [expect.objectContaining({ name: "security-review" })]
     });
   });
@@ -145,7 +145,7 @@ describe("preflight command", () => {
     expect(exitCode).toBe(0);
     const output = JSON.parse(current.stdout.join(""));
     expect(output).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       algorithmVersion: 2,
       useCandidateIds: expect.any(Array),
       installCandidateIds: expect.any(Array)

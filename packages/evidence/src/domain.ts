@@ -47,7 +47,7 @@ export const evidenceFeedbackSchema = z.object({
 }).strict();
 
 export const evidencePreflightSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(3),
   id: identifierSchema,
   createdAt: dateTimeSchema,
   portfolioFingerprint: sha256Schema,
@@ -56,6 +56,7 @@ export const evidencePreflightSchema = z.object({
   taskTermCount: countSchema,
   algorithmVersion: z.number().int().positive(),
   harness: evidenceHarnessSchema.optional(),
+  candidateIds: z.array(identifierSchema).max(6_000),
   useCandidateIds: z.array(identifierSchema).max(5),
   installCandidateIds: z.array(identifierSchema).max(3),
   candidateFeatures: z.array(candidateFeatureSnapshotSchema).optional(),
@@ -63,11 +64,21 @@ export const evidencePreflightSchema = z.object({
 }).strict().superRefine((record, context) => {
   const useIds = new Set(record.useCandidateIds);
   const installIds = new Set(record.installCandidateIds);
+  const candidateIds = new Set(record.candidateIds);
+  if (candidateIds.size !== record.candidateIds.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Candidate IDs must be unique" });
+  }
   if (useIds.size !== record.useCandidateIds.length || installIds.size !== record.installCandidateIds.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Decision candidate IDs must be unique" });
   }
   if ([...useIds].some((id) => installIds.has(id))) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Use and install decisions cannot overlap" });
+  }
+  if ([...useIds, ...installIds].some((id) => !candidateIds.has(id))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Decisions must reference known candidates" });
+  }
+  if (record.candidateFeatures?.some(({ candidateId }) => !candidateIds.has(candidateId))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Features must reference known candidates" });
   }
   if (record.feedback && record.feedback.preflightId !== record.id) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Feedback must reference its preflight" });

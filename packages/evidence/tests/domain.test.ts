@@ -82,7 +82,7 @@ describe("evidence domain", () => {
 
   it("validates privacy-reduced preflights and datasets", () => {
     const preflight = evidencePreflightSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 3,
       id: "run-1",
       createdAt: "2026-07-03T00:00:00.000Z",
       portfolioFingerprint: hash("a"),
@@ -91,6 +91,7 @@ describe("evidence domain", () => {
       taskTermCount: 4,
       algorithmVersion: 2,
       harness: "codex",
+      candidateIds: ["review"],
       useCandidateIds: ["review"],
       installCandidateIds: [],
       candidateFeatures: []

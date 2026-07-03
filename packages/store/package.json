@@ -13,6 +13,7 @@
   "dependencies": {
     "@skill-steward/catalog": "workspace:*",
     "@skill-steward/engine": "workspace:*",
+    "@skill-steward/evidence": "workspace:*",
     "@skill-steward/preflight": "workspace:*",
     "zod": "^3.25.67"
   }

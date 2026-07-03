@@ -9,7 +9,7 @@ const hash = (character: string) => `sha256:${character.repeat(64)}`;
 
 function result(candidate: Record<string, unknown>) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     algorithmVersion: 2,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -30,7 +30,7 @@ function result(candidate: Record<string, unknown>) {
   };
 }
 
-describe("preflight v2 domain", () => {
+describe("preflight v3 domain", () => {
   it("normalizes discovery options and validates Harness IDs", () => {
     expect(preflightRequestSchema.parse({
       task: "  Review the security tests  ",
@@ -77,10 +77,16 @@ describe("preflight v2 domain", () => {
       redundancyPenalty: 0,
       installPenalty: 0,
       contextTokens: 200,
+      features: {
+        taskCoverage: 0.75,
+        skillPrecision: 0.5,
+        nameMatch: true,
+        projectScopeFit: false
+      },
       decision: "use",
       reasons: [{ code: "UNIQUE_COVERAGE", detail: "Covers review" }]
     };
-    expect(preflightResultSchema.parse(result(candidate)).schemaVersion).toBe(2);
+    expect(preflightResultSchema.parse(result(candidate)).schemaVersion).toBe(3);
     expect(() => preflightResultSchema.parse(result({
       ...candidate,
       installedSkillId: undefined,
@@ -107,6 +113,12 @@ describe("preflight v2 domain", () => {
       redundancyPenalty: 0,
       installPenalty: 0.08,
       contextTokens: 200,
+      features: {
+        taskCoverage: 0.5,
+        skillPrecision: 0.5,
+        nameMatch: false,
+        projectScopeFit: false
+      },
       decision: "install",
       source: {
         sourceId: "openai-plugins",

@@ -11,7 +11,7 @@ import {
 import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   algorithmVersion: 2,
   id: "run-1",
   generatedAt: "2026-07-03T01:00:00.000Z",
@@ -40,6 +40,12 @@ const result = {
       redundancyPenalty: 0,
       installPenalty: 0,
       contextTokens: 240,
+      features: {
+        taskCoverage: 0.82,
+        skillPrecision: 0.6,
+        nameMatch: true,
+        projectScopeFit: true
+      },
       decision: "use",
       reasons: [{ code: "UNIQUE_COVERAGE", detail: "57% unique task-term coverage." }]
     },
@@ -61,6 +67,12 @@ const result = {
       redundancyPenalty: 0,
       installPenalty: 0.08,
       contextTokens: 180,
+      features: {
+        taskCoverage: 0.72,
+        skillPrecision: 0.5,
+        nameMatch: false,
+        projectScopeFit: false
+      },
       decision: "install",
       source: {
         sourceId: "openai-plugins",
@@ -89,6 +101,12 @@ const result = {
       redundancyPenalty: 0,
       installPenalty: 0,
       contextTokens: 300,
+      features: {
+        taskCoverage: 0.1,
+        skillPrecision: 0.1,
+        nameMatch: false,
+        projectScopeFit: false
+      },
       decision: "excluded",
       reasons: [{ code: "LOW_RELEVANCE", detail: "Low relevance" }]
     }
