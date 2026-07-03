@@ -128,7 +128,7 @@ describe("open-source repository", () => {
     );
     expect(readme).toMatch(/A busy removal[^.]*before changing files/i);
     expect(readme).toMatch(
-      /Installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore use private, expiring, single-use plan IDs/
+      /CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use/
     );
     expect(readme).not.toContain("Managed native prompt Hooks are available only for Codex and Claude Code");
     expect(readme).not.toMatch(/status:\s*beta|beta-ready|complete native plugin (?:coverage|inventory)|universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
@@ -209,7 +209,7 @@ describe("open-source repository", () => {
     expect(chineseReadme).toMatch(/新增集成遇到忙碌[^。]*不会消耗[^。]*计划/);
     expect(chineseReadme).toMatch(/移除集成遇到忙碌[^。]*改写配置之前停止/);
     expect(chineseReadme).toMatch(
-      /安装、集成应用、证据策略、证据清除、隔离和恢复计划都保存在私有目录/
+      /CLI 的安装、集成应用、证据策略、证据清除、隔离和恢复计划保存在私有目录、会过期且只能使用一次/
     );
     expect(chineseReadme).not.toContain("托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code");
     expect(chineseReadme).not.toMatch(/当前状态：\s*Beta|Beta 就绪|完整(?:的)?原生插件(?:覆盖|盘点)|通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);

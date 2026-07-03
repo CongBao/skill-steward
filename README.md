@@ -276,7 +276,7 @@ Codex, Claude Code, and GitHub Copilot already own the execution environment and
 - Persisted evidence excludes task text, extracted terms, descriptions, reasons, URLs, local paths, transcripts, assistant content, tool data, and raw Harness IDs.
 - Sanitized export and API responses never include the private HMAC salt.
 - Installation-source scripts, package managers, build commands, repository Hooks, and submodules are not executed.
-- Installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore use private, expiring, single-use plan IDs; confirmation never regenerates a plan from request arguments.
+- CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use; confirmation never regenerates a plan from request arguments.
 - Integration apply uses a cross-process mutation lease and persists a cached portfolio before reporting ready.
 - Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
 - Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.
