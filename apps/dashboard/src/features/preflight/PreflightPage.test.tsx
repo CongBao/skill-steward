@@ -12,7 +12,7 @@ import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
   schemaVersion: 3,
-  algorithmVersion: 2,
+  algorithmVersion: 3,
   id: "run-1",
   generatedAt: "2026-07-03T01:00:00.000Z",
   portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -47,7 +47,10 @@ const result = {
         projectScopeFit: true
       },
       decision: "use",
-      reasons: [{ code: "UNIQUE_COVERAGE", detail: "57% unique task-term coverage." }]
+      reasons: [
+        { code: "UNIQUE_COVERAGE", detail: "57% unique task-term coverage." },
+        { code: "NEGATIVE_TRIGGER", detail: "raw internal negative-trigger detail" }
+      ]
     },
     {
       candidateId: "testing",
@@ -109,6 +112,40 @@ const result = {
       },
       decision: "excluded",
       reasons: [{ code: "LOW_RELEVANCE", detail: "Low relevance" }]
+    },
+    {
+      candidateId: "docx",
+      availability: "available",
+      catalogSkillId: "docx",
+      name: "docx",
+      description: "Create Word documents. Do not use for PDFs.",
+      scope: "unknown",
+      compatibleHarnesses: ["codex"],
+      compatibility: "declared",
+      scripts: [],
+      executables: [],
+      highestSeverity: null,
+      relevance: 0.2,
+      uniqueCoverage: 0,
+      riskPenalty: 0,
+      redundancyPenalty: 0,
+      installPenalty: 0.08,
+      contextTokens: 180,
+      features: {
+        taskCoverage: 0.2,
+        skillPrecision: 0.2,
+        nameMatch: false,
+        projectScopeFit: false
+      },
+      decision: "excluded",
+      source: {
+        sourceId: "openai-plugins",
+        trust: "vendor",
+        url: "https://github.com/openai/plugins.git",
+        revision: "c".repeat(40),
+        relativePath: "docx"
+      },
+      reasons: [{ code: "NEGATIVE_TRIGGER", detail: "Explicitly excluded" }]
     }
   ],
   conflicts: [],
@@ -178,9 +215,12 @@ describe("PreflightPage v2", () => {
     expect(screen.getByText("Consider installing")).toBeVisible();
     expect(screen.getByText("Capability gaps")).toBeVisible();
     expect(screen.getByText("deployment")).toBeVisible();
-    expect(screen.getByText("Known publisher · not a safety guarantee")).toBeVisible();
-    expect(screen.getByText("Excluded candidates (1)")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Inspect test-review installation" }));
+    expect(screen.getAllByText("Known publisher · not a safety guarantee")[0]).toBeVisible();
+    expect(screen.getAllByText("Negative trigger")[0]).toBeVisible();
+    expect(screen.getAllByText("This task matches terms the Skill explicitly says it should not handle.")[0]).toBeVisible();
+    expect(screen.getByText("Excluded candidates (2)")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Inspect docx", hidden: true })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Inspect test-review" }));
     expect(mockedFetch).toHaveBeenCalledWith(
       "/api/v1/catalog/candidates/testing/inspect-installation",
       expect.objectContaining({
@@ -223,5 +263,8 @@ describe("PreflightPage v2", () => {
     expect(await screen.findByText("立即使用")).toBeVisible();
     expect(screen.getByText("建议安装")).toBeVisible();
     expect(screen.getByText("能力缺口")).toBeVisible();
+    expect(screen.getAllByText("全局").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("命中排除条件")[0]).toBeVisible();
+    expect(screen.getAllByText("任务包含该 Skill 明确声明不应处理的内容。")[0]).toBeVisible();
   });
 });

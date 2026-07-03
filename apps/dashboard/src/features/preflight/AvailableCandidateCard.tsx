@@ -7,6 +7,7 @@ import {
 } from "../../api/client.js";
 import { SeverityBadge } from "../../components/SeverityBadge.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
+import { preflightReasonDetail } from "./reasonDetail.js";
 
 export function AvailableCandidateCard({
   candidate,
@@ -26,9 +27,10 @@ export function AvailableCandidateCard({
   });
   const source = candidate.source;
   const trust = source?.trust ?? "user";
+  const installable = candidate.decision === "install";
 
   return (
-    <article className="preflight-candidate available-candidate" data-decision="install">
+    <article className="preflight-candidate available-candidate" data-decision={candidate.decision}>
       <header>
         <div><h3>{candidate.name}</h3><p>{candidate.description}</p></div>
         {candidate.highestSeverity ? <SeverityBadge severity={candidate.highestSeverity} /> : null}
@@ -39,7 +41,7 @@ export function AvailableCandidateCard({
         {source?.revision ? <code>{source.revision.slice(0, 8)}</code> : null}
       </div>
       <div className="preflight-metadata">
-        <span>{t("preflight.compatibility")}: <strong>{candidate.compatibility}</strong></span>
+        <span>{t("preflight.compatibility")}: <strong>{t(`preflight.compatibility.${candidate.compatibility}` as TranslationKey)}</strong></span>
         <span>{t("preflight.harnesses")}: <strong>{candidate.compatibleHarnesses.join(", ") || "—"}</strong></span>
         <span>{t("preflight.tokens")}: <strong>{candidate.contextTokens}</strong></span>
       </div>
@@ -47,13 +49,13 @@ export function AvailableCandidateCard({
         <div className="available-risk"><ShieldAlert size={15} /><span>{t("preflight.executableNotice").replace("{count}", String(new Set([...candidate.scripts, ...candidate.executables]).size))}</span></div>
       ) : null}
       <ul className="preflight-reasons">
-        {candidate.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}><span>{t(`preflight.reason.${reason.code}` as TranslationKey)}</span><p>{reason.detail}</p></li>)}
+        {candidate.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}><span>{t(`preflight.reason.${reason.code}` as TranslationKey)}</span><p>{preflightReasonDetail(candidate, reason, t)}</p></li>)}
       </ul>
       <footer>
         {source ? <a className="source-link" href={source.url} rel="noreferrer" target="_blank"><ExternalLink size={13} />{t("preflight.source")}</a> : <span />}
-        <button className="button primary" aria-label={`${t("preflight.inspectInstallation")} ${candidate.name} installation`} disabled={inspect.isPending} onClick={() => inspect.mutate()}>
+        {installable ? <button className="button primary" aria-label={`${t("preflight.inspectInstallation")} ${candidate.name}`} disabled={inspect.isPending} onClick={() => inspect.mutate()}>
           <Download size={15} />{inspect.isPending ? t("preflight.inspectingInstallation") : t("preflight.inspectInstallation")}
-        </button>
+        </button> : null}
       </footer>
       {inspect.error ? <p className="form-error" role="alert">{inspect.error.message}</p> : null}
     </article>

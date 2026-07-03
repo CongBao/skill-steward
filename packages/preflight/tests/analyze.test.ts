@@ -145,7 +145,7 @@ describe("analyzePreflight v3", () => {
     });
 
     expect(result.schemaVersion).toBe(3);
-    expect(result.algorithmVersion).toBe(2);
+    expect(result.algorithmVersion).toBe(3);
     expect(result.candidates[0]?.features).toEqual(expect.objectContaining({
       taskCoverage: expect.any(Number),
       skillPrecision: expect.any(Number),
@@ -227,6 +227,17 @@ describe("analyzePreflight v3", () => {
     expect(result.capabilityGaps).toEqual(expect.arrayContaining(["cryptography", "migration"]));
   });
 
+  it("presents readable Chinese capability gaps instead of tokenizer fragments", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "制作文件并润色布局",
+      report: report([])
+    });
+
+    expect(result.capabilityGaps).toEqual(expect.arrayContaining(["制作", "文件", "润色", "布局"]));
+    expect(result.capabilityGaps.every((term) => [...term].length >= 2)).toBe(true);
+  });
+
   it("returns a valid empty-candidate result", () => {
     const result = analyzePreflight({
       ...fixed,
@@ -251,5 +262,99 @@ describe("analyzePreflight v3", () => {
     };
     expect(analyzePreflight(input).useCandidateIds).toEqual(["a-skill"]);
     expect(analyzePreflight(input)).toEqual(analyzePreflight(input));
+  });
+
+  it("prefers exact PDF intent and honors an explicit negative routing clause", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Create and edit a PDF document with a polished layout",
+      report: report([]),
+      catalogSkills: [
+        catalogSkill("pdf", "pdf", "Create, edit, merge, and inspect PDF files"),
+        catalogSkill(
+          "docx",
+          "docx",
+          "Create polished documents. Do NOT use this skill for PDFs or spreadsheets."
+        )
+      ],
+      harness: "codex"
+    });
+
+    expect(result.installCandidateIds).toEqual(["pdf"]);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "docx"))
+      .toMatchObject({
+        decision: "excluded",
+        reasons: expect.arrayContaining([
+          expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+        ])
+      });
+  });
+
+  it("does not select a project Skill from one generic task term", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Review security regressions in this change",
+      report: report([
+        skill("sync", "openspec-sync", "Sync change specifications", 300, "project")
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+  });
+
+  it("does not treat one generic negative-clause term as a hard exclusion", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Review code for security regressions",
+      report: report([
+        skill(
+          "security",
+          "security-review",
+          "Review code for security regressions. Do not use for code generation.",
+          300
+        )
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["security"]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it("does not treat a shared positive context term as a negative target", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Review frontend accessibility",
+      report: report([
+        skill(
+          "accessibility",
+          "accessibility-review",
+          "Review frontend accessibility. Do not use for frontend implementation.",
+          300
+        )
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["accessibility"]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it("does not match a Skill name inside a larger task word", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Preview deployment output",
+      report: report([
+        skill("review", "review", "Review source changes", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      features: { nameMatch: false }
+    });
   });
 });

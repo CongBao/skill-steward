@@ -4,19 +4,28 @@ function escapeCode(value: string): string {
   return value.replaceAll("`", "\\`");
 }
 
-function renderFinding(finding: Finding): string {
+function renderFinding(
+  finding: Finding,
+  skillNames: ReadonlyMap<string, string>
+): string {
   const evidence =
     finding.evidence.length === 0
       ? "- Evidence: none recorded"
       : finding.evidence
           .map((item) => `- Evidence: \`${escapeCode(item)}\``)
           .join("\n");
+  const affectedSkills = finding.skillIds
+    .map((skillId) => skillNames.get(skillId) ?? skillId)
+    .join(", ");
 
   return [
     `## ${finding.severity.toUpperCase()}: ${finding.code}`,
     "",
     finding.summary,
     "",
+    ...(affectedSkills.length > 0
+      ? [`- Affected Skills: ${affectedSkills}`]
+      : []),
     evidence,
     `- Confidence: ${finding.confidence.toFixed(2)}`,
     "",
@@ -25,6 +34,7 @@ function renderFinding(finding: Finding): string {
 }
 
 export function renderMarkdown(report: PortfolioReport): string {
+  const skillNames = new Map(report.skills.map((skill) => [skill.id, skill.name]));
   const counts = report.findings.reduce<Record<string, number>>(
     (result, finding) => {
       result[finding.severity] = (result[finding.severity] ?? 0) + 1;
@@ -49,7 +59,9 @@ export function renderMarkdown(report: PortfolioReport): string {
   const findings =
     report.findings.length === 0
       ? "No findings."
-      : report.findings.map(renderFinding).join("\n\n");
+      : report.findings
+          .map((finding) => renderFinding(finding, skillNames))
+          .join("\n\n");
 
   return [
     "# Skill Steward Portfolio Report",

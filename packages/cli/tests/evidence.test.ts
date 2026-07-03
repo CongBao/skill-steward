@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { appendInstallationRecord } from "@skill-steward/installer";
 import {
   appendEvidenceEvent,
-  readEvidencePolicy
+  readEvidencePolicy,
+  readNormalizedPreflightEvidence
 } from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
@@ -148,5 +149,67 @@ describe("evidence command", () => {
     await expect(access(join(current.stateDir, "evidence-events.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(current.stateDir, "evidence-salt"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(current.stateDir, "installations.jsonl"))).resolves.toBeUndefined();
+  });
+
+  it("records explicit Preflight feedback from the CLI", async () => {
+    await seedEvidence(current.stateDir);
+
+    expect(await run([
+      "evidence",
+      "feedback",
+      "--preflight",
+      "run-1",
+      "--label",
+      "incomplete",
+      "--candidate",
+      "testing",
+      "--json"
+    ], current.context)).toBe(0);
+
+    expect(JSON.parse(current.stdout.join(""))).toMatchObject({
+      recorded: true,
+      preflightId: "run-1",
+      label: "incomplete",
+      candidateIds: ["testing"]
+    });
+    expect((await readNormalizedPreflightEvidence(current.stateDir))[0]?.feedback)
+      .toMatchObject({ label: "incomplete", candidateIds: ["testing"] });
+  });
+
+  it("uses the recommendation as the corrected set for useful feedback", async () => {
+    await seedEvidence(current.stateDir);
+
+    expect(await run([
+      "evidence",
+      "feedback",
+      "--preflight",
+      "run-1",
+      "--label",
+      "useful",
+      "--json"
+    ], current.context)).toBe(0);
+
+    expect(JSON.parse(current.stdout.join(""))).toMatchObject({
+      label: "useful",
+      candidateIds: ["testing"]
+    });
+    expect((await readNormalizedPreflightEvidence(current.stateDir))[0]?.feedback)
+      .toMatchObject({ label: "useful", candidateIds: ["testing"] });
+  });
+
+  it("requires a corrected candidate set for incomplete feedback", async () => {
+    await seedEvidence(current.stateDir);
+
+    expect(await run([
+      "evidence",
+      "feedback",
+      "--preflight",
+      "run-1",
+      "--label",
+      "incomplete"
+    ], current.context)).toBe(1);
+    expect(current.stderr.join("")).toContain(
+      "--candidate must provide the complete correct candidate set for incomplete feedback"
+    );
   });
 });

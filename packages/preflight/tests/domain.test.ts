@@ -10,7 +10,7 @@ const hash = (character: string) => `sha256:${character.repeat(64)}`;
 function result(candidate: Record<string, unknown>) {
   return {
     schemaVersion: 3,
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: hash("a"),

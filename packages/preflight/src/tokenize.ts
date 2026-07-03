@@ -3,17 +3,62 @@ const STOP_WORDS = new Set([
   "an",
   "and",
   "by",
+  "can",
+  "change",
+  "could",
+  "create",
+  "do",
+  "does",
   "for",
   "from",
+  "help",
+  "i",
   "in",
+  "it",
+  "its",
+  "make",
+  "need",
+  "not",
   "of",
   "on",
   "or",
+  "our",
+  "please",
+  "should",
+  "so",
+  "task",
+  "that",
   "the",
+  "these",
+  "this",
+  "those",
   "to",
   "use",
+  "want",
   "when",
-  "with"
+  "with",
+  "would",
+  "we",
+  "you",
+  "your"
+]);
+
+const INFLECTION_DOUBLED_CONSONANTS = new Set([
+  "b",
+  "d",
+  "g",
+  "m",
+  "n",
+  "p",
+  "r",
+  "t"
+]);
+
+const LEXICAL_DOUBLE_ROOTS = new Set([
+  "add",
+  "err",
+  "purr",
+  "whirr"
 ]);
 
 export interface TokenizedText {
@@ -26,16 +71,28 @@ export function normalizeTask(value: string): string {
 }
 
 function normalizeLatin(value: string): string {
+  if (STOP_WORDS.has(value)) return "";
   let term = value;
   if (term.endsWith("ing") && term.length > 5) {
     term = term.slice(0, -3);
-    if (term.length > 2 && term.at(-1) === term.at(-2)) {
+    if (
+      term.length > 2 &&
+      term.at(-1) === term.at(-2) &&
+      INFLECTION_DOUBLED_CONSONANTS.has(term.at(-1) ?? "") &&
+      !LEXICAL_DOUBLE_ROOTS.has(term)
+    ) {
       term = term.slice(0, -1);
     }
-  } else if (term.endsWith("s") && term.length > 3) {
+  } else if (term.endsWith("ies") && term.length > 4) {
+    term = `${term.slice(0, -3)}y`;
+  } else if (
+    term.endsWith("s") &&
+    term.length > 3 &&
+    !/(ss|us|is)$/u.test(term)
+  ) {
     term = term.slice(0, -1);
   }
-  return term;
+  return STOP_WORDS.has(term) ? "" : term;
 }
 
 export function tokenize(value: string): TokenizedText {
@@ -54,7 +111,7 @@ export function tokenize(value: string): TokenizedText {
     const segment = match[0];
     if (/^[a-z0-9]+$/u.test(segment)) {
       const term = normalizeLatin(segment);
-      if (term.length >= 2 && !STOP_WORDS.has(term)) emit(term);
+      if (term.length >= 2) emit(term);
       continue;
     }
 

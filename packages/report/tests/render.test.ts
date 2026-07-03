@@ -30,6 +30,28 @@ describe("report rendering", () => {
     expect(output).toContain("Restore the file.");
   });
 
+  it("identifies affected Skills by name", () => {
+    const skillId = "codex:global:review";
+    const output = renderMarkdown({
+      ...report,
+      skills: [{
+        id: skillId,
+        name: "review",
+        description: "Review code",
+        path: "/skills/review",
+        root: "/skills",
+        scope: "global",
+        visibleTo: ["codex"],
+        fingerprint: `sha256:${"b".repeat(64)}`,
+        files: [],
+        estimatedTokens: 100
+      }],
+      findings: [{ ...report.findings[0]!, skillIds: [skillId] }]
+    });
+
+    expect(output).toContain("Affected Skills: review");
+  });
+
   it("renders parseable JSON with a trailing newline", () => {
     const output = renderJson(report);
     expect(output.endsWith("\n")).toBe(true);

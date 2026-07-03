@@ -10,7 +10,7 @@ import {
   type GovernanceTransaction,
   type SkillSummary
 } from "../../api/client.js";
-import { useI18n } from "../../i18n/catalog.js";
+import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 
 export type GovernanceDialogAction =
   | { kind: "quarantine"; skill: SkillSummary }
@@ -33,7 +33,9 @@ export function GovernanceDialog({
   const [plan, setPlan] = useState<GovernancePlan | null>(null);
   const name = action.kind === "quarantine"
     ? action.skill.name
-    : action.transaction.originalPath.split(/[\\/]/).filter(Boolean).at(-1) ?? action.transaction.skillId;
+    : action.transaction.skillName
+      ?? action.transaction.originalPath.split(/[\\/]/).filter(Boolean).at(-1)
+      ?? action.transaction.skillId;
   const review = useMutation({
     mutationFn: () => planGovernance(action.kind === "quarantine"
       ? { action: "quarantine", skillId: action.skill.id }
@@ -62,17 +64,17 @@ export function GovernanceDialog({
 
       {plan ? (
         <section className="governance-plan">
-          <header><div><strong>{t("governance.exactPlan")}</strong><span>{t("governance.expiry")}</span></div><span className="source-status ready">{plan.kind}</span></header>
+          <header><div><strong>{t("governance.exactPlan")}</strong><span>{t("governance.expiry")}</span></div><span className="source-status ready">{t(`governance.kind.${plan.kind}` as TranslationKey)}</span></header>
           <dl className="governance-paths">
             <div><dt>{t("governance.activePath")}</dt><dd><code>{plan.activePath}</code></dd></div>
             <div><dt>{t("governance.vaultPath")}</dt><dd><code>{plan.vaultPath}</code></dd></div>
             <div><dt>{t("governance.fingerprint")}</dt><dd><code>{plan.sourceFingerprint}</code></dd></div>
           </dl>
-          <div className="governance-aliases"><strong>{t("governance.aliases")}</strong><div>{plan.visibleAliases.map((alias) => <span key={`${alias.harness}:${alias.scope}:${alias.rootPath}`}>{alias.harness} · {alias.scope}</span>)}</div></div>
+          <div className="governance-aliases"><strong>{t("governance.aliases")}</strong><div>{plan.visibleAliases.map((alias) => <span key={`${alias.harness}:${alias.scope}:${alias.rootPath}`}>{alias.harness} · {t(`scope.${alias.scope}` as TranslationKey)}</span>)}</div></div>
           <ol className="governance-operations">{plan.operations.map((operation, index) => (
             <li key={`${operation.operation}:${index}`}>
               <span>{index + 1}</span>
-              <div><strong>{operation.operation.replaceAll("-", " ")}</strong>{operationPaths(operation).map((path, pathIndex) => <code key={`${path}:${pathIndex}`}>{path}</code>)}</div>
+              <div><strong>{t(`governance.operation.${operation.operation}` as TranslationKey)}</strong>{operationPaths(operation).map((path, pathIndex) => <code key={`${path}:${pathIndex}`}>{path}</code>)}</div>
             </li>
           ))}</ol>
           <p className="governance-drift-notice">{t("governance.driftNotice")}</p>

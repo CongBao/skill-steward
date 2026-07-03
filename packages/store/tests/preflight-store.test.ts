@@ -18,7 +18,7 @@ const sourceUrl = "https://example.com/private-skills.git";
 function result(id: string, createdAt: string): PreflightResult {
   return {
     schemaVersion: 3,
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     id,
     generatedAt: createdAt,
     portfolioFingerprint: hash("a"),

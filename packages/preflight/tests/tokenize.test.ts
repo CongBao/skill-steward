@@ -12,6 +12,31 @@ describe("tokenize", () => {
     ]);
   });
 
+  it("does not corrupt singular s words or doubled s after ing", () => {
+    expect(tokenize("this does missing tests").terms).toEqual(["miss", "test"]);
+  });
+
+  it("keeps lexical double-l roots when removing ing", () => {
+    expect(tokenize("installing install calling call filling fill").terms).toEqual([
+      "install",
+      "call",
+      "fill"
+    ]);
+  });
+
+  it("keeps common lexical double-consonant roots", () => {
+    expect(tokenize("adding add erring err padding pad starring star").terms).toEqual([
+      "add",
+      "err",
+      "pad",
+      "star"
+    ]);
+  });
+
+  it("removes generic workflow filler from capability terms", () => {
+    expect(tokenize("Please create this change so it works").terms).toEqual(["work"]);
+  });
+
   it("creates CJK characters and adjacent bigrams", () => {
     expect(tokenize("检查安全测试").terms).toEqual([
       "检",

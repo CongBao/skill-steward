@@ -4,6 +4,22 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.5.0-alpha.2] - 2026-07-03
+
+### Changed
+
+- Preflight algorithm v3 addresses observed deterministic-routing failures with safer Latin normalization, narrow English negative-routing clauses, boundary-safe Skill-name matching, and a two-term minimum for non-name matches.
+- Human Preflight output now leads with the run ID and readable reasons, bounds excluded-candidate detail, and points to an explicit CLI feedback command backed by the existing evidence store.
+- Portfolio surfaces use affected Skill names, treat an empty scanned portfolio as unscored, and use current KPI values instead of synthetic preview numbers.
+- Governance human output prefers Skill display names while exact identifiers and fingerprints remain available in plans and JSON.
+- The bilingual README now defines the product through its three user jobs and gives a shorter first-use path; the product-review record separates implemented changes from accepted future gaps.
+- Direct CLI packing rebuilds workspace dependencies, and CI verifies that path from a clean checkout.
+- Dashboard request failures are distinct from genuine empty portfolio, finding, and history states; Preflight scope labels are localized.
+
+### Security
+
+- Human Preflight and governance output escapes terminal control and bidirectional formatting characters from untrusted Skill metadata and filesystem paths.
+
 ## [0.5.0-alpha.1] - 2026-07-03
 
 ### Added

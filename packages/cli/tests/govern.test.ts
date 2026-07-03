@@ -11,7 +11,7 @@ async function fixture() {
   const base = await realpath(await mkdtemp(join(tmpdir(), "steward-cli-govern-")));
   const home = join(base, "home");
   const activeRoot = join(home, ".agents", "skills");
-  const activePath = join(activeRoot, "review");
+  const activePath = join(activeRoot, "review-skill");
   const stateDir = join(base, "state");
   await mkdir(activePath, { recursive: true });
   await mkdir(stateDir);
@@ -69,6 +69,7 @@ describe("govern command", () => {
     const plan = JSON.parse(current.stdout.splice(0).join(""));
     expect(plan).toMatchObject({
       kind: "quarantine",
+      skillId: current.parsed.id,
       activePath: current.activePath,
       operations: expect.any(Array)
     });
@@ -78,23 +79,37 @@ describe("govern command", () => {
     const applied = JSON.parse(current.stdout.splice(0).join(""));
     expect(applied).toMatchObject({
       rescanRequired: true,
-      transaction: { action: "quarantine", status: "quarantined" }
+      transaction: {
+        action: "quarantine",
+        status: "quarantined",
+        skillId: current.parsed.id
+      }
     });
     await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await readLatestReport(current.stateDir))?.skills).toEqual([]);
 
     expect(await run(["govern", "history", "--json"], current.context)).toBe(0);
     const [transaction] = JSON.parse(current.stdout.splice(0).join(""));
-    expect(transaction).toMatchObject({ status: "quarantined" });
+    expect(transaction).toMatchObject({
+      status: "quarantined",
+      skillId: current.parsed.id
+    });
 
     const restore = [
       "govern", "restore", "--transaction", transaction.id, "--json"
     ];
     expect(await run(restore, current.context)).toBe(0);
-    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({ kind: "restore" });
+    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
+      kind: "restore",
+      skillId: current.parsed.id
+    });
     expect(await run([...restore, "--confirm"], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
-      transaction: { action: "restore", status: "restored" }
+      transaction: {
+        action: "restore",
+        status: "restored",
+        skillId: current.parsed.id
+      }
     });
     await expect(access(current.activePath)).resolves.toBeUndefined();
     expect((await readLatestReport(current.stateDir))?.skills).toEqual([
@@ -104,11 +119,67 @@ describe("govern command", () => {
     expect(await run(["govern", "delete", "--skill", current.parsed.id], current.context)).toBe(1);
   });
 
+  it("uses the Skill display name in human governance output", async () => {
+    const quarantine = ["govern", "quarantine", "--skill", current.parsed.id];
+
+    expect(await run(quarantine, current.context)).toBe(0);
+    expect(current.stdout.splice(0).join("").split("\n")[0])
+      .toBe("Governance plan: quarantine review");
+
+    expect(await run([...quarantine, "--confirm"], current.context)).toBe(0);
+    const quarantineOutput = current.stdout.splice(0).join("");
+    const quarantineTransactionId = quarantineOutput.match(/^Quarantined 'review' \(([^)]+)\)\.\n$/)?.[1];
+    expect(quarantineTransactionId).toBeTruthy();
+
+    expect(await run(["govern", "history"], current.context)).toBe(0);
+    expect(current.stdout.splice(0).join("").trim().split("\n")).toContain(
+      `${quarantineTransactionId}: quarantine review (quarantined)`
+    );
+
+    const restore = [
+      "govern", "restore", "--transaction", quarantineTransactionId as string
+    ];
+    expect(await run(restore, current.context)).toBe(0);
+    expect(current.stdout.splice(0).join("").split("\n")[0])
+      .toBe("Governance plan: restore review");
+
+    expect(await run([...restore, "--confirm"], current.context)).toBe(0);
+    const restoreOutput = current.stdout.splice(0).join("");
+    const restoreTransactionId = restoreOutput.match(/^Restored Skill 'review' \(([^)]+)\)\.\n$/)?.[1];
+    expect(restoreTransactionId).toBeTruthy();
+
+    expect(await run(["govern", "history"], current.context)).toBe(0);
+    expect(current.stdout.splice(0).join("").trim().split("\n")).toEqual(expect.arrayContaining([
+      `${quarantineTransactionId}: quarantine review (quarantined)`,
+      `${restoreTransactionId}: restore review (restored)`
+    ]));
+  });
+
   it("returns a typed error for an unknown Skill", async () => {
     expect(await run([
       "govern", "quarantine", "--skill", "missing", "--confirm"
     ], current.context)).toBe(1);
     expect(current.stderr.join("")).toContain("SKILL_NOT_FOUND");
     await expect(access(current.activePath)).resolves.toBeUndefined();
+  });
+
+  it("escapes terminal control characters in reviewed governance output", async () => {
+    const report = await readLatestReport(current.stateDir);
+    if (!report) throw new Error("fixture report missing");
+    await writeLatestReport(current.stateDir, {
+      ...report,
+      skills: report.skills.map((skill) => ({
+        ...skill,
+        name: "trusted\u001b[2J\nspoof"
+      }))
+    });
+
+    expect(await run([
+      "govern", "quarantine", "--skill", current.parsed.id
+    ], current.context)).toBe(0);
+
+    const output = current.stdout.join("");
+    expect(output).not.toContain("\u001b");
+    expect(output).toContain("trusted\\u{001b}[2J\\u{000a}spoof");
   });
 });

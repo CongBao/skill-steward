@@ -6,7 +6,9 @@ import {
   writeCatalogSnapshot,
   writeCatalogSources
 } from "@skill-steward/store";
+import type { PreflightResult } from "@skill-steward/preflight";
 import { beforeEach, describe, expect, it } from "vitest";
+import { renderPreflightHuman } from "../src/commands/preflight.js";
 import type { CliContext } from "../src/context.js";
 import { run } from "../src/main.js";
 
@@ -112,6 +114,9 @@ describe("preflight command", () => {
 
     expect(exitCode).toBe(0);
     expect(current.stdout.join("")).toContain("security-review");
+    expect(current.stdout.join("")).toMatch(/Run ID: [a-f0-9-]+/u);
+    expect(current.stdout.join("")).toContain("Task match:");
+    expect(current.stdout.join("")).not.toContain("TASK_TERM_MATCH:");
     expect(current.stdout.join("")).toContain("Consider installing");
     expect(current.stdout.join("")).toContain("testing-review");
     expect(current.stdout.join("")).toContain("Estimated context saved");
@@ -146,7 +151,7 @@ describe("preflight command", () => {
     const output = JSON.parse(current.stdout.join(""));
     expect(output).toMatchObject({
       schemaVersion: 3,
-      algorithmVersion: 2,
+      algorithmVersion: 3,
       useCandidateIds: expect.any(Array),
       installCandidateIds: expect.any(Array)
     });
@@ -200,5 +205,132 @@ describe("preflight command", () => {
       "--harness", "invalid-harness",
       "--json"
     ], current.context)).toBe(1);
+  });
+
+  it("bounds low-value exclusions and points to complete JSON", () => {
+    const result: PreflightResult = {
+      schemaVersion: 3,
+      algorithmVersion: 3,
+      id: "run-1",
+      generatedAt: "2026-07-03T00:00:00.000Z",
+      portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+      taskHash: `sha256:${"b".repeat(64)}`,
+      taskCharacterCount: 20,
+      taskTermCount: 4,
+      useCandidateIds: [],
+      installCandidateIds: [],
+      candidates: Array.from({ length: 8 }, (_, index) => ({
+        candidateId: `candidate-${index}`,
+        availability: "installed" as const,
+        installedSkillId: `candidate-${index}`,
+        name: `candidate-${index}`,
+        description: "Unrelated helper",
+        scope: "global" as const,
+        compatibleHarnesses: ["codex" as const],
+        compatibility: "portable" as const,
+        scripts: [],
+        executables: [],
+        highestSeverity: null,
+        relevance: 0.01,
+        uniqueCoverage: 0,
+        riskPenalty: 0,
+        redundancyPenalty: 0,
+        installPenalty: 0,
+        contextTokens: 100,
+        features: {
+          taskCoverage: 0,
+          skillPrecision: 0,
+          nameMatch: false,
+          projectScopeFit: false
+        },
+        decision: "excluded" as const,
+        reasons: [{
+          code: "LOW_RELEVANCE" as const,
+          detail: "Task relevance is below the deterministic threshold."
+        }]
+      })),
+      conflicts: [],
+      capabilityGaps: ["security"],
+      installedCoverage: 0,
+      projectedCoverage: 0,
+      selectedContextTokens: 0,
+      plausibleContextTokens: 0,
+      estimatedContextSaved: 0
+    };
+
+    result.candidates[0]!.name = "trusted\u001b[2J\nspoof";
+    result.candidates[0]!.reasons[0]!.detail = "low\u001b]52;c;payload\u0007";
+    const output = renderPreflightHuman(result);
+    expect(output).toContain("5 shown, 3 more omitted; use --json for full details");
+    expect(output).toContain(
+      "skill-steward evidence feedback --preflight run-1 --label useful"
+    );
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toContain("\u0007");
+    expect(output).toContain("trusted\\u{001b}[2J\\u{000a}spoof");
+    expect(output).toContain("low\\u{001b}]52;c;payload\\u{0007}");
+  });
+
+  it("explains a hard exclusion instead of the generic relevance fallback", () => {
+    const result: PreflightResult = {
+      schemaVersion: 3,
+      algorithmVersion: 3,
+      id: "run-1",
+      generatedAt: "2026-07-03T00:00:00.000Z",
+      portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+      taskHash: `sha256:${"b".repeat(64)}`,
+      taskCharacterCount: 20,
+      taskTermCount: 4,
+      useCandidateIds: [],
+      installCandidateIds: [],
+      candidates: [{
+        candidateId: "docx",
+        availability: "available",
+        catalogSkillId: "docx",
+        name: "docx",
+        description: "Do not use for PDFs.",
+        scope: "unknown",
+        compatibleHarnesses: [],
+        compatibility: "unknown",
+        scripts: [],
+        executables: [],
+        highestSeverity: null,
+        relevance: 0.2,
+        uniqueCoverage: 0,
+        riskPenalty: 0,
+        redundancyPenalty: 0,
+        installPenalty: 0.05,
+        contextTokens: 100,
+        features: {
+          taskCoverage: 0.2,
+          skillPrecision: 0.2,
+          nameMatch: false,
+          projectScopeFit: false
+        },
+        decision: "excluded",
+        source: {
+          sourceId: "fixture",
+          trust: "user",
+          url: "https://example.com/fixture.git",
+          revision: "a".repeat(40),
+          relativePath: "docx"
+        },
+        reasons: [
+          { code: "NEGATIVE_TRIGGER", detail: "The Skill explicitly excludes PDF tasks." },
+          { code: "LOW_RELEVANCE", detail: "Task relevance is below the threshold." }
+        ]
+      }],
+      conflicts: [],
+      capabilityGaps: ["pdf"],
+      installedCoverage: 0,
+      projectedCoverage: 0,
+      selectedContextTokens: 0,
+      plausibleContextTokens: 0,
+      estimatedContextSaved: 0
+    };
+
+    expect(renderPreflightHuman(result)).toContain(
+      "docx: The Skill explicitly excludes PDF tasks."
+    );
   });
 });

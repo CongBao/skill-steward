@@ -5,6 +5,7 @@ import {
   type EvidenceDataset
 } from "@skill-steward/evidence";
 import { readInstallationHistory } from "@skill-steward/installer";
+import { preflightFeedbackSchema } from "@skill-steward/preflight";
 import {
   applyEvidenceErasePlan,
   applyEvidencePolicyPlan,
@@ -14,6 +15,7 @@ import {
   readEvidenceEvents,
   readNormalizedPreflightEvidence,
   readEvidencePolicy,
+  recordPreflightFeedback,
   writeEvidenceExport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
@@ -124,6 +126,53 @@ export async function evidenceSummaryCommand(
           ...summary.readiness.reasons.map((reason) => `- ${reason}`),
           ""
         ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    context.stderr(`${errorText(error)}\n`);
+    return 1;
+  }
+}
+
+export async function evidenceFeedbackCommand(
+  options: {
+    preflight: string;
+    label: string;
+    candidates: string[];
+    json: boolean;
+  },
+  context: CliContext
+): Promise<number> {
+  try {
+    const label = preflightFeedbackSchema.shape.label.parse(options.label);
+    let candidateIds = options.candidates;
+    if (candidateIds.length === 0 && label === "useful") {
+      const preflight = (await readNormalizedPreflightEvidence(context.stateDir))
+        .find((record) => record.id === options.preflight);
+      candidateIds = preflight
+        ? [...preflight.useCandidateIds, ...preflight.installCandidateIds]
+        : [];
+    }
+    if (candidateIds.length === 0 && label === "incomplete") {
+      throw new Error("--candidate must provide the complete correct candidate set for incomplete feedback");
+    }
+    const feedback = preflightFeedbackSchema.parse({
+      label,
+      candidateIds
+    });
+    await recordPreflightFeedback(
+      context.stateDir,
+      options.preflight,
+      feedback,
+      context.now?.() ?? new Date()
+    );
+    context.stdout(options.json
+      ? `${JSON.stringify({
+          recorded: true,
+          preflightId: options.preflight,
+          ...feedback
+        }, null, 2)}\n`
+      : `Feedback recorded for Preflight ${options.preflight}.\n`
     );
     return 0;
   } catch (error) {

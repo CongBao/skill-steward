@@ -13,6 +13,7 @@ import { PageHeader } from "../../components/PageHeader.js";
 import { SeverityBadge } from "../../components/SeverityBadge.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 import { AvailableCandidateCard } from "./AvailableCandidateCard.js";
+import { preflightReasonDetail } from "./reasonDetail.js";
 import "./preflight.css";
 
 const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
@@ -25,21 +26,9 @@ const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
   PORTFOLIO_RISK: "preflight.reason.PORTFOLIO_RISK",
   INSTALL_REQUIRED: "preflight.reason.INSTALL_REQUIRED",
   CRITICAL_RISK: "preflight.reason.CRITICAL_RISK",
+  NEGATIVE_TRIGGER: "preflight.reason.NEGATIVE_TRIGGER",
   HARNESS_INCOMPATIBLE: "preflight.reason.HARNESS_INCOMPATIBLE"
 };
-
-function reasonDetail(candidate: PreflightCandidate, reason: PreflightCandidate["reasons"][number], t: (key: TranslationKey) => string): string {
-  const percent = (value: number) => String(Math.round(value * 100));
-  switch (reason.code) {
-    case "NAME_MATCH": return t("preflight.reasonDetail.NAME_MATCH").replace("{name}", candidate.name);
-    case "PROJECT_SCOPE_FIT": return t("preflight.reasonDetail.PROJECT_SCOPE_FIT");
-    case "UNIQUE_COVERAGE": return t("preflight.reasonDetail.UNIQUE_COVERAGE").replace("{percent}", percent(candidate.uniqueCoverage));
-    case "REDUNDANT_WITH_SELECTED": return t("preflight.reasonDetail.REDUNDANT_WITH_SELECTED").replace("{percent}", percent(candidate.redundancyPenalty));
-    case "LOW_RELEVANCE": return t("preflight.reasonDetail.LOW_RELEVANCE");
-    case "PORTFOLIO_RISK": return t("preflight.reasonDetail.PORTFOLIO_RISK").replace("{percent}", percent(candidate.riskPenalty));
-    default: return reason.detail;
-  }
-}
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
   const percent = Math.round(value * 100);
@@ -52,8 +41,8 @@ function CandidateCard({ candidate }: { candidate: PreflightCandidate }) {
     <article className="preflight-candidate" data-decision={candidate.decision}>
       <header><div><h3>{candidate.name}</h3><p>{candidate.description}</p></div><span className="preflight-token-cost">{candidate.contextTokens} {t("preflight.tokens")}</span></header>
       <div className="preflight-scores"><ScoreBar label={t("preflight.relevance")} value={candidate.relevance} /><ScoreBar label={t("preflight.uniqueCoverage")} value={candidate.uniqueCoverage} /></div>
-      <div className="preflight-metadata"><span>{t("preflight.scope")}: <strong>{candidate.scope}</strong></span><span>{t("preflight.harnesses")}: <strong>{candidate.compatibleHarnesses.join(", ") || "—"}</strong></span></div>
-      <ul className="preflight-reasons">{candidate.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}><span>{t(reasonKeys[reason.code])}</span><p>{reasonDetail(candidate, reason, t)}</p></li>)}</ul>
+      <div className="preflight-metadata"><span>{t("preflight.scope")}: <strong>{t(`scope.${candidate.scope}` as TranslationKey)}</strong></span><span>{t("preflight.harnesses")}: <strong>{candidate.compatibleHarnesses.join(", ") || "—"}</strong></span></div>
+      <ul className="preflight-reasons">{candidate.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}><span>{t(reasonKeys[reason.code])}</span><p>{preflightReasonDetail(candidate, reason, t)}</p></li>)}</ul>
     </article>
   );
 }

@@ -1,0 +1,12 @@
+import { expect, it } from "vitest";
+import { translation } from "./catalog.js";
+
+it("uses natural discovery and Settings copy in both supported languages", () => {
+  expect(translation("en-US", "evidence.emptyCopy")).toContain("here in the dashboard or from a connected Harness");
+  expect(translation("zh-CN", "evidence.emptyCopy")).toContain("可以在看板中运行任务预检，也可以通过已连接的 Harness 运行");
+  expect(translation("zh-CN", "settings.preview")).toBe("概览页实时预览");
+  expect(translation("zh-CN", "settings.selected")).toBe("已选指标及顺序");
+  expect(translation("zh-CN", "kpi.harness-coverage")).toBe("活跃 Harness");
+  expect(translation("zh-CN", "governance.operation.verify-staging")).toBe("校验暂存副本");
+  expect(translation("zh-CN", "evidence.lifecycle.userExit")).toBe("用户退出");
+});

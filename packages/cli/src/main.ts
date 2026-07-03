@@ -22,6 +22,7 @@ import {
   evidenceCompactCommand,
   evidenceEraseCommand,
   evidenceExportCommand,
+  evidenceFeedbackCommand,
   evidencePolicyCommand,
   evidencePolicySetCommand,
   evidenceSummaryCommand
@@ -146,6 +147,26 @@ export async function run(
     .option("--json", "JSON output", false)
     .action(async (options: { json: boolean }) => {
       exitCode = await evidenceSummaryCommand(options.json, context);
+    });
+
+  evidence
+    .command("feedback")
+    .requiredOption("--preflight <id>")
+    .requiredOption("--label <label>", "useful, incomplete, or incorrect")
+    .option("--candidate <id...>", "complete correct candidate set IDs", [])
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      preflight: string;
+      label: string;
+      candidate: string[];
+      json: boolean;
+    }) => {
+      exitCode = await evidenceFeedbackCommand({
+        preflight: options.preflight,
+        label: options.label,
+        candidates: options.candidate,
+        json: options.json
+      }, context);
     });
 
   evidence

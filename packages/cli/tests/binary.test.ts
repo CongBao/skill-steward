@@ -34,7 +34,7 @@ describe("built CLI", () => {
     };
     const { stdout } = await execFileAsync(process.execPath, [binary, "--version"]);
 
-    expect(manifest.version).toBe("0.5.0-alpha.1");
+    expect(manifest.version).toBe("0.5.0-alpha.2");
     expect(stdout.trim()).toBe(manifest.version);
   });
 

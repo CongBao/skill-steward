@@ -20,13 +20,25 @@ const snapshot = {
     { id: "harness-coverage", value: 3, status: "neutral" },
     { id: "bundle-size", value: 3800, status: "neutral" }
   ],
-  skills: [],
+  skills: [
+    {
+      id: "skill-release",
+      name: "Release steward",
+      description: "Review releases",
+      path: "/skills/release",
+      scope: "project",
+      visibleTo: ["codex"],
+      fingerprint: `sha256:${"b".repeat(64)}`,
+      files: [],
+      estimatedTokens: 320
+    }
+  ],
   priorityFindings: [
     {
       id: "finding-1",
       code: "BROKEN_RELATIVE_REFERENCE",
       severity: "error",
-      skillIds: [],
+      skillIds: ["skill-release"],
       summary: "Broken relative reference",
       evidence: ["missing.md"],
       recommendation: "Repair it",
@@ -61,9 +73,38 @@ it("renders the five recommended KPIs and priority findings", async () => {
   expect(screen.getByRole("article", { name: /Open findings: 2/ })).toBeVisible();
   expect(screen.getByRole("article", { name: /Installed Skills: 4/ })).toBeVisible();
   expect(screen.getByRole("article", { name: /Estimated context: 1.5K/ })).toBeVisible();
-  expect(screen.getByRole("article", { name: /Harness coverage: 3/ })).toBeVisible();
+  expect(screen.getByRole("article", { name: /Active Harnesses: 3/ })).toBeVisible();
   expect(screen.queryByRole("article", { name: /Bundle size/ })).not.toBeInTheDocument();
   expect(screen.getByText("Broken relative reference")).toBeVisible();
+  expect(screen.getByText("Release steward")).toBeVisible();
+});
+
+it("shows discovery actions instead of a misleading perfect score when a scan finds no Skills", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({
+    ok: true,
+    json: async () => ({
+      data: {
+        ...snapshot,
+        latest: { ...snapshot.latest, skillCount: 0, findingCount: 0 },
+        kpis: [
+          { id: "health-score", value: 100, status: "positive" },
+          { id: "installed-skills", value: 0, status: "neutral" }
+        ],
+        skills: [],
+        priorityFindings: []
+      },
+      error: null,
+      meta: { apiVersion: 1 }
+    })
+  })));
+
+  render(<OverviewPage />, { wrapper: wrapper() });
+
+  expect(await screen.findByRole("heading", { name: "No Skills found" })).toBeVisible();
+  expect(screen.queryByRole("article", { name: /Health score: 100/ })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Portfolio KPIs")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Skills" })).toHaveAttribute("href", "/skills");
+  expect(screen.getByRole("link", { name: "Review discovery settings" })).toHaveAttribute("href", "/settings");
 });
 
 it("shows a first-run action when no report exists", async () => {

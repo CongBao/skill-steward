@@ -1,6 +1,6 @@
 # Architecture
 
-Skill Steward is a local-first TypeScript monorepo. It is a control plane around Agent Skills, not an agent Harness. Codex, Claude Code, GitHub Copilot, and other supported tools continue to execute tasks and Skills.
+Skill Steward is a local-first TypeScript monorepo and companion for managing Agent Skills. It is not an agent Harness: Codex, Claude Code, GitHub Copilot, and other supported tools continue to execute tasks and Skills.
 
 ```mermaid
 flowchart LR
@@ -12,7 +12,7 @@ flowchart LR
   Hook --> Services
   Observe --> Services
   Server --> Services
-  Services --> Preflight[Preflight algorithm v2 / schema v3]
+  Services --> Preflight[Preflight algorithm v3 / schema v3]
   Services --> Catalog[Cached catalog metadata]
   Services --> Installer[Reviewed installer]
   Services --> Evidence[Privacy-safe evidence]
@@ -32,19 +32,19 @@ flowchart LR
 - `packages/engine` owns root discovery, parsing, fingerprints, findings, overlap analysis, and the shared Harness root catalog.
 - `packages/insights` converts reports into deterministic health and KPI presentation models.
 - `packages/catalog` defines source metadata, disabled presets, Git refresh, last-known-good behavior, candidate identity, and installation reinspection. It does not persist data itself.
-- `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, and installation penalties. It has no filesystem or network I/O.
+- `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English `do not use ... for/when ...` routing clauses, and installation penalties. Algorithm v3 requires at least two shared task terms for non-name matches. It has no filesystem or network I/O.
 - `packages/evidence` defines strict content-free evidence, policy, lifecycle, metric, breakdown, and readiness schemas plus pure aggregation.
 - `packages/integrations` defines compact Hook protocols, the shared capability matrix, transactional Codex/Claude/Copilot configuration, trust status, and companion-Skill file operations.
 - `packages/store` owns validated atomic reports, catalog metadata, bounded history, labels, integration records, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
 - `packages/installer` owns source staging, ZIP/Git safeguards, inspection, destination plans, atomic transactions, journaling, and rollback.
 - `packages/governance` owns exact quarantine/restore plans, verified vault transactions, failure recovery, and the append-only governance journal.
 - `packages/dashboard-server` composes those packages behind a loopback security boundary and versioned API.
-- `apps/dashboard` is a dashboard and configuration client. It does not contain a second analysis or mutation implementation.
-- `packages/cli` exposes the same services headlessly and bundles the dashboard plus companion Skill.
+- `apps/dashboard` is a dashboard and configuration client. It does not contain a second analysis or mutation implementation. Presentation code resolves affected Skill names, treats an empty scanned portfolio as unscored, and formats KPI values from the current snapshot rather than example numbers.
+- `packages/cli` exposes the same services headlessly and bundles the dashboard plus companion Skill. Its human Preflight output is bounded and readable; the explicit CLI feedback command writes labels through the existing evidence store.
 
 ## Task-time data flow
 
-The Codex and Claude Code adapters run `skill-steward hook prompt` when a user submits a prompt. The command reads the latest installed-portfolio report and cached catalog index, calls deterministic Preflight algorithm v2, and emits at most 2,048 bytes of additional context. Their completion Hooks record content-free turn/session reasons only in opt-in learning mode. Invalid input, missing state, timeout, HMAC failure, or evidence-write failure returns protocol-valid non-blocking JSON so the Harness continues normally.
+The Codex and Claude Code adapters run `skill-steward hook prompt` when a user submits a prompt. The command reads the latest installed-portfolio report and cached catalog index, calls deterministic Preflight algorithm v3, and emits at most 2,048 bytes of additional context. Their completion Hooks record content-free turn/session reasons only in opt-in learning mode. Invalid input, missing state, timeout, HMAC failure, or evidence-write failure returns protocol-valid non-blocking JSON so the Harness continues normally.
 
 GitHub Copilot CLI uses a separate observe-only adapter. Its dedicated `~/.copilot/hooks/skill-steward.json` file observes `userPromptSubmitted` and `sessionEnd`, always returns `{}`, and never injects recommendation context. The companion Skill or explicit CLI remains its recommendation surface. This distinction is encoded in the capability model instead of inferred by the UI.
 

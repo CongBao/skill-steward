@@ -83,6 +83,19 @@ describe("governance planner", () => {
     ]);
   });
 
+  it("preserves a scanned Skill display name without introducing a new length limit", async () => {
+    const current = await fixture();
+    const longName = "review-".repeat(50);
+    const plan = await planQuarantine({
+      skill: { ...current.skill, name: longName },
+      activeRoots: current.roots,
+      stateDirectory: current.stateDirectory,
+      id: () => "tx-long-name"
+    });
+
+    expect(plan.skillName).toBe(longName);
+  });
+
   it("rejects source links, root escape, fingerprint drift, and destination conflicts", async () => {
     const linked = await fixture();
     const target = join(linked.base, "linked-target");
