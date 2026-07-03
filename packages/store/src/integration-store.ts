@@ -46,7 +46,7 @@ export type IntegrationRecord = z.infer<typeof integrationRecordSchema>;
 
 interface IntegrationFragment {
   fileName: string;
-  modifiedAt: bigint;
+  publishedAt: bigint;
   limit: number;
   record: IntegrationRecord;
 }
@@ -177,11 +177,11 @@ async function readFragments(stateDirectory: string): Promise<IntegrationFragmen
   ));
   return fragments.filter((fragment): fragment is IntegrationFragment => fragment !== null)
     .sort((left, right) => {
-    if (left.modifiedAt !== right.modifiedAt) {
-      return left.modifiedAt > right.modifiedAt ? -1 : 1;
-    }
-    return right.fileName.localeCompare(left.fileName);
-  });
+      if (left.publishedAt !== right.publishedAt) {
+        return left.publishedAt > right.publishedAt ? -1 : 1;
+      }
+      return right.fileName.localeCompare(left.fileName);
+    });
 }
 
 async function readFragment(
@@ -198,7 +198,7 @@ async function readFragment(
   );
   return {
     fileName,
-    modifiedAt: metadata.mtimeNs,
+    publishedAt: metadata.ctimeNs,
     limit: fragment.limit,
     record: fragment.record
   };

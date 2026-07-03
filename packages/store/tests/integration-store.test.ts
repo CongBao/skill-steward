@@ -12,13 +12,47 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   appendIntegrationRecord,
   latestIntegrationRecord,
   readIntegrationRecords,
   type IntegrationRecord
 } from "../src/integration-store.js";
+
+const publicationGate = vi.hoisted(() => ({
+  armed: false,
+  blocked: null as (() => void) | null,
+  wait: null as Promise<void> | null,
+  publishedPath: null as string | null,
+  temporaryCtime: null as bigint | null
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    async rename(...args: Parameters<typeof original.rename>) {
+      const [temporary, published] = args;
+      if (
+        publicationGate.armed
+        && String(temporary).includes("integration-records")
+        && String(temporary).endsWith(".tmp")
+      ) {
+        publicationGate.armed = false;
+        publicationGate.publishedPath = String(published);
+        const oldTime = new Date("2000-01-01T00:00:00.000Z");
+        await original.utimes(temporary, oldTime, oldTime);
+        publicationGate.temporaryCtime = (
+          await original.stat(temporary, { bigint: true })
+        ).ctimeNs;
+        publicationGate.blocked?.();
+        if (publicationGate.wait) await publicationGate.wait;
+      }
+      return original.rename(...args);
+    }
+  };
+});
 
 const writerFixture = fileURLToPath(
   new URL("./fixtures/integration-writer.mjs", import.meta.url)
@@ -215,6 +249,54 @@ describe("integration store", () => {
       );
     }
     expect(await readIntegrationRecords(state)).toHaveLength(100);
+    expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
+  });
+
+  it("retains a late-published fragment whose temporary file had an old mtime", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-integration-publish-order-"));
+    for (let index = 0; index < 100; index += 1) {
+      await appendIntegrationRecord(
+        state,
+        record(`seed-${index}`, new Date(Date.UTC(2026, 6, 3) + index).toISOString())
+      );
+    }
+    let markBlocked!: () => void;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { markBlocked = resolve; });
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    publicationGate.armed = true;
+    publicationGate.blocked = markBlocked;
+    publicationGate.wait = wait;
+    publicationGate.publishedPath = null;
+    publicationGate.temporaryCtime = null;
+    const lateAppend = appendIntegrationRecord(
+      state,
+      record("late-publish", "2026-07-03T02:00:00.000Z")
+    );
+    await blocked;
+    try {
+      for (let index = 0; index <= 100; index += 1) {
+        await appendIntegrationRecord(
+          state,
+          record(
+            `newer-${index}`,
+            new Date(Date.UTC(2026, 6, 3, 3) + index).toISOString()
+          )
+        );
+      }
+    } finally {
+      release();
+    }
+    await lateAppend;
+    const metadata = await stat(publicationGate.publishedPath!, { bigint: true });
+    expect(metadata.ctimeNs).toBeGreaterThan(publicationGate.temporaryCtime!);
+
+    const records = await readIntegrationRecords(state);
+    expect(records.map(({ id }) => id)).toEqual(expect.arrayContaining([
+      "late-publish",
+      "newer-100"
+    ]));
+    expect(records).toHaveLength(100);
     expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
   });
 
