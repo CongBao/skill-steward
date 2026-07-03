@@ -27,9 +27,9 @@ Skill Steward 提供一个统一的本地决策层：
 
 ## 界面截图
 
-![包含已安装和可发现 Skills 的任务预检](docs/images/preflight-discovery-light-zh-CN.png)
+![包含明确反馈、生命周期、Harness 和算法指标的证据看板](docs/images/evidence-light-zh-CN.png)
 
-![Codex 与 Claude Code 集成设置](docs/images/integrations-dark-zh-CN.png)
+![包含恢复校验且不提供永久删除的精确隔离计划](docs/images/governance-dark-zh-CN.png)
 
 ## 安装
 

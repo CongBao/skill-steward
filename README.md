@@ -27,9 +27,9 @@ The analysis is deterministic and does not require an LLM. The selected Harness 
 
 ## Screenshots
 
-![Task Preflight with installed and available Skills](docs/images/preflight-discovery-light-en.png)
+![Evidence dashboard with explicit feedback, lifecycle, Harness, and algorithm metrics](docs/images/evidence-light-en.png)
 
-![Codex and Claude Code integration settings](docs/images/integrations-dark-en.png)
+![Exact reversible quarantine plan with verified recovery and no permanent delete](docs/images/governance-dark-en.png)
 
 ## Installation
 

@@ -82,17 +82,24 @@ describe("built CLI", () => {
     });
   });
 
-  it("runs the cached discovery Hook and reversible Codex bridge in a temporary HOME", async () => {
+  it("runs cached Hooks and reversible integration lifecycles for all three adapters in a temporary HOME", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-vertical-slice-"));
     const home = join(base, "home");
     const workspace = join(base, "workspace");
     const stateDir = join(base, "state");
     const installedSkill = join(home, ".agents", "skills", "security-review");
+    const claudeSkill = join(home, ".claude", "skills", "security-review");
     await mkdir(installedSkill, { recursive: true });
+    await mkdir(claudeSkill, { recursive: true });
     await mkdir(join(home, ".codex"), { recursive: true });
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await mkdir(join(home, ".copilot", "hooks"), { recursive: true });
     await mkdir(workspace, { recursive: true });
     await writeFile(join(installedSkill, "SKILL.md"), "---\nname: security-review\ndescription: Review security risks and vulnerabilities\n---\nReview security.\n");
+    await writeFile(join(claudeSkill, "SKILL.md"), "---\nname: security-review\ndescription: Review security risks and vulnerabilities\n---\nReview security.\n");
     await writeFile(join(home, ".codex", "hooks.json"), '{"unrelated":true}\n');
+    await writeFile(join(home, ".claude", "settings.json"), '{"unrelated":true}\n');
+    await writeFile(join(home, ".copilot", "hooks", "keep-me.json"), '{"unrelated":true}\n');
     const env = { ...process.env, HOME: home, SKILL_STEWARD_HOME: stateDir };
     await execFileAsync(process.execPath, [binary, "scan", "--json"], { cwd: workspace, env });
 
@@ -136,19 +143,58 @@ describe("built CLI", () => {
     const hookOutput = JSON.parse(hook.stdout);
     expect(hookOutput.hookSpecificOutput.additionalContext).toContain("security-review");
     expect(hookOutput.hookSpecificOutput.additionalContext).toContain("testing-review");
+    const claudeHook = await runWithInput(
+      ["hook", "prompt", "--harness", "claude-code"],
+      JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: rawTask, cwd: workspace }),
+      { cwd: workspace, env }
+    );
+    expect(JSON.parse(claudeHook.stdout).hookSpecificOutput.additionalContext).toContain("security-review");
+    for (const [args, payload] of [
+      [["hook", "lifecycle", "--harness", "codex"], { hook_event_name: "Stop", session_id: "synthetic-codex" }],
+      [["hook", "lifecycle", "--harness", "claude-code"], { hook_event_name: "Stop", session_id: "synthetic-claude", stop_hook_active: false }],
+      [["hook", "lifecycle", "--harness", "claude-code"], { hook_event_name: "SessionEnd", session_id: "synthetic-claude", reason: "clear" }],
+      [["hook", "observe", "--harness", "github-copilot", "--event", "userPromptSubmitted"], { sessionId: "synthetic-copilot", timestamp: 1_783_036_800_000, cwd: workspace, prompt: rawTask }],
+      [["hook", "observe", "--harness", "github-copilot", "--event", "sessionEnd"], { sessionId: "synthetic-copilot", timestamp: 1_783_036_801_000, cwd: workspace, reason: "complete" }]
+    ] as const) {
+      expect(JSON.parse((await runWithInput([...args], JSON.stringify(payload), { cwd: workspace, env })).stdout)).toEqual({});
+    }
     const stateFiles = await readdir(stateDir, { recursive: true });
     const stateText = (await Promise.all(stateFiles.map(async (entry) => {
       try { return await readFile(join(stateDir, entry), "utf8"); } catch { return ""; }
     }))).join("\n");
     expect(stateText).not.toContain(rawTask);
 
-    await execFileAsync(process.execPath, [binary, "integrate", "plan", "--harness", "codex"], { cwd: workspace, env });
-    await execFileAsync(process.execPath, [binary, "integrate", "apply", "--harness", "codex", "--confirm"], { cwd: workspace, env });
+    for (const harness of ["codex", "claude-code", "github-copilot"]) {
+      await execFileAsync(process.execPath, [binary, "integrate", "plan", "--harness", harness], { cwd: workspace, env });
+      await execFileAsync(process.execPath, [binary, "integrate", "apply", "--harness", harness, "--confirm"], { cwd: workspace, env });
+    }
     await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
+    expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"))).toMatchObject({ unrelated: true });
+    expect(await readFile(join(home, ".copilot", "hooks", "skill-steward.json"), "utf8")).toContain("hook observe --harness github-copilot");
+
+    const managed = [
+      { harness: "codex", path: join(home, ".codex", "hooks.json"), drift: (source: string) => source.replace("hook prompt --harness codex", "hook prompt --harness codex --drifted") },
+      { harness: "claude-code", path: join(home, ".claude", "settings.json"), drift: (source: string) => source.replace("hook prompt --harness claude-code", "hook prompt --harness claude-code --drifted") },
+      { harness: "github-copilot", path: join(home, ".copilot", "hooks", "skill-steward.json"), drift: (source: string) => `${source.trimEnd().slice(0, -1)},\"drifted\":true}\n` }
+    ];
+    for (const entry of managed) {
+      const original = await readFile(entry.path, "utf8");
+      const drifted = entry.drift(original);
+      await writeFile(entry.path, drifted, "utf8");
+      await expect(execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", entry.harness, "--confirm"], { cwd: workspace, env })).rejects.toThrow();
+      expect(await readFile(entry.path, "utf8")).toBe(drifted);
+      await writeFile(entry.path, original, "utf8");
+    }
 
     await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "codex", "--confirm"], { cwd: workspace, env });
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
+    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
+    await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "claude-code", "--confirm"], { cwd: workspace, env });
+    expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"))).toMatchObject({ unrelated: true });
+    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
+    await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "github-copilot", "--confirm"], { cwd: workspace, env });
+    expect(JSON.parse(await readFile(join(home, ".copilot", "hooks", "keep-me.json"), "utf8"))).toMatchObject({ unrelated: true });
     await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).rejects.toThrow();
   });
 });

@@ -3,8 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(process.cwd(), "../..");
-const englishScreenshots = ["preflight-discovery-light-en.png", "integrations-dark-en.png"];
-const chineseScreenshots = ["preflight-discovery-light-zh-CN.png", "integrations-dark-zh-CN.png"];
+const englishScreenshots = ["evidence-light-en.png", "governance-dark-en.png"];
+const chineseScreenshots = ["evidence-light-zh-CN.png", "governance-dark-zh-CN.png"];
 const required = [
   "LICENSE",
   "README.zh-CN.md",
