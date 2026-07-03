@@ -1,6 +1,8 @@
 import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { SkillRecord, SkillRoot } from "@skill-steward/engine";
 import { fingerprintDirectory } from "@skill-steward/installer";
 import { describe, expect, it } from "vitest";
@@ -9,6 +11,8 @@ import {
   planRestore,
   type QuarantinedSkill
 } from "../src/index.js";
+
+const execFileAsync = promisify(execFile);
 
 async function fixture() {
   const base = await realpath(await mkdtemp(join(tmpdir(), "steward-governance-plan-")));
@@ -115,6 +119,28 @@ describe("governance planner", () => {
       stateDirectory: conflict.stateDirectory,
       id: () => "tx-conflict"
     })).rejects.toMatchObject({ code: "DESTINATION_CONFLICT" });
+  });
+
+  it("rejects nested links and special files before creating a transaction plan", async () => {
+    const nestedLink = await fixture();
+    const outside = join(nestedLink.base, "outside.txt");
+    await writeFile(outside, "outside");
+    await symlink(outside, join(nestedLink.source, "linked.txt"));
+    await expect(planQuarantine({
+      skill: nestedLink.skill,
+      activeRoots: nestedLink.roots,
+      stateDirectory: nestedLink.stateDirectory
+    })).rejects.toMatchObject({ code: "SOURCE_UNSAFE" });
+
+    if (process.platform !== "win32") {
+      const special = await fixture();
+      await execFileAsync("mkfifo", [join(special.source, "unsafe.fifo")]);
+      await expect(planQuarantine({
+        skill: special.skill,
+        activeRoots: special.roots,
+        stateDirectory: special.stateDirectory
+      })).rejects.toMatchObject({ code: "SOURCE_UNSAFE" });
+    }
   });
 
   it("creates a drift-safe restore plan and rejects occupied or changed state", async () => {

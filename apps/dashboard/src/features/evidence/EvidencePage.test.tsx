@@ -89,3 +89,26 @@ it("marks a sufficiently diverse labeled dataset ready for calibration", async (
   expect(await screen.findByText("Ready for calibration review")).toBeVisible();
   expect(screen.getByText(/No thresholds are changed automatically/)).toBeVisible();
 });
+
+it("does not render content-shaped fields even if a contaminated transport fixture adds them", async () => {
+  const canaries = [
+    "CANARY_RAW_PROMPT_UI_94721",
+    "CANARY_TRANSCRIPT_UI_94721",
+    "CANARY_RAW_ID_UI_94721",
+    "/CANARY/WORKING/PATH/UI/94721",
+    "CANARY_TOOL_OUTPUT_UI_94721",
+    "CANARY_PRIVATE_SALT_UI_94721"
+  ];
+  vi.stubGlobal("fetch", vi.fn(async () => respond({
+    ...summary,
+    rawPrompt: canaries[0],
+    transcript: canaries[1],
+    rawSessionId: canaries[2],
+    cwd: canaries[3],
+    toolOutput: canaries[4],
+    salt: canaries[5]
+  })));
+  const { container } = render(<EvidencePage />, { wrapper });
+  expect(await screen.findByText("More evidence needed")).toBeVisible();
+  for (const canary of canaries) expect(container.textContent).not.toContain(canary);
+});
