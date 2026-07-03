@@ -40,6 +40,17 @@ it("normalizes GitHub shorthand and accepts only explicit remote source protocol
   expect(normalizeSourceUrl("https://example.com/project.git")).toBe(
     "https://example.com/project.git"
   );
+  for (const publicSource of [
+    "https://100.63.255.255/project",
+    "https://100.128.0.0/project",
+    "https://192.0.1.1/project",
+    "https://198.17.255.255/project",
+    "https://198.20.0.1/project",
+    "https://223.255.255.255/project",
+    "https://[2001:4860:4860::8888]/project"
+  ]) {
+    expect(normalizeSourceUrl(publicSource)).toBe(publicSource);
+  }
 
   for (const unsafe of [
     "../license",
@@ -57,19 +68,56 @@ it("normalizes GitHub shorthand and accepts only explicit remote source protocol
     "https://token@github.com/example/project",
     "https://git:secret@github.com/example/project",
     "ssh://git@example.com/project",
+    "https://example.com/project?",
+    "https://example.com/project#",
+    "https://example.com/project?token=secret",
+    "https://example.com/project#token",
+    "https://github.com/example/project?token=secret",
+    "https://github.com/example/project#main",
+    "github:example/project#main",
+    "example/project#main",
     "https://localhost/project",
     "https://build.localhost/project",
+    "https://intranet/project",
+    "https://service.local/project",
+    "https://service.internal/project",
+    "https://service.lan/project",
+    "https://service.home/project",
+    "https://service.localdomain/project",
+    "https://service.home.arpa/project",
     "https://127.0.0.1/project",
     "https://0.0.0.0/project",
     "https://169.254.1.2/project",
     "https://10.1.2.3/project",
     "https://172.16.1.2/project",
     "https://192.168.1.2/project",
+    "https://100.64.0.1/project",
+    "https://100.127.255.254/project",
+    "https://192.0.0.1/project",
+    "https://192.0.0.255/project",
+    "https://192.0.2.1/project",
+    "https://198.51.100.1/project",
+    "https://203.0.113.1/project",
+    "https://198.18.0.1/project",
+    "https://198.19.255.254/project",
+    "https://224.0.0.1/project",
+    "https://239.255.255.255/project",
+    "https://240.0.0.1/project",
+    "https://255.255.255.255/project",
     "https://[::]/project",
     "https://[::1]/project",
     "https://[fe80::1]/project",
     "https://[fc00::1]/project",
-    "https://[fd00::1]/project"
+    "https://[fd00::1]/project",
+    "https://[fec0::1]/project",
+    "https://[feff::1]/project",
+    "https://[ff00::1]/project",
+    "https://[ffff::1]/project",
+    "https://[2001:db8::1]/project",
+    "https://[::ffff:100.64.0.1]/project",
+    "https://[::ffff:192.0.2.1]/project",
+    "https://[::ffff:198.18.0.1]/project",
+    "https://[::ffff:224.0.0.1]/project"
   ]) {
     expect(() => normalizeSourceUrl(unsafe), unsafe).toThrow(/remote source URL/i);
   }

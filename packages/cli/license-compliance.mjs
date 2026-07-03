@@ -4,7 +4,15 @@ import { isIP } from "node:net";
 const REMOTE_PROTOCOLS = new Set(["git:", "http:", "https:", "ssh:"]);
 const GITHUB_OWNER = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?";
 const GITHUB_REPOSITORY = "[A-Za-z0-9_.-]*[A-Za-z0-9][A-Za-z0-9_.-]*";
-const GITHUB_PATH = `(${GITHUB_OWNER})/(${GITHUB_REPOSITORY}(?:#[A-Za-z0-9_.\/-]+)?)`;
+const GITHUB_PATH = `(${GITHUB_OWNER})/(${GITHUB_REPOSITORY})`;
+const LOCAL_HOST_SUFFIXES = [
+  ".home.arpa",
+  ".internal",
+  ".localdomain",
+  ".local",
+  ".lan",
+  ".home"
+];
 
 function privateIpv4(parts) {
   return parts[0] === 0
@@ -12,7 +20,15 @@ function privateIpv4(parts) {
     || parts[0] === 127
     || (parts[0] === 169 && parts[1] === 254)
     || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
-    || (parts[0] === 192 && parts[1] === 168);
+    || (parts[0] === 192 && parts[1] === 168)
+    || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
+    || (parts[0] === 192 && parts[1] === 0 && parts[2] === 0)
+    || (parts[0] === 192 && parts[1] === 0 && parts[2] === 2)
+    || (parts[0] === 198 && parts[1] === 51 && parts[2] === 100)
+    || (parts[0] === 203 && parts[1] === 0 && parts[2] === 113)
+    || (parts[0] === 198 && parts[1] >= 18 && parts[1] <= 19)
+    || (parts[0] >= 224 && parts[0] <= 239)
+    || parts[0] >= 240;
 }
 
 function ipv6Words(input) {
@@ -29,18 +45,25 @@ function ipv6Words(input) {
 function privateHost(input) {
   const hostname = input.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
   if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
-  if (isIP(hostname) === 4) return privateIpv4(hostname.split(".").map(Number));
-  if (isIP(hostname) !== 6) return false;
+  const ipVersion = isIP(hostname);
+  if (ipVersion === 4) return privateIpv4(hostname.split(".").map(Number));
+  if (ipVersion !== 6) {
+    return !hostname.includes(".")
+      || LOCAL_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
+  }
   const words = ipv6Words(hostname);
   if (!words) return true;
   const unspecified = words.every((word) => word === 0);
   const loopback = words.slice(0, 7).every((word) => word === 0) && words[7] === 1;
   const uniqueLocal = (words[0] & 0xfe00) === 0xfc00;
   const linkLocal = (words[0] & 0xffc0) === 0xfe80;
+  const siteLocal = (words[0] & 0xffc0) === 0xfec0;
+  const multicast = (words[0] & 0xff00) === 0xff00;
+  const documentation = words[0] === 0x2001 && words[1] === 0x0db8;
   const mappedIpv4 = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff
     ? [(words[6] >> 8) & 0xff, words[6] & 0xff, (words[7] >> 8) & 0xff, words[7] & 0xff]
     : undefined;
-  return unspecified || loopback || uniqueLocal || linkLocal
+  return unspecified || loopback || uniqueLocal || linkLocal || siteLocal || multicast || documentation
     || (mappedIpv4 !== undefined && privateIpv4(mappedIpv4));
 }
 
@@ -58,7 +81,7 @@ export function normalizeSourceUrl(input) {
   }
 
   const normalizedInput = input.replace(/^git\+(?=(?:https?|ssh):)/, "");
-  if (!/^(?:git|https?|ssh):\/\//.test(normalizedInput)) {
+  if (!/^(?:git|https?|ssh):\/\//.test(normalizedInput) || /[?#]/.test(normalizedInput)) {
     throw new Error(`Expected an explicit remote source URL, received '${input}'`);
   }
   let url;
