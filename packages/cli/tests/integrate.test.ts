@@ -215,6 +215,17 @@ describe("integrate command", () => {
     ))).toBe(false);
   });
 
+  it("rolls back config and companion when the legacy journal is malformed", async () => {
+    const plan = await preview("codex");
+    await writeFile(join(current.context.stateDir, "integrations.json"), "not-json\n", "utf8");
+
+    expect(await apply(plan.id)).toBe(1);
+    expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
+    expect(await exists(join(
+      current.home, ".agents", "skills", "skill-steward-preflight"
+    ))).toBe(false);
+  });
+
   it("reports typed incomplete rollback when companion cleanup cannot be proven", async () => {
     const plan = await preview("codex");
     await writeFile(join(current.context.stateDir, "integration-records"), "blocked", "utf8");

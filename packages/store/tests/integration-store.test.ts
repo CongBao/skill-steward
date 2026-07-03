@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  stat,
+  symlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +22,9 @@ import {
 
 const writerFixture = fileURLToPath(
   new URL("./fixtures/integration-writer.mjs", import.meta.url)
+);
+const readerFixture = fileURLToPath(
+  new URL("./fixtures/integration-reader.mjs", import.meta.url)
 );
 
 async function waitFor(path: string): Promise<void> {
@@ -38,6 +50,20 @@ function writer(args: string[]): Promise<void> {
     child.on("close", (code) => code === 0
       ? resolve()
       : reject(new Error(`writer exited ${code}: ${stderr}`)));
+  });
+}
+
+function reader(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [readerFixture, ...args], {
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0
+      ? resolve()
+      : reject(new Error(`reader exited ${code}: ${stderr}`)));
   });
 }
 
@@ -102,6 +128,81 @@ describe("integration store", () => {
       .toEqual(["fragment", "legacy"]);
   });
 
+  it("validates the legacy journal before publishing a fragment", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-integration-bad-legacy-"));
+    await writeFile(join(state, "integrations.json"), "not-json\n", "utf8");
+
+    await expect(appendIntegrationRecord(
+      state,
+      record("not-published", "2026-07-03T00:00:00.000Z")
+    )).rejects.toBeDefined();
+    await expect(access(join(state, "integration-records")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses directory and unreadable legacy journals before publishing", async () => {
+    const directoryState = await mkdtemp(join(tmpdir(), "steward-integration-dir-legacy-"));
+    await mkdir(join(directoryState, "integrations.json"));
+    await expect(appendIntegrationRecord(
+      directoryState,
+      record("directory-legacy", "2026-07-03T00:00:00.000Z")
+    )).rejects.toBeDefined();
+    await expect(access(join(directoryState, "integration-records")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+
+    const unreadableState = await mkdtemp(join(tmpdir(), "steward-integration-mode-legacy-"));
+    const legacyPath = join(unreadableState, "integrations.json");
+    await writeFile(legacyPath, '{"schemaVersion":1,"records":[]}\n', "utf8");
+    await chmod(legacyPath, 0o000);
+    try {
+      await expect(appendIntegrationRecord(
+        unreadableState,
+        record("unreadable-legacy", "2026-07-03T00:00:00.000Z")
+      )).rejects.toMatchObject({ code: "EACCES" });
+      await expect(access(join(unreadableState, "integration-records")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await chmod(legacyPath, 0o600);
+    }
+  });
+
+  it("secures the fragment directory and refuses unsafe storage paths", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-integration-private-"));
+    const recordsDirectory = join(state, "integration-records");
+    await mkdir(recordsDirectory, { mode: 0o755 });
+    await appendIntegrationRecord(state, record("private", "2026-07-03T00:00:00.000Z"));
+    expect((await stat(recordsDirectory)).mode & 0o777).toBe(0o700);
+
+    const symlinkState = await mkdtemp(join(tmpdir(), "steward-integration-link-"));
+    const outside = await mkdtemp(join(tmpdir(), "steward-integration-outside-"));
+    await symlink(outside, join(symlinkState, "integration-records"), "dir");
+    await expect(readIntegrationRecords(symlinkState)).rejects.toBeDefined();
+    await expect(appendIntegrationRecord(
+      symlinkState,
+      record("escaped", "2026-07-03T00:00:00.000Z")
+    )).rejects.toBeDefined();
+    expect(await readdir(outside)).toEqual([]);
+
+    const fileState = await mkdtemp(join(tmpdir(), "steward-integration-file-"));
+    await writeFile(join(fileState, "integration-records"), "not a directory", "utf8");
+    await expect(appendIntegrationRecord(
+      fileState,
+      record("blocked", "2026-07-03T00:00:00.000Z")
+    )).rejects.toBeDefined();
+  });
+
+  it("does not hide malformed recognized fragments", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-integration-corrupt-"));
+    const directory = join(state, "integration-records");
+    await mkdir(directory, { mode: 0o700 });
+    await writeFile(
+      join(directory, `1-${process.pid}-000000000001-00000000-0000-0000-0000-000000000000.json`),
+      "not-json\n",
+      { mode: 0o600 }
+    );
+    await expect(readIntegrationRecords(state)).rejects.toBeDefined();
+  });
+
   it("bounds immutable fragment storage to the newest 100 records", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-bound-"));
     for (let index = 0; index < 105; index += 1) {
@@ -163,4 +264,30 @@ describe("integration store", () => {
       status: "installed"
     });
   }, 15_000);
+
+  it("keeps readers healthy while real writers publish and clean more than 100 records", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-integration-read-race-"));
+    for (let index = 0; index < 100; index += 1) {
+      await appendIntegrationRecord(
+        state,
+        record(`seed-${index}`, new Date(Date.UTC(2026, 6, 3) + index).toISOString())
+      );
+    }
+    const barrier = join(state, "barrier");
+    const readyWriter = join(state, "ready-writer");
+    const readyReaderA = join(state, "ready-reader-a");
+    const readyReaderB = join(state, "ready-reader-b");
+    const processes = [
+      writer([state, "codex", "race", readyWriter, barrier, "140"]),
+      reader([state, readyReaderA, barrier, "300"]),
+      reader([state, readyReaderB, barrier, "300"])
+    ];
+    await Promise.all([waitFor(readyWriter), waitFor(readyReaderA), waitFor(readyReaderB)]);
+    await writeFile(barrier, "go\n", "utf8");
+    await Promise.all(processes);
+
+    const records = await readIntegrationRecords(state);
+    expect(records.some(({ id }) => id === "race-139")).toBe(true);
+    expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
+  }, 30_000);
 });

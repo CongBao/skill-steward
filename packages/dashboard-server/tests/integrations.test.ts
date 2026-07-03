@@ -46,6 +46,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
   let companionCleanupFailure = false;
   let readinessCalls = 0;
   let idIndex = 0;
+  let currentTime = new Date("2026-07-03T00:00:00.000Z");
   const appliedPlanIds: string[] = [];
   const integrationServices = createIntegrationServices({
     home,
@@ -57,7 +58,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
       const report = await scanPortfolio(standardRoots({ home, cwd: home }));
       await writeLatestReport(stateDirectory, report);
     },
-    now: () => new Date("2026-07-03T00:00:00.000Z"),
+    now: () => currentTime,
     id: () => ids[idIndex++] ?? `integration-record-${idIndex}`
   }, {
     applyPlan: async (plan, options) => {
@@ -93,7 +94,10 @@ async function fixture(ids: string[] = ["integration-record"]) {
     failCompanionCleanup() {
       companionCleanupFailure = true;
     },
-    readinessCalls: () => readinessCalls
+    readinessCalls: () => readinessCalls,
+    setNow(value: string) {
+      currentTime = new Date(value);
+    }
   };
 }
 
@@ -136,6 +140,29 @@ describe("Harness integration routes", () => {
       code: "INTEGRATION_DRIFTED"
     });
     expect(appliedPlanIds).toEqual(["plan-a", "plan-b"]);
+  });
+
+  it("expires reviewed plans opportunistically", async () => {
+    const instance = await fixture(["expiring-plan"]);
+    const plan = await instance.integrationServices.plan("codex");
+    instance.setNow("2026-07-03T00:10:00.000Z");
+
+    await expect(instance.integrationServices.apply("codex", plan.id)).rejects.toMatchObject({
+      code: "INTEGRATION_PLAN_REQUIRED"
+    });
+  });
+
+  it("bounds reviewed plans and evicts the oldest unused entry", async () => {
+    const ids = Array.from({ length: 129 }, (_, index) => `plan-${index}`);
+    const { integrationServices } = await fixture(ids);
+    const first = await integrationServices.plan("codex");
+    for (let index = 1; index < ids.length; index += 1) {
+      await integrationServices.plan("codex");
+    }
+
+    await expect(integrationServices.apply("codex", first.id)).rejects.toMatchObject({
+      code: "INTEGRATION_PLAN_REQUIRED"
+    });
   });
 
   it("lists without a token but protects plans and changes", async () => {
@@ -348,6 +375,26 @@ describe("Harness integration routes", () => {
     await writeFile(join(stateDirectory, "integration-records"), "blocked", "utf8");
 
     const failed = await applyRequest(app, "codex", "integration-record", headers);
+    expect(failed.statusCode).toBe(500);
+    expect(await readFile(configPath, "utf8")).toBe(before);
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rolls back config and companion when the legacy journal is malformed", async () => {
+    const { app, home, stateDirectory } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    const configPath = join(home, ".codex", "hooks.json");
+    const before = await readFile(configPath, "utf8");
+    const planned = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    });
+    await mkdir(stateDirectory, { recursive: true });
+    await writeFile(join(stateDirectory, "integrations.json"), "not-json\n", "utf8");
+
+    const failed = await applyRequest(app, "codex", planned.json().data.id, headers);
     expect(failed.statusCode).toBe(500);
     expect(await readFile(configPath, "utf8")).toBe(before);
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))

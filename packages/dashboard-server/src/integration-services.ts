@@ -16,6 +16,7 @@ import {
 } from "@skill-steward/integrations";
 
 const harnesses: IntegrationHarness[] = ["codex", "claude-code", "github-copilot"];
+const MAX_REVIEWED_INTEGRATION_PLANS = 128;
 
 export type IntegrationServiceErrorCode =
   | "INVALID_INTEGRATION_HARNESS"
@@ -82,6 +83,22 @@ export function createIntegrationServices(
 ): IntegrationServices {
   const dependencies = { ...integrationServiceDefaults, ...dependencyOverrides };
   const plans = new Map<string, IntegrationPlan>();
+  const currentTime = () => options.now?.() ?? new Date();
+  const prunePlans = () => {
+    const now = currentTime().getTime();
+    for (const [id, plan] of plans) {
+      if (Date.parse(plan.expiresAt) <= now) plans.delete(id);
+    }
+    while (plans.size > MAX_REVIEWED_INTEGRATION_PLANS) {
+      let oldest: { id: string; createdAt: number } | undefined;
+      for (const [id, plan] of plans) {
+        const createdAt = Date.parse(plan.createdAt);
+        if (!oldest || createdAt < oldest.createdAt) oldest = { id, createdAt };
+      }
+      if (!oldest) break;
+      plans.delete(oldest.id);
+    }
+  };
   const configOptions: IntegrationConfigOptions = {
     home: options.home,
     stateDirectory: options.stateDirectory,
@@ -100,12 +117,15 @@ export function createIntegrationServices(
     },
     async plan(value) {
       const harness = parseHarness(value);
+      prunePlans();
       const plan = await planIntegration(harness, configOptions);
       plans.set(plan.id, plan);
+      prunePlans();
       return plan;
     },
     async apply(value, planId) {
       const harness = parseHarness(value);
+      prunePlans();
       const plan = plans.get(planId);
       if (!plan) {
         throw new IntegrationServiceError(
@@ -179,6 +199,7 @@ export function createIntegrationServices(
     },
     async remove(value) {
       const harness = parseHarness(value);
+      prunePlans();
       await removeIntegration(harness, configOptions);
       for (const [id, plan] of plans) {
         if (plan.harness === harness) plans.delete(id);

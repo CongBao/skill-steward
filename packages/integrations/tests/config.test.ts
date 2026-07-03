@@ -230,6 +230,26 @@ it("restores configuration when the post-apply journal cannot commit", async () 
   await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it("restores configuration when the legacy journal is malformed", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-legacy-journal-rollback-"));
+  const stateDirectory = join(home, "state");
+  const path = await seed(home, "codex");
+  const before = await readFile(path, "utf8");
+  const options = {
+    home,
+    stateDirectory,
+    now: () => new Date("2026-07-03T00:00:00.000Z")
+  };
+  const plan = await planIntegration("codex", options);
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(join(stateDirectory, "integrations.json"), "not-json\n", "utf8");
+
+  await expect(applyIntegrationPlan(plan, options)).rejects.toBeDefined();
+  expect(await readFile(path, "utf8")).toBe(before);
+  await expect(access(join(stateDirectory, "integration-records")))
+    .rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it("preserves journal and rollback failures in one cause chain", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-journal-cause-"));
   const stateDirectory = join(home, "state");

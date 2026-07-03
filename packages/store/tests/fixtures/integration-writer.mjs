@@ -25,6 +25,6 @@ for (let index = 0; index < count; index += 1) {
     beforeFingerprint: `sha256:${"a".repeat(64)}`,
     afterFingerprint: `sha256:${"b".repeat(64)}`,
     installedEntryFingerprint: `sha256:${"c".repeat(64)}`,
-    createdAt: `2026-07-03T00:00:${String(index).padStart(2, "0")}.000Z`
+    createdAt: new Date(Date.UTC(2026, 6, 3) + index).toISOString()
   });
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -8,7 +9,7 @@ import {
   rename,
   unlink
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 
 const INTEGRATIONS_FILE = "integrations.json";
@@ -56,6 +57,100 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+interface DirectoryIdentity {
+  device: number;
+  inode: number;
+}
+
+function recordsPath(stateDirectory: string): string {
+  const statePath = resolve(stateDirectory);
+  const directory = resolve(statePath, INTEGRATION_RECORDS_DIRECTORY);
+  if (dirname(directory) !== statePath) {
+    throw new Error("Integration record directory must remain inside the state directory");
+  }
+  return directory;
+}
+
+async function inspectDirectory(path: string): Promise<DirectoryIdentity> {
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw Object.assign(
+      new Error("EEXIST: Integration record storage must be a regular directory"),
+      { code: "EEXIST" }
+    );
+  }
+  return { device: metadata.dev, inode: metadata.ino };
+}
+
+async function assertSameDirectory(
+  path: string,
+  expected: DirectoryIdentity
+): Promise<void> {
+  const actual = await inspectDirectory(path);
+  if (actual.device !== expected.device || actual.inode !== expected.inode) {
+    throw new Error("Integration record directory changed during the operation");
+  }
+}
+
+async function secureDirectory(
+  path: string,
+  expected: DirectoryIdentity
+): Promise<void> {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
+  );
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isDirectory()
+      || metadata.dev !== expected.device
+      || metadata.ino !== expected.inode
+    ) {
+      throw new Error("Integration record directory changed during the operation");
+    }
+    await handle.chmod(0o700);
+  } finally {
+    await handle.close();
+  }
+  await assertSameDirectory(path, expected);
+}
+
+async function openRecordsDirectory(
+  stateDirectory: string,
+  create: boolean
+): Promise<{ directory: string; identity: DirectoryIdentity } | null> {
+  const statePath = resolve(stateDirectory);
+  if (create) {
+    await mkdir(statePath, { recursive: true, mode: 0o700 });
+  }
+  try {
+    await inspectDirectory(statePath);
+  } catch (error) {
+    if (!create && isMissing(error)) return null;
+    throw error;
+  }
+  const directory = recordsPath(statePath);
+  if (create) {
+    try {
+      await mkdir(directory, { mode: 0o700 });
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+        throw error;
+      }
+    }
+  }
+  let identity: DirectoryIdentity;
+  try {
+    identity = await inspectDirectory(directory);
+  } catch (error) {
+    if (!create && isMissing(error)) return null;
+    throw error;
+  }
+  await secureDirectory(directory, identity);
+  return { directory, identity };
+}
+
 async function readLegacyRecords(stateDirectory: string): Promise<IntegrationRecord[]> {
   try {
     const source = await readFile(join(stateDirectory, INTEGRATIONS_FILE), "utf8");
@@ -67,20 +162,21 @@ async function readLegacyRecords(stateDirectory: string): Promise<IntegrationRec
 }
 
 async function readFragments(stateDirectory: string): Promise<IntegrationFragment[]> {
-  const directory = join(stateDirectory, INTEGRATION_RECORDS_DIRECTORY);
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if (isMissing(error)) return [];
-    throw error;
-  }
+  const storage = await openRecordsDirectory(stateDirectory, false);
+  if (!storage) return [];
+  const { directory, identity } = storage;
+  const entries = await readdir(directory, { withFileTypes: true });
+  await assertSameDirectory(directory, identity);
   const fragments = await Promise.all(entries.flatMap((entry) =>
     entry.isFile() && fragmentNamePattern.test(entry.name)
-      ? [readFragment(directory, entry.name)]
+      ? [readFragment(directory, entry.name).catch((error) => {
+        if (isMissing(error)) return null;
+        throw error;
+      })]
       : []
   ));
-  return fragments.sort((left, right) => {
+  return fragments.filter((fragment): fragment is IntegrationFragment => fragment !== null)
+    .sort((left, right) => {
     if (left.modifiedAt !== right.modifiedAt) {
       return left.modifiedAt > right.modifiedAt ? -1 : 1;
     }
@@ -109,17 +205,15 @@ async function readFragment(
 }
 
 async function cleanupOldFragments(stateDirectory: string): Promise<void> {
-  let fragments: IntegrationFragment[];
-  try {
-    fragments = await readFragments(stateDirectory);
-  } catch {
-    return;
-  }
-  await Promise.allSettled(
-    fragments.slice(MAX_RECORDS).map(({ fileName }) =>
-      unlink(join(stateDirectory, INTEGRATION_RECORDS_DIRECTORY, fileName))
-    )
-  );
+  const fragments = await readFragments(stateDirectory);
+  const directory = recordsPath(stateDirectory);
+  await Promise.all(fragments.slice(MAX_RECORDS).map(async ({ fileName }) => {
+    try {
+      await unlink(join(directory, fileName));
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+  }));
 }
 
 export async function readIntegrationRecords(
@@ -155,9 +249,12 @@ export async function appendIntegrationRecord(
     limit,
     record: integrationRecordSchema.parse(input)
   });
+  await readLegacyRecords(stateDirectory);
+  await readFragments(stateDirectory);
   const serialized = `${JSON.stringify(fragment, null, 2)}\n`;
-  const directory = join(stateDirectory, INTEGRATION_RECORDS_DIRECTORY);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const storage = await openRecordsDirectory(stateDirectory, true);
+  if (!storage) throw new Error("Integration record directory was not created");
+  const { directory, identity } = storage;
   const unique = randomUUID();
   const temporary = join(directory, `.${process.pid}-${unique}.tmp`);
   const handle = await open(temporary, "wx", 0o600);
@@ -172,8 +269,16 @@ export async function appendIntegrationRecord(
       directory,
       `${Date.now()}-${process.pid}-${String(processSequence).padStart(12, "0")}-${unique}.json`
     );
+    await assertSameDirectory(directory, identity);
     await rename(temporary, destination);
     published = true;
+    const publishedMetadata = await lstat(destination);
+    if (publishedMetadata.isSymbolicLink() || !publishedMetadata.isFile()) {
+      throw new Error("Integration record fragment must be a regular file");
+    }
+    if ((publishedMetadata.mode & 0o777) !== 0o600) {
+      throw new Error("Integration record fragment must have private permissions");
+    }
     await cleanupOldFragments(stateDirectory);
   } finally {
     try {
