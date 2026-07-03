@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Check, Info, Route, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Check, Info, Route, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -12,6 +12,7 @@ import {
 import { PageHeader } from "../../components/PageHeader.js";
 import { SeverityBadge } from "../../components/SeverityBadge.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
+import { AvailableCandidateCard } from "./AvailableCandidateCard.js";
 import "./preflight.css";
 
 const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
@@ -21,82 +22,38 @@ const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
   UNIQUE_COVERAGE: "preflight.reason.UNIQUE_COVERAGE",
   REDUNDANT_WITH_SELECTED: "preflight.reason.REDUNDANT_WITH_SELECTED",
   LOW_RELEVANCE: "preflight.reason.LOW_RELEVANCE",
-  PORTFOLIO_RISK: "preflight.reason.PORTFOLIO_RISK"
+  PORTFOLIO_RISK: "preflight.reason.PORTFOLIO_RISK",
+  INSTALL_REQUIRED: "preflight.reason.INSTALL_REQUIRED",
+  CRITICAL_RISK: "preflight.reason.CRITICAL_RISK",
+  HARNESS_INCOMPATIBLE: "preflight.reason.HARNESS_INCOMPATIBLE"
 };
 
-function reasonDetail(
-  candidate: PreflightCandidate,
-  reason: PreflightCandidate["reasons"][number],
-  t: (key: TranslationKey) => string
-): string {
+function reasonDetail(candidate: PreflightCandidate, reason: PreflightCandidate["reasons"][number], t: (key: TranslationKey) => string): string {
   const percent = (value: number) => String(Math.round(value * 100));
   switch (reason.code) {
-    case "TASK_TERM_MATCH":
-      return reason.detail;
-    case "NAME_MATCH":
-      return t("preflight.reasonDetail.NAME_MATCH").replace("{name}", candidate.name);
-    case "PROJECT_SCOPE_FIT":
-      return t("preflight.reasonDetail.PROJECT_SCOPE_FIT");
-    case "UNIQUE_COVERAGE":
-      return t("preflight.reasonDetail.UNIQUE_COVERAGE").replace(
-        "{percent}",
-        percent(candidate.uniqueCoverage)
-      );
-    case "REDUNDANT_WITH_SELECTED":
-      return t("preflight.reasonDetail.REDUNDANT_WITH_SELECTED").replace(
-        "{percent}",
-        percent(candidate.redundancyPenalty)
-      );
-    case "LOW_RELEVANCE":
-      return t("preflight.reasonDetail.LOW_RELEVANCE");
-    case "PORTFOLIO_RISK":
-      return t("preflight.reasonDetail.PORTFOLIO_RISK").replace(
-        "{percent}",
-        percent(candidate.riskPenalty)
-      );
+    case "NAME_MATCH": return t("preflight.reasonDetail.NAME_MATCH").replace("{name}", candidate.name);
+    case "PROJECT_SCOPE_FIT": return t("preflight.reasonDetail.PROJECT_SCOPE_FIT");
+    case "UNIQUE_COVERAGE": return t("preflight.reasonDetail.UNIQUE_COVERAGE").replace("{percent}", percent(candidate.uniqueCoverage));
+    case "REDUNDANT_WITH_SELECTED": return t("preflight.reasonDetail.REDUNDANT_WITH_SELECTED").replace("{percent}", percent(candidate.redundancyPenalty));
+    case "LOW_RELEVANCE": return t("preflight.reasonDetail.LOW_RELEVANCE");
+    case "PORTFOLIO_RISK": return t("preflight.reasonDetail.PORTFOLIO_RISK").replace("{percent}", percent(candidate.riskPenalty));
+    default: return reason.detail;
   }
 }
 
-function ScoreBar({
-  label,
-  value
-}: {
-  label: string;
-  value: number;
-}) {
+function ScoreBar({ label, value }: { label: string; value: number }) {
   const percent = Math.round(value * 100);
-  return (
-    <div className="preflight-score" aria-label={`${label}: ${percent}%`}>
-      <div><span>{label}</span><strong>{percent}%</strong></div>
-      <span className="preflight-score-track"><span style={{ width: `${percent}%` }} /></span>
-    </div>
-  );
+  return <div className="preflight-score" aria-label={`${label}: ${percent}%`}><div><span>{label}</span><strong>{percent}%</strong></div><span className="preflight-score-track"><span style={{ width: `${percent}%` }} /></span></div>;
 }
 
 function CandidateCard({ candidate }: { candidate: PreflightCandidate }) {
   const { t } = useI18n();
   return (
     <article className="preflight-candidate" data-decision={candidate.decision}>
-      <header>
-        <div><h3>{candidate.name}</h3><p>{candidate.description}</p></div>
-        <span className="preflight-token-cost">{candidate.contextTokens} {t("preflight.tokens")}</span>
-      </header>
-      <div className="preflight-scores">
-        <ScoreBar label={t("preflight.relevance")} value={candidate.relevance} />
-        <ScoreBar label={t("preflight.uniqueCoverage")} value={candidate.uniqueCoverage} />
-      </div>
-      <div className="preflight-metadata">
-        <span>{t("preflight.scope")}: <strong>{candidate.scope}</strong></span>
-        <span>{t("preflight.harnesses")}: <strong>{candidate.visibleTo.join(", ") || "—"}</strong></span>
-      </div>
-      <ul className="preflight-reasons">
-        {candidate.reasons.map((reason, index) => (
-          <li key={`${reason.code}-${index}`}>
-            <span>{t(reasonKeys[reason.code])}</span>
-            <p>{reasonDetail(candidate, reason, t)}</p>
-          </li>
-        ))}
-      </ul>
+      <header><div><h3>{candidate.name}</h3><p>{candidate.description}</p></div><span className="preflight-token-cost">{candidate.contextTokens} {t("preflight.tokens")}</span></header>
+      <div className="preflight-scores"><ScoreBar label={t("preflight.relevance")} value={candidate.relevance} /><ScoreBar label={t("preflight.uniqueCoverage")} value={candidate.uniqueCoverage} /></div>
+      <div className="preflight-metadata"><span>{t("preflight.scope")}: <strong>{candidate.scope}</strong></span><span>{t("preflight.harnesses")}: <strong>{candidate.compatibleHarnesses.join(", ") || "—"}</strong></span></div>
+      <ul className="preflight-reasons">{candidate.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}><span>{t(reasonKeys[reason.code])}</span><p>{reasonDetail(candidate, reason, t)}</p></li>)}</ul>
     </article>
   );
 }
@@ -105,176 +62,66 @@ export function PreflightPage() {
   const { locale, t } = useI18n();
   const [task, setTask] = useState("");
   const [maxSkills, setMaxSkills] = useState(5);
+  const [harness, setHarness] = useState("codex");
   const [result, setResult] = useState<PreflightResult | null>(null);
   const [feedbackMode, setFeedbackMode] = useState<"incomplete" | null>(null);
   const [corrected, setCorrected] = useState<Set<string>>(new Set());
   const [feedbackSaved, setFeedbackSaved] = useState(false);
   const validTask = task.replace(/\s/g, "").length >= 8 && task.length <= 20_000;
-
   const analysis = useMutation({
-    mutationFn: () => runPreflight(task, maxSkills),
+    mutationFn: () => runPreflight(task, maxSkills, harness, true),
     onSuccess: (next) => {
       setResult(next);
-      setCorrected(new Set(next.selectedSkillIds));
+      setCorrected(new Set([...next.useCandidateIds, ...next.installCandidateIds]));
       setFeedbackMode(null);
       setFeedbackSaved(false);
     }
   });
   const feedback = useMutation({
-    mutationFn: ({
-      label,
-      selectedSkillIds
-    }: {
-      label: "useful" | "incomplete" | "incorrect";
-      selectedSkillIds: string[];
-    }) => {
+    mutationFn: ({ label, candidateIds }: { label: "useful" | "incomplete" | "incorrect"; candidateIds: string[] }) => {
       if (!result) throw new Error("Preflight result is unavailable");
-      return submitPreflightFeedback(result.id, label, selectedSkillIds);
+      return submitPreflightFeedback(result.id, label, candidateIds);
     },
-    onSuccess: () => {
-      setFeedbackSaved(true);
-      setFeedbackMode(null);
-    }
+    onSuccess: () => { setFeedbackSaved(true); setFeedbackMode(null); }
   });
-
-  const selected = useMemo(
-    () => result?.candidates.filter(({ decision }) => decision === "selected") ?? [],
-    [result]
-  );
-  const excluded = useMemo(
-    () => result?.candidates.filter(({ decision }) => decision === "excluded") ?? [],
-    [result]
-  );
-  const correctedIds = result?.candidates
-    .filter(({ skillId }) => corrected.has(skillId))
-    .map(({ skillId }) => skillId) ?? [];
+  const useNow = useMemo(() => result?.candidates.filter(({ decision }) => decision === "use") ?? [], [result]);
+  const install = useMemo(() => result?.candidates.filter(({ decision }) => decision === "install") ?? [], [result]);
+  const excluded = useMemo(() => result?.candidates.filter(({ decision }) => decision === "excluded") ?? [], [result]);
+  const correctedIds = result?.candidates.filter(({ candidateId }) => corrected.has(candidateId)).map(({ candidateId }) => candidateId) ?? [];
+  const recommendedIds = result ? [...result.useCandidateIds, ...result.installCandidateIds] : [];
   const number = new Intl.NumberFormat(locale, { notation: "compact" });
-
-  const submitFeedback = (label: "useful" | "incorrect") => {
-    if (!result) return;
-    feedback.mutate({ label, selectedSkillIds: result.selectedSkillIds });
-  };
+  const percent = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 });
+  const submitFeedback = (label: "useful" | "incorrect") => feedback.mutate({ label, candidateIds: recommendedIds });
 
   return (
     <>
-      <PageHeader
-        title={t("page.preflight.title")}
-        description={t("page.preflight.description")}
-      />
-
+      <PageHeader title={t("page.preflight.title")} description={t("page.preflight.description")} />
       <section className="preflight-input-card">
-        <div className="preflight-input-heading">
-          <div><Route size={18} /><strong>{t("preflight.taskLabel")}</strong></div>
-          <span>{task.length.toLocaleString(locale)} {t("preflight.characters")}</span>
-        </div>
-        <textarea
-          aria-label={t("preflight.taskLabel")}
-          maxLength={20_000}
-          onChange={(event) => setTask(event.target.value)}
-          placeholder={t("preflight.taskPlaceholder")}
-          rows={5}
-          value={task}
-        />
+        <div className="preflight-input-heading"><div><Route size={18} /><strong>{t("preflight.taskLabel")}</strong></div><span>{task.length.toLocaleString(locale)} {t("preflight.characters")}</span></div>
+        <textarea aria-label={t("preflight.taskLabel")} maxLength={20_000} onChange={(event) => setTask(event.target.value)} placeholder={t("preflight.taskPlaceholder")} rows={5} value={task} />
         <div className="preflight-privacy"><ShieldCheck size={16} /><span>{t("preflight.privacy")}</span></div>
-        <footer>
-          <label>{t("preflight.maxSkills")}
-            <select value={maxSkills} onChange={(event) => setMaxSkills(Number(event.target.value))}>
-              {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <button
-            className="button primary"
-            disabled={!validTask || analysis.isPending}
-            onClick={() => analysis.mutate()}
-          >
-            {analysis.isPending ? t("preflight.analyzing") : t("preflight.analyze")}
-          </button>
-        </footer>
+        <footer><div className="preflight-controls"><label>{t("preflight.targetHarness")}<select value={harness} onChange={(event) => setHarness(event.target.value)}><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="github-copilot">GitHub Copilot</option></select></label><label>{t("preflight.maxSkills")}<select value={maxSkills} onChange={(event) => setMaxSkills(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}</select></label></div><button className="button primary" disabled={!validTask || analysis.isPending} onClick={() => analysis.mutate()}>{analysis.isPending ? t("preflight.analyzing") : t("preflight.analyze")}</button></footer>
       </section>
-
-      <section className="preflight-method-note">
-        <Info size={17} />
-        <div><strong>{t("preflight.deterministic")}</strong><p>{t("preflight.deterministicCopy")}</p></div>
-      </section>
-
-      {analysis.error ? (
-        <section className="preflight-error" role="alert">
-          <TriangleAlert size={18} />
-          <div><strong>{analysis.error.message}</strong><button className="button" onClick={() => analysis.mutate()}>{t("preflight.retry")}</button></div>
-        </section>
-      ) : null}
-
+      <section className="preflight-method-note"><Info size={17} /><div><strong>{t("preflight.deterministic")}</strong><p>{t("preflight.deterministicCopy")}</p></div></section>
+      {analysis.error ? <section className="preflight-error" role="alert"><TriangleAlert size={18} /><div><strong>{analysis.error.message}</strong><button className="button" onClick={() => analysis.mutate()}>{t("preflight.retry")}</button></div></section> : null}
       {result ? (
         <div className="preflight-result" aria-live="polite">
           <section className="preflight-summary">
-            <article><span>{t("preflight.selectedCount")}</span><strong>{selected.length}</strong></article>
+            <article><span>{t("preflight.useCount")}</span><strong>{useNow.length}</strong></article>
+            <article><span>{t("preflight.installCount")}</span><strong>{install.length}</strong></article>
+            <article><span>{t("preflight.installedCoverage")}</span><strong>{percent.format(result.installedCoverage)}</strong></article>
+            <article><span>{t("preflight.projectedCoverage")}</span><strong>{percent.format(result.projectedCoverage)}</strong></article>
             <article><span>{t("preflight.selectedContext")}</span><strong>{number.format(result.selectedContextTokens)}</strong></article>
             <article><span>{t("preflight.contextSaved")}</span><strong>{number.format(result.estimatedContextSaved)}</strong></article>
-            <article><span>{t("preflight.conflictCount")}</span><strong>{result.conflicts.length}</strong></article>
           </section>
-
-          {selected.length ? (
-            <section className="preflight-section" aria-labelledby="preflight-selected">
-              <header><div><Check size={18} /><h2 id="preflight-selected">{t("preflight.recommended")}</h2></div><span>{selected.length}</span></header>
-              <div className="preflight-selected-grid">{selected.map((candidate) => <CandidateCard candidate={candidate} key={candidate.skillId} />)}</div>
-            </section>
-          ) : (
-            <section className="preflight-no-match">
-              <h2>{t("preflight.noMatch")}</h2><p>{t("preflight.noMatchCopy")}</p><Link className="button" to="/skills">{t("preflight.openSkills")}</Link>
-            </section>
-          )}
-
-          {selected.length ? (
-            <section className="preflight-section preflight-conflicts" aria-labelledby="preflight-conflicts">
-              <header><div><TriangleAlert size={18} /><h2 id="preflight-conflicts">{t("preflight.conflicts")}</h2></div><span>{result.conflicts.length}</span></header>
-              {result.conflicts.length ? result.conflicts.map((conflict) => (
-                <article key={conflict.id}><SeverityBadge severity={conflict.severity} /><code>{conflict.code}</code><p>{conflict.summary}</p></article>
-              )) : <p className="preflight-muted">{t("preflight.noConflicts")}</p>}
-            </section>
-          ) : null}
-
-          {excluded.length ? (
-            <details className="preflight-excluded">
-              <summary>{t("preflight.excluded")} ({excluded.length})</summary>
-              <div className="preflight-excluded-grid">{excluded.map((candidate) => <CandidateCard candidate={candidate} key={candidate.skillId} />)}</div>
-            </details>
-          ) : null}
-
-          <section className="preflight-feedback">
-            <div><h2>{t("preflight.feedbackTitle")}</h2><p>{t("preflight.feedbackCopy")}</p></div>
-            {feedbackSaved ? <span className="preflight-feedback-saved"><Check size={16} />{t("preflight.feedbackSaved")}</span> : (
-              <div className="preflight-feedback-actions">
-                <button className="button" disabled={feedback.isPending} onClick={() => submitFeedback("useful")}>{t("preflight.useful")}</button>
-                <button className="button" disabled={feedback.isPending} onClick={() => setFeedbackMode("incomplete")}>{t("preflight.incomplete")}</button>
-                <button className="button" disabled={feedback.isPending} onClick={() => submitFeedback("incorrect")}>{t("preflight.incorrect")}</button>
-              </div>
-            )}
-            {feedbackMode === "incomplete" ? (
-              <div className="preflight-correction">
-                <strong>{t("preflight.correctSelection")}</strong>
-                <div>{result.candidates.map((candidate) => (
-                  <label key={candidate.skillId}>
-                    <input
-                      aria-label={`${t("preflight.include")} ${candidate.name}`}
-                      checked={corrected.has(candidate.skillId)}
-                      onChange={() => setCorrected((current) => {
-                        const next = new Set(current);
-                        if (next.has(candidate.skillId)) next.delete(candidate.skillId);
-                        else next.add(candidate.skillId);
-                        return next;
-                      })}
-                      type="checkbox"
-                    />
-                    <span>{candidate.name}</span>
-                  </label>
-                ))}</div>
-                <button
-                  className="button primary"
-                  disabled={feedback.isPending}
-                  onClick={() => feedback.mutate({ label: "incomplete", selectedSkillIds: correctedIds })}
-                >{feedback.isPending ? t("preflight.savingFeedback") : t("preflight.saveFeedback")}</button>
-              </div>
-            ) : null}
+          {useNow.length ? <section className="preflight-section preflight-use" aria-labelledby="preflight-use"><header><div><Check size={18} /><h2 id="preflight-use">{t("preflight.useNow")}</h2></div><span>{useNow.length}</span></header><div className="preflight-selected-grid">{useNow.map((candidate) => <CandidateCard candidate={candidate} key={candidate.candidateId} />)}</div></section> : null}
+          {install.length ? <section className="preflight-section preflight-install" aria-labelledby="preflight-install"><header><div><Sparkles size={18} /><h2 id="preflight-install">{t("preflight.considerInstalling")}</h2></div><span>{install.length}</span></header><p className="preflight-section-copy">{t("preflight.installCopy")}</p><div className="preflight-selected-grid">{install.map((candidate) => <AvailableCandidateCard candidate={candidate} key={candidate.candidateId} />)}</div></section> : null}
+          {result.capabilityGaps.length ? <section className="preflight-section preflight-gaps" aria-labelledby="preflight-gaps"><header><div><TriangleAlert size={18} /><h2 id="preflight-gaps">{t("preflight.capabilityGaps")}</h2></div><span>{result.capabilityGaps.length}</span></header><p>{t("preflight.gapsCopy")}</p><div>{result.capabilityGaps.map((gap) => <span key={gap}>{gap}</span>)}</div></section> : null}
+          {!useNow.length && !install.length ? <section className="preflight-no-match"><h2>{t("preflight.noMatch")}</h2><p>{t("preflight.noMatchCopy")}</p><Link className="button" to="/skills">{t("preflight.openSkills")}</Link></section> : null}
+          {(useNow.length || install.length) ? <section className="preflight-section preflight-conflicts" aria-labelledby="preflight-conflicts"><header><div><TriangleAlert size={18} /><h2 id="preflight-conflicts">{t("preflight.conflicts")}</h2></div><span>{result.conflicts.length}</span></header>{result.conflicts.length ? result.conflicts.map((conflict) => <article key={conflict.id}><SeverityBadge severity={conflict.severity} /><code>{conflict.code}</code><p>{conflict.summary}</p></article>) : <p className="preflight-muted">{t("preflight.noConflicts")}</p>}</section> : null}
+          {excluded.length ? <details className="preflight-excluded"><summary>{t("preflight.excluded")} ({excluded.length})</summary><div className="preflight-excluded-grid">{excluded.map((candidate) => candidate.availability === "available" ? <AvailableCandidateCard candidate={candidate} key={candidate.candidateId} /> : <CandidateCard candidate={candidate} key={candidate.candidateId} />)}</div></details> : null}
+          <section className="preflight-feedback"><div><h2>{t("preflight.feedbackTitle")}</h2><p>{t("preflight.feedbackCopy")}</p></div>{feedbackSaved ? <span className="preflight-feedback-saved"><Check size={16} />{t("preflight.feedbackSaved")}</span> : <div className="preflight-feedback-actions"><button className="button" disabled={feedback.isPending} onClick={() => submitFeedback("useful")}>{t("preflight.useful")}</button><button className="button" disabled={feedback.isPending} onClick={() => setFeedbackMode("incomplete")}>{t("preflight.incomplete")}</button><button className="button" disabled={feedback.isPending} onClick={() => submitFeedback("incorrect")}>{t("preflight.incorrect")}</button></div>}
+            {feedbackMode === "incomplete" ? <div className="preflight-correction"><strong>{t("preflight.correctSelection")}</strong><div>{result.candidates.map((candidate) => <label key={candidate.candidateId}><input aria-label={`${t("preflight.include")} ${candidate.name}`} checked={corrected.has(candidate.candidateId)} onChange={() => setCorrected((current) => { const next = new Set(current); if (next.has(candidate.candidateId)) next.delete(candidate.candidateId); else next.add(candidate.candidateId); return next; })} type="checkbox" /><span>{candidate.name}</span></label>)}</div><button className="button primary" disabled={feedback.isPending} onClick={() => feedback.mutate({ label: "incomplete", candidateIds: correctedIds })}>{feedback.isPending ? t("preflight.savingFeedback") : t("preflight.saveFeedback")}</button></div> : null}
           </section>
         </div>
       ) : null}

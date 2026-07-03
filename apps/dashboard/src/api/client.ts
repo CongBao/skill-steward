@@ -146,35 +146,57 @@ export type PreflightReasonCode =
   | "UNIQUE_COVERAGE"
   | "REDUNDANT_WITH_SELECTED"
   | "LOW_RELEVANCE"
-  | "PORTFOLIO_RISK";
+  | "PORTFOLIO_RISK"
+  | "INSTALL_REQUIRED"
+  | "CRITICAL_RISK"
+  | "HARNESS_INCOMPATIBLE";
 
 export interface PreflightCandidate {
-  skillId: string;
+  candidateId: string;
+  availability: "installed" | "available";
+  installedSkillId?: string;
+  catalogSkillId?: string;
   name: string;
   description: string;
   scope: "global" | "project" | "unknown";
-  visibleTo: string[];
+  compatibleHarnesses: string[];
+  compatibility: "declared" | "portable" | "unknown";
+  scripts: string[];
+  executables: string[];
+  highestSeverity: FindingSummary["severity"] | null;
   relevance: number;
   uniqueCoverage: number;
   riskPenalty: number;
   redundancyPenalty: number;
+  installPenalty: number;
   contextTokens: number;
-  decision: "selected" | "excluded";
+  decision: "use" | "install" | "excluded";
+  source?: {
+    sourceId: string;
+    trust: "vendor" | "community" | "user";
+    url: string;
+    revision: string;
+    relativePath: string;
+  };
   reasons: Array<{ code: PreflightReasonCode; detail: string }>;
 }
 
 export interface PreflightResult {
-  schemaVersion: 1;
-  algorithmVersion: 1;
+  schemaVersion: 2;
+  algorithmVersion: 2;
   id: string;
   generatedAt: string;
   portfolioFingerprint: string;
   taskHash: string;
   taskCharacterCount: number;
   taskTermCount: number;
-  selectedSkillIds: string[];
+  useCandidateIds: string[];
+  installCandidateIds: string[];
   candidates: PreflightCandidate[];
   conflicts: FindingSummary[];
+  capabilityGaps: string[];
+  installedCoverage: number;
+  projectedCoverage: number;
   selectedContextTokens: number;
   plausibleContextTokens: number;
   estimatedContextSaved: number;
@@ -182,23 +204,124 @@ export interface PreflightResult {
 
 export function runPreflight(
   task: string,
-  maxSkills: number
+  maxSkills: number,
+  harness = "codex",
+  includeAvailable = true
 ): Promise<PreflightResult> {
   return apiRequest("/api/v1/preflights", {
     method: "POST",
-    body: JSON.stringify({ task, maxSkills })
+    body: JSON.stringify({ task, maxSkills, harness, includeAvailable })
   });
 }
 
 export function submitPreflightFeedback(
   id: string,
   label: "useful" | "incomplete" | "incorrect",
-  selectedSkillIds: string[]
+  candidateIds: string[]
 ): Promise<{ saved: boolean }> {
   return apiRequest(`/api/v1/preflights/${encodeURIComponent(id)}/feedback`, {
     method: "POST",
-    body: JSON.stringify({ label, selectedSkillIds })
+    body: JSON.stringify({ label, candidateIds })
   });
+}
+
+export interface CatalogSource {
+  id: string;
+  name: string;
+  kind: "git";
+  url: string;
+  ref?: string;
+  subdirectory?: string;
+  enabled: boolean;
+  trust: "vendor" | "community" | "user";
+  preset: boolean;
+}
+
+export interface CatalogSourceState {
+  sourceId: string;
+  status: "disabled" | "ready" | "stale" | "error";
+  commitSha?: string;
+  refreshedAt?: string;
+  errorCode?: string;
+  skillCount: number;
+}
+
+export interface CatalogSnapshot {
+  schemaVersion: 1;
+  generatedAt: string;
+  sources: CatalogSourceState[];
+  skills: unknown[];
+}
+
+export interface CatalogState {
+  sources: CatalogSource[];
+  snapshot: CatalogSnapshot | null;
+}
+
+export function fetchCatalogSources(): Promise<CatalogState> {
+  return apiRequest("/api/v1/catalog/sources");
+}
+
+export function addCatalogSource(source: Pick<CatalogSource, "id" | "name" | "url" | "ref" | "subdirectory">): Promise<CatalogSource> {
+  return apiRequest("/api/v1/catalog/sources", {
+    method: "POST",
+    body: JSON.stringify(source)
+  });
+}
+
+export function setCatalogSourceEnabled(id: string, enabled: boolean): Promise<CatalogSource> {
+  return apiRequest(`/api/v1/catalog/sources/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, {
+    method: "POST"
+  });
+}
+
+export function removeCatalogSource(id: string): Promise<{ removed: boolean }> {
+  return apiRequest(`/api/v1/catalog/sources/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function refreshCatalog(): Promise<CatalogSnapshot> {
+  return apiRequest("/api/v1/catalog/refresh", { method: "POST" });
+}
+
+export function inspectCatalogCandidate(id: string): Promise<InspectionResult & { catalogCandidateId: string }> {
+  return apiRequest(`/api/v1/catalog/candidates/${encodeURIComponent(id)}/inspect-installation`, {
+    method: "POST"
+  });
+}
+
+export type IntegrationHarness = "codex" | "claude-code";
+export type IntegrationStatusValue = "not-installed" | "installed" | "needs-trust" | "drifted" | "invalid";
+
+export interface IntegrationStatus {
+  harness: IntegrationHarness;
+  status: IntegrationStatusValue;
+  targetPath: string;
+  lastChangedAt?: string;
+  message?: string;
+}
+
+export interface IntegrationPlan {
+  id: string;
+  harness: IntegrationHarness;
+  targetPath: string;
+  backupPath?: string;
+  changes: Array<{ operation: "backup" | "write"; path: string }>;
+}
+
+export function fetchIntegrations(): Promise<IntegrationStatus[]> {
+  return apiRequest("/api/v1/integrations");
+}
+
+export function planHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationPlan> {
+  return apiRequest(`/api/v1/integrations/${harness}/plan`, { method: "POST" });
+}
+
+export function applyHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationStatus> {
+  return apiRequest(`/api/v1/integrations/${harness}/apply`, { method: "POST" });
+}
+
+export function removeHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationStatus> {
+  return apiRequest(`/api/v1/integrations/${harness}`, { method: "DELETE" });
 }
 
 export function inspectInstallation(payload: unknown): Promise<InspectionResult> {

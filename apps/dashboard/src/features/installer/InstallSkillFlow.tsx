@@ -32,20 +32,21 @@ async function base64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-export function InstallSkillFlow({ onClose }: { onClose(): void }) {
+export function InstallSkillFlow({ onClose, initialInspection }: { onClose(): void; initialInspection?: InspectionResult }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const [step, setStep] = useState<Step>("source");
+  const initialCandidate = initialInspection?.candidates.find(({ fingerprint }) => fingerprint) ?? initialInspection?.candidates[0];
+  const [step, setStep] = useState<Step>(initialInspection ? "inspect" : "source");
   const [sourceKind, setSourceKind] = useState<SourceKind>("folder");
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [git, setGit] = useState({ url: "", ref: "", subdirectory: "" });
-  const [inspection, setInspection] = useState<InspectionResult | null>(null);
-  const [candidateId, setCandidateId] = useState("");
+  const [inspection, setInspection] = useState<InspectionResult | null>(initialInspection ?? null);
+  const [candidateId, setCandidateId] = useState(initialCandidate?.id ?? "");
   const [harness, setHarness] = useState("claude");
   const [scope, setScope] = useState<"global" | "project">("global");
   const [workspace, setWorkspace] = useState("");
-  const [targetName, setTargetName] = useState("");
+  const [targetName, setTargetName] = useState(initialCandidate?.name ?? "");
   const [plan, setPlan] = useState<InstallationPlanResult | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState<InstallationTransaction | null>(null);
