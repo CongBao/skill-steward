@@ -3,6 +3,7 @@ import { Cable, Check, ShieldAlert, Unplug } from "lucide-react";
 import { useState } from "react";
 import {
   applyHarnessIntegration,
+  fetchIntegrationCapabilities,
   fetchIntegrations,
   planHarnessIntegration,
   removeHarnessIntegration,
@@ -11,14 +12,15 @@ import {
 } from "../../api/client.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 
-const harnesses: IntegrationHarness[] = ["codex", "claude-code"];
-const harnessName = (harness: IntegrationHarness) => harness === "codex" ? "Codex" : "Claude Code";
+const harnesses: IntegrationHarness[] = ["codex", "claude-code", "github-copilot"];
+const harnessName = (harness: IntegrationHarness) => harness === "codex" ? "Codex" : harness === "claude-code" ? "Claude Code" : "GitHub Copilot CLI";
 
 export function HarnessIntegrationsPanel() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [plan, setPlan] = useState<IntegrationPlan | null>(null);
   const integrations = useQuery({ queryKey: ["integrations"], queryFn: fetchIntegrations });
+  const capabilities = useQuery({ queryKey: ["integrations", "capabilities"], queryFn: fetchIntegrationCapabilities });
   const review = useMutation({
     mutationFn: planHarnessIntegration,
     onSuccess: setPlan
@@ -49,16 +51,23 @@ export function HarnessIntegrationsPanel() {
       <div className="integration-list">
         {harnesses.map((harness) => {
           const status = statuses.find((item) => item.harness === harness);
+          const capability = capabilities.data?.find((item) => item.harness === harness);
           const value = status?.status ?? "not-installed";
+          const name = capability?.displayName ?? harnessName(harness);
           return (
-            <article className="integration-row" key={harness} data-status={value}>
+            <article className="integration-row" key={harness} data-status={value} aria-label={`${name} integration`}>
               <div className="integration-identity">
                 <span>{value === "installed" ? <Check size={17} /> : value === "needs-trust" ? <ShieldAlert size={17} /> : <Cable size={17} />}</span>
-                <div><strong>{harnessName(harness)}</strong><p>{t(`settings.integrations.status.${value}` as TranslationKey)}</p></div>
+                <div><strong>{name}</strong><p>{t(`settings.integrations.status.${value}` as TranslationKey)}</p></div>
+              </div>
+              <div className="integration-capabilities">
+                <span data-mode={capability?.mode ?? "unknown"}>{capability?.mode === "observe-only" ? t("settings.integrations.observeOnly") : t("settings.integrations.recommendObserve")}</span>
+                <span>{capability?.events.join(" · ") ?? t("settings.integrations.capabilityLoading")}</span>
+                {capability?.mode === "observe-only" ? <span className="companion-capability">{t("settings.integrations.companionRecommendation")}</span> : null}
               </div>
               <div className="integration-actions">
-                <button className="button" aria-label={`${t("settings.integrations.review")} ${harnessName(harness)} integration`} onClick={() => review.mutate(harness)}>{t("settings.integrations.review")}</button>
-                {value !== "not-installed" ? <button className="icon-button" aria-label={`${t("settings.integrations.remove")} ${harnessName(harness)} integration`} onClick={() => remove.mutate(harness)}><Unplug size={15} /></button> : null}
+                <button className="button" aria-label={`${t("settings.integrations.review")} ${name} integration`} onClick={() => review.mutate(harness)}>{t("settings.integrations.review")}</button>
+                {value !== "not-installed" ? <button className="icon-button" aria-label={`${t("settings.integrations.remove")} ${name} integration`} onClick={() => remove.mutate(harness)}><Unplug size={15} /></button> : null}
               </div>
             </article>
           );
@@ -73,7 +82,7 @@ export function HarnessIntegrationsPanel() {
           <button className="button primary" aria-label={`${t("settings.integrations.apply")} ${harnessName(plan.harness)} integration`} disabled={apply.isPending} onClick={() => apply.mutate(plan.harness)}>{t("settings.integrations.apply")}</button>
         </section>
       ) : null}
-      {(integrations.error || review.error || apply.error || remove.error) ? <p className="form-error" role="alert">{String(integrations.error ?? review.error ?? apply.error ?? remove.error)}</p> : null}
+      {(integrations.error || capabilities.error || review.error || apply.error || remove.error) ? <p className="form-error" role="alert">{String(integrations.error ?? capabilities.error ?? review.error ?? apply.error ?? remove.error)}</p> : null}
     </section>
   );
 }

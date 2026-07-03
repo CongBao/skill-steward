@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { PreferencesProvider } from "../../theme/preferences.js";
@@ -14,7 +14,13 @@ it("reviews a Harness plan before applying it", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
-    const data = url.endsWith("/plan")
+    const data = url.endsWith("/capabilities")
+      ? [
+          { harness: "codex", displayName: "Codex", mode: "recommend-and-observe", promptInjection: true, observation: true, turnLifecycle: true, sessionLifecycle: false, events: ["UserPromptSubmit", "Stop"], installScopes: ["global", "project"], validationStatus: "fixture-tested" },
+          { harness: "claude-code", displayName: "Claude Code", mode: "recommend-and-observe", promptInjection: true, observation: true, turnLifecycle: true, sessionLifecycle: true, events: ["UserPromptSubmit", "Stop", "SessionEnd"], installScopes: ["global", "project"], validationStatus: "fixture-tested" },
+          { harness: "github-copilot", displayName: "GitHub Copilot CLI", mode: "observe-only", promptInjection: false, observation: true, turnLifecycle: false, sessionLifecycle: true, events: ["userPromptSubmitted", "sessionEnd"], installScopes: ["global", "project"], validationStatus: "fixture-tested" }
+        ]
+      : url.endsWith("/plan")
       ? {
           id: "plan-1",
           harness: "codex",
@@ -23,9 +29,10 @@ it("reviews a Harness plan before applying it", async () => {
         }
       : url.endsWith("/apply")
         ? { harness: "codex", status: "needs-trust", targetPath: "/home/.codex/hooks.json" }
-        : [
+          : [
             { harness: "codex", status: "not-installed", targetPath: "/home/.codex/hooks.json" },
-            { harness: "claude-code", status: "installed", targetPath: "/home/.claude/settings.json" }
+            { harness: "claude-code", status: "installed", targetPath: "/home/.claude/settings.json" },
+            { harness: "github-copilot", status: "not-installed", targetPath: "/home/.copilot/hooks/skill-steward.json" }
           ];
     return { ok: true, json: async () => ({ data, error: null, meta: { apiVersion: 1 } }) };
   });
@@ -38,6 +45,11 @@ it("reviews a Harness plan before applying it", async () => {
   );
 
   expect(await screen.findByText("Claude Code")).toBeVisible();
+  const codex = screen.getByRole("article", { name: "Codex integration" });
+  expect(await within(codex).findByText("Recommend + observe")).toBeVisible();
+  const copilot = screen.getByRole("article", { name: "GitHub Copilot CLI integration" });
+  expect(await within(copilot).findByText("Observe only")).toBeVisible();
+  expect(await within(copilot).findByText("Recommendations via companion Skill")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Review Codex integration" }));
   expect(await screen.findByText("/home/.codex/hooks.json")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Apply Codex integration" }));

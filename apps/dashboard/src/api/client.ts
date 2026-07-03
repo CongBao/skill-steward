@@ -309,7 +309,7 @@ export function inspectCatalogCandidate(
   });
 }
 
-export type IntegrationHarness = "codex" | "claude-code";
+export type IntegrationHarness = "codex" | "claude-code" | "github-copilot";
 export type IntegrationStatusValue = "not-installed" | "installed" | "needs-trust" | "drifted" | "invalid";
 
 export interface IntegrationStatus {
@@ -330,6 +330,23 @@ export interface IntegrationPlan {
 
 export function fetchIntegrations(): Promise<IntegrationStatus[]> {
   return apiRequest("/api/v1/integrations");
+}
+
+export interface IntegrationCapability {
+  harness: IntegrationHarness;
+  displayName: string;
+  mode: "recommend-and-observe" | "observe-only";
+  promptInjection: boolean;
+  observation: boolean;
+  turnLifecycle: boolean;
+  sessionLifecycle: boolean;
+  events: string[];
+  installScopes: Array<"global" | "project">;
+  validationStatus: "fixture-tested";
+}
+
+export function fetchIntegrationCapabilities(): Promise<IntegrationCapability[]> {
+  return apiRequest("/api/v1/integrations/capabilities");
 }
 
 export function planHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationPlan> {
@@ -509,5 +526,81 @@ export function applyEvidenceErase(planId: string): Promise<{ erased: true }> {
   return apiRequest("/api/v1/evidence/erase/apply", {
     method: "POST",
     body: JSON.stringify({ planId })
+  });
+}
+
+export interface GovernanceAlias {
+  harness: string;
+  scope: "global" | "project" | "unknown";
+  rootPath: string;
+}
+
+export type GovernanceOperation =
+  | { operation: "copy-to-staging"; from: string; to: string }
+  | { operation: "verify-staging"; path: string; fingerprint: string }
+  | { operation: "move-active-to-rollback"; from: string; to: string }
+  | { operation: "commit-vault"; from: string; to: string }
+  | { operation: "restore-active"; from: string; to: string }
+  | { operation: "append-journal"; transactionId: string }
+  | { operation: "cleanup-rollback"; path: string }
+  | { operation: "cleanup-vault"; path: string };
+
+export interface GovernancePlan {
+  schemaVersion: 1;
+  id: string;
+  kind: "quarantine" | "restore";
+  sourceTransactionId?: string;
+  skillId: string;
+  activePath: string;
+  vaultPath: string;
+  stagingPath: string;
+  rollbackPath?: string;
+  sourceFingerprint: string;
+  expectedDestinationFingerprint: string | null;
+  visibleAliases: GovernanceAlias[];
+  operations: GovernanceOperation[];
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface GovernanceTransaction {
+  schemaVersion: 1;
+  id: string;
+  sourceTransactionId?: string;
+  action: "quarantine" | "restore";
+  status: "quarantined" | "restored" | "failed";
+  skillId: string;
+  originalPath: string;
+  vaultPath: string;
+  fingerprint: string;
+  visibleAliases: GovernanceAlias[];
+  createdAt: string;
+  failureBoundary?: "copy" | "verify" | "move" | "vault" | "journal" | "restore";
+}
+
+export interface GovernanceApplyResult {
+  transaction: GovernanceTransaction;
+  rescanRequired: true;
+  cleanupPending: boolean;
+}
+
+export type GovernancePlanRequest =
+  | { action: "quarantine"; skillId: string }
+  | { action: "restore"; transactionId: string };
+
+export function fetchGovernanceTransactions(): Promise<GovernanceTransaction[]> {
+  return apiRequest("/api/v1/governance/transactions");
+}
+
+export function planGovernance(request: GovernancePlanRequest): Promise<GovernancePlan> {
+  return apiRequest("/api/v1/governance/plans", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function applyGovernancePlan(planId: string): Promise<GovernanceApplyResult> {
+  return apiRequest(`/api/v1/governance/plans/${encodeURIComponent(planId)}/apply`, {
+    method: "POST"
   });
 }
