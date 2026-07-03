@@ -139,17 +139,19 @@ function parseReviewedPayload(input: unknown): InstallationReviewedPayload {
       "Stored installation payload is invalid"
     );
   }
+  const plan = parseInstallationPlan(input.plan);
+  if (input.previewId !== plan.id) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Stored installation preview does not belong to its plan"
+    );
+  }
   return {
-    plan: parseInstallationPlan(input.plan),
+    plan,
     previewId: input.previewId,
     candidateName: input.candidateName,
     workspace: input.workspace
   };
-}
-
-function previewIdFromUnknown(input: unknown): string | undefined {
-  if (!isPlainRecord(input) || typeof input.previewId !== "string") return undefined;
-  return previewIdPattern.test(input.previewId) ? input.previewId : undefined;
 }
 
 function matchesEnvelopeIdentity(
@@ -198,6 +200,15 @@ async function cleanupReviewedPlans(context: CliContext, now: Date): Promise<voi
       throw error;
     }
   }
+}
+
+async function cleanupInstallState(
+  staging: StagingRegistry,
+  context: CliContext,
+  now: Date
+): Promise<void> {
+  await staging.cleanupExpired();
+  await cleanupReviewedPlans(context, now);
 }
 
 interface PortfolioRefreshWarning {
@@ -322,7 +333,7 @@ async function previewInstallation(
   }
   const request = requirePreviewRequest(options);
   const now = context.now?.() ?? new Date();
-  await cleanupReviewedPlans(context, now);
+  await cleanupInstallState(staging, context, now);
   let previewId: string | undefined;
   let reviewedPlanId: string | undefined;
   let retainPreview = false;
@@ -483,23 +494,11 @@ async function applyInstallation(
   }
   const contextNow = context.now;
   const now = context.now?.() ?? new Date();
-  let envelope: ReviewedPlanEnvelope<unknown>;
-  try {
-    envelope = await claimReviewedPlan(context.stateDir, {
-      id: planId,
-      kind: "installation",
-      now
-    });
-  } catch (error) {
-    if (
-      error instanceof ReviewedPlanStoreError
-      && error.code === "REVIEWED_PLAN_EXPIRED"
-    ) {
-      await expireAfterClaim(staging, planId, context);
-    }
-    throw error;
-  }
-  const previewId = previewIdFromUnknown(envelope.payload);
+  await cleanupInstallState(staging, context, now);
+  const envelope: ReviewedPlanEnvelope<unknown> = await claimReviewedPlan(
+    context.stateDir,
+    { id: planId, kind: "installation", now }
+  );
   let payload: InstallationReviewedPayload;
   let record: InstallationRecord;
   try {
@@ -511,7 +510,7 @@ async function applyInstallation(
           "Stored installation plan identity does not match its envelope"
         );
       }
-      const preview = await staging.resolve(parsed.previewId);
+      const preview = await staging.resolve(envelope.id);
       await assertContainedSource(preview.directory, parsed.plan.source);
       return {
         payload: parsed,
@@ -522,10 +521,10 @@ async function applyInstallation(
       };
     }));
   } catch (error) {
-    await expireAfterClaim(staging, previewId, context);
+    await expireAfterClaim(staging, envelope.id, context);
     throw error;
   }
-  await expireAfterClaim(staging, payload.previewId, context);
+  await expireAfterClaim(staging, envelope.id, context);
   const refreshResult = await refreshAfterCommit(payload.workspace, context);
   context.stdout(options.json
     ? `${JSON.stringify({

@@ -10,6 +10,7 @@ import {
   realpath,
   rm,
   stat,
+  unlink,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -363,6 +364,34 @@ describe("catalog install command", () => {
     expect(await readInstallationHistory(current.stateDir)).toEqual([]);
   });
 
+  it("binds cleanup and source ownership to the claimed envelope instead of an untrusted preview id", async () => {
+    expect(await run(previewArgs(), current.context)).toBe(0);
+    const first = JSON.parse(current.stdout.splice(0).join(""));
+    const firstStored = await storedPlan(current.stateDir, first.planId);
+    expect(await run(previewArgs(), current.context)).toBe(0);
+    const second = JSON.parse(current.stdout.splice(0).join(""));
+    const secondStored = await storedPlan(current.stateDir, second.planId);
+
+    firstStored.payload.previewId = second.planId;
+    await writeFile(
+      join(current.stateDir, "reviewed-plans", `${first.planId}.json`),
+      `${JSON.stringify(firstStored, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+
+    expect(await run([
+      "install", "--plan", first.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
+    expect((await stagingEntries(current.stateDir)).sort()).toEqual([second.planId]);
+    await expect(access(firstStored.payload.plan.source)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(secondStored.payload.plan.source)).resolves.toBeUndefined();
+    await expect(access(join(current.stateDir, "reviewed-plans", `${second.planId}.json`)))
+      .resolves.toBeUndefined();
+    expect(await readInstallationHistory(current.stateDir)).toEqual([]);
+  });
+
   it("keeps a committed installation successful when portfolio refresh fails", async () => {
     expect(await run(previewArgs(), current.context)).toBe(0);
     const preview = JSON.parse(current.stdout.splice(0).join(""));
@@ -410,9 +439,52 @@ describe("catalog install command", () => {
       "install", "--plan", preview.planId, "--confirm"
     ], current.context)).toBe(1);
     expect(current.stderr.splice(0).join(""))
-      .toMatch(/REVIEWED_PLAN_EXPIRED.*fresh reviewed plan/is);
+      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
     expect(await readInstallationHistory(current.stateDir)).toEqual([]);
     expect(await stagingEntries(current.stateDir)).toEqual([]);
+  });
+
+  it.each(["preview", "apply"] as const)(
+    "opportunistically removes expired orphan staging on %s entry",
+    async (mode) => {
+      expect(await run(previewArgs(), current.context)).toBe(0);
+      const preview = JSON.parse(current.stdout.splice(0).join(""));
+      await unlink(join(current.stateDir, "reviewed-plans", `${preview.planId}.json`));
+      current.setNow(new Date("2026-07-03T00:06:00.000Z"));
+
+      const args = mode === "preview"
+        ? [
+            "install",
+            "--catalog-candidate", "missing-candidate",
+            "--harness", "codex",
+            "--scope", "global"
+          ]
+        : ["install", "--plan", "missing-plan", "--confirm"];
+      expect(await run(args, current.context)).toBe(1);
+      expect(await stagingEntries(current.stateDir)).toEqual([]);
+    }
+  );
+
+  it("explains mutually exclusive preview and apply modes in help", async () => {
+    const output: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      output.push(String(chunk));
+      return true;
+    });
+    try {
+      expect(await run(["install", "--help"], current.context)).toBe(0);
+    } finally {
+      write.mockRestore();
+    }
+    const help = output.join("");
+    expect(help).toContain(
+      "Preview: --catalog-candidate <id> --harness <id> --scope <scope>"
+    );
+    expect(help).toContain("Apply: --plan <id> --confirm");
+    expect(help).toMatch(/--catalog-candidate <id>\s+catalog candidate ID to preview/);
+    expect(help).toMatch(/--harness <id>\s+target Harness for preview/);
+    expect(help).toMatch(/--workspace <path>\s+project workspace path/);
+    expect(help).toMatch(/--target-name <name>\s+installed directory name/);
   });
 
   it("rejects provenance that does not name an explicit recommendation and cleans staging", async () => {

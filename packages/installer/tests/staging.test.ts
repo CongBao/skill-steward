@@ -209,4 +209,66 @@ describe("StagingRegistry", () => {
       code: "UNSAFE_PREVIEW_STATE"
     });
   });
+
+  it("bounded cleanup removes only expired strict previews across instances", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-staging-cleanup-"));
+    const ids = ["preview-live", "preview-expired", "preview-invalid"];
+    let now = 100;
+    const writer = new StagingRegistry({
+      stateDirectory,
+      now: () => now,
+      id: () => ids.shift() ?? "unexpected-preview"
+    });
+    const live = await writer.create({ ttlMs: 100 });
+    const expired = await writer.create({ ttlMs: 10 });
+    const invalid = await writer.create({ ttlMs: 100 });
+    await writeFile(join(invalid.directory, "preview.json"), JSON.stringify({
+      version: 1,
+      id: invalid.id,
+      createdAt: 100,
+      expiresAt: 200,
+      extra: true
+    }));
+    const unrelated = join(stateDirectory, "staging", "unrelated.folder");
+    await mkdir(unrelated);
+    now = 150;
+
+    const cleaner = new StagingRegistry({ stateDirectory, now: () => now });
+    await expect(cleaner.cleanupExpired()).resolves.toBe(1);
+    await expect(cleaner.resolve(live.id)).resolves.toEqual(live);
+    await expect(access(expired.directory)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(invalid.directory)).resolves.toBeUndefined();
+    await expect(access(unrelated)).resolves.toBeUndefined();
+  });
+
+  it("shared cleanup claims an expired preview at most once", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-shared-cleanup-"));
+    const expired = await new StagingRegistry({
+      stateDirectory,
+      now: () => 100,
+      id: () => "preview-shared-expired"
+    }).create({ ttlMs: 10 });
+    const first = new StagingRegistry({ stateDirectory, now: () => 200 });
+    const second = new StagingRegistry({ stateDirectory, now: () => 200 });
+
+    const removed = await Promise.all([
+      first.cleanupExpired(),
+      second.cleanupExpired()
+    ]);
+    expect(removed.reduce((total, count) => total + count, 0)).toBe(1);
+    await expect(access(expired.directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails closed when cleanup sees an unsafe staging root", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-cleanup-root-link-"));
+    const stateDirectory = join(base, "state");
+    const target = join(base, "target");
+    await mkdir(stateDirectory);
+    await mkdir(target);
+    await symlink(target, join(stateDirectory, "staging"));
+
+    await expect(new StagingRegistry({ stateDirectory }).cleanupExpired())
+      .rejects.toMatchObject({ code: "UNSAFE_PREVIEW_STATE" });
+    await expect(access(target)).resolves.toBeUndefined();
+  });
 });

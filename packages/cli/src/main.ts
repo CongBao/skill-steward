@@ -243,13 +243,17 @@ export async function run(
 
   program
     .command("install")
-    .description("Plan or apply installation of a catalog recommendation")
-    .option("--catalog-candidate <id>")
-    .option("--harness <id>")
+    .description([
+      "Install a catalog recommendation using one of two mutually exclusive modes.",
+      "Preview: --catalog-candidate <id> --harness <id> --scope <scope>",
+      "Apply: --plan <id> --confirm"
+    ].join("\n"))
+    .option("--catalog-candidate <id>", "catalog candidate ID to preview")
+    .option("--harness <id>", "target Harness for preview")
     .option("--scope <scope>", "global or project")
-    .option("--workspace <path>")
+    .option("--workspace <path>", "project workspace path")
     .option("--preflight <id>", "link an explicit Task Preflight recommendation")
-    .option("--target-name <name>")
+    .option("--target-name <name>", "installed directory name")
     .option("--replace", "replace a differing destination with backup", false)
     .option("--plan <id>", "apply an exact reviewed installation plan")
     .option("--confirm", "confirm the reviewed installation", false)

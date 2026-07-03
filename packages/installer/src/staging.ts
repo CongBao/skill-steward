@@ -1,21 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { constants, type Stats } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import {
   chmod,
   link,
   lstat,
   mkdir,
   open,
+  opendir,
   realpath,
   rename,
   rm,
   unlink
 } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { z } from "zod";
 import { InstallerError } from "./domain.js";
 
 const PREVIEW_METADATA = "preview.json";
+const MAX_CLEANUP_CANDIDATES = 1_000;
+const MAX_METADATA_BYTES = 16 * 1_024;
 const previewIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
 const previewMetadataSchema = z.object({
   version: z.literal(1),
@@ -32,6 +35,21 @@ interface PreviewMetadata {
   id: string;
   createdAt: number;
   expiresAt: number;
+}
+
+interface FileIdentity {
+  dev: bigint;
+  ino: bigint;
+}
+
+interface DirectoryIdentity extends FileIdentity {
+  physicalPath: string;
+}
+
+interface PreviewState {
+  preview: StagedPreview;
+  rootIdentity: DirectoryIdentity;
+  previewIdentity: DirectoryIdentity;
 }
 
 export interface StagedPreview {
@@ -63,36 +81,94 @@ function parseId(input: string): string {
   return parsed.data;
 }
 
-async function inspectDirectory(path: string): Promise<Stats | undefined> {
+function requireUsableIdentity(metadata: BigIntStats, kind: string): FileIdentity {
+  if (metadata.dev === 0n || metadata.ino === 0n) {
+    throw invalidState(`${kind} filesystem identity is unavailable`);
+  }
+  return { dev: metadata.dev, ino: metadata.ino };
+}
+
+function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function inspectDirectory(path: string): Promise<DirectoryIdentity | undefined> {
+  let before: BigIntStats;
   try {
-    const metadata = await lstat(path);
-    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-      throw invalidState("Installation staging paths must be physical directories");
-    }
-    return metadata;
+    before = await lstat(path, { bigint: true });
   } catch (error) {
     if (isFileSystemError(error, "ENOENT")) return undefined;
     throw error;
   }
+  if (before.isSymbolicLink() || !before.isDirectory()) {
+    throw invalidState("Installation staging paths must be physical directories");
+  }
+  const identity = requireUsableIdentity(before, "Installation staging directory");
+  let physicalPath: string;
+  let after: BigIntStats;
+  try {
+    physicalPath = await realpath(path);
+    after = await lstat(path, { bigint: true });
+  } catch (error) {
+    throw invalidState(
+      isFileSystemError(error, "ENOENT")
+        ? "Installation staging directory disappeared during inspection"
+        : "Installation staging directory could not be inspected safely"
+    );
+  }
+  if (after.isSymbolicLink() || !after.isDirectory()) {
+    throw invalidState("Installation staging paths must remain physical directories");
+  }
+  const afterIdentity = requireUsableIdentity(after, "Installation staging directory");
+  if (!sameIdentity(identity, afterIdentity)) {
+    throw invalidState("Installation staging directory changed during inspection");
+  }
+  return { ...identity, physicalPath };
 }
 
-async function inspectRegularFile(path: string): Promise<Stats> {
+async function assertDirectoryIdentity(
+  path: string,
+  expected: DirectoryIdentity
+): Promise<DirectoryIdentity> {
+  const actual = await inspectDirectory(path);
+  if (
+    actual === undefined
+    || !sameIdentity(actual, expected)
+    || actual.physicalPath !== expected.physicalPath
+  ) {
+    throw invalidState("Installation staging directory ownership changed");
+  }
+  return actual;
+}
+
+async function inspectRegularFile(path: string): Promise<FileIdentity> {
+  let metadata: BigIntStats;
   try {
-    const metadata = await lstat(path);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) {
-      throw invalidState("Installation preview metadata must be a regular non-symlink file");
-    }
-    return metadata;
+    metadata = await lstat(path, { bigint: true });
   } catch (error) {
     if (isFileSystemError(error, "ENOENT")) {
       throw new InstallerError("PREVIEW_NOT_FOUND", "Installation preview was not found");
     }
     throw error;
   }
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw invalidState("Installation preview metadata must be a regular non-symlink file");
+  }
+  if (metadata.size > BigInt(MAX_METADATA_BYTES)) {
+    throw new InstallerError(
+      "INVALID_PREVIEW_METADATA",
+      "Installation preview metadata exceeds the size limit"
+    );
+  }
+  return requireUsableIdentity(metadata, "Installation preview metadata");
 }
 
-async function unlinkIfPresent(path: string): Promise<void> {
+async function unlinkOwnedFile(path: string, expected: FileIdentity): Promise<void> {
   try {
+    const actual = await inspectRegularFile(path);
+    if (!sameIdentity(actual, expected)) {
+      throw invalidState("Installation staging file ownership changed");
+    }
     await unlink(path);
   } catch (error) {
     if (!isFileSystemError(error, "ENOENT")) throw error;
@@ -104,7 +180,6 @@ export class StagingRegistry {
   readonly #root: string;
   readonly #now: () => number;
   readonly #id: () => string;
-  readonly #previews = new Map<string, StagedPreview>();
 
   constructor(options: StagingRegistryOptions) {
     this.#stateDirectory = resolve(options.stateDirectory);
@@ -121,85 +196,111 @@ export class StagingRegistry {
       throw new InstallerError("INVALID_TTL", "Preview TTL must be a positive integer");
     }
     const id = parseId(this.#id());
-    const createdAt = this.#now();
-    if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
-      throw new InstallerError("INVALID_PREVIEW_TIME", "Preview time must be a safe timestamp");
-    }
+    const createdAt = this.#safeNow();
     const expiresAt = createdAt + ttlMs;
     if (!Number.isSafeInteger(expiresAt)) {
       throw new InstallerError("INVALID_TTL", "Preview expiry exceeds the supported range");
     }
 
-    await this.#ensureRoot(true);
-    const directory = this.#previewPath(id);
-    try {
-      await mkdir(directory, { mode: 0o700 });
-    } catch (error) {
-      if (isFileSystemError(error, "EEXIST")) {
-        throw new InstallerError("PREVIEW_CONFLICT", "Installation preview already exists");
-      }
-      throw error;
+    const rootIdentity = await this.#ensureRoot(true);
+    if (rootIdentity === undefined) {
+      throw invalidState("Installation staging root is unavailable");
     }
-
-    const metadata: PreviewMetadata = { version: 1, id, createdAt, expiresAt };
+    const directory = this.#previewPath(id);
+    let previewIdentity: DirectoryIdentity | undefined;
     try {
-      await this.#writeMetadata(directory, metadata);
-      const preview = { id, directory, createdAt, expiresAt };
-      this.#previews.set(id, preview);
-      return preview;
+      await assertDirectoryIdentity(this.#root, rootIdentity);
+      try {
+        await mkdir(directory, { mode: 0o700 });
+      } catch (error) {
+        if (isFileSystemError(error, "EEXIST")) {
+          throw new InstallerError("PREVIEW_CONFLICT", "Installation preview already exists");
+        }
+        throw error;
+      }
+      await assertDirectoryIdentity(this.#root, rootIdentity);
+      previewIdentity = await this.#inspectContainedPreview(rootIdentity, id);
+      const metadata: PreviewMetadata = { version: 1, id, createdAt, expiresAt };
+      await this.#writeMetadata(rootIdentity, previewIdentity, directory, metadata);
+      return { id, directory, createdAt, expiresAt };
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      if (previewIdentity !== undefined) {
+        try {
+          await this.#removeOwnedDirectory(rootIdentity, previewIdentity, id);
+        } catch {
+          // Preserve the original failure and never delete state whose ownership changed.
+        }
+      }
       throw error;
     }
   }
 
   async resolve(inputId: string): Promise<StagedPreview> {
-    const id = parseId(inputId);
-    const preview = await this.#readPreview(id);
-    if (this.#now() > preview.expiresAt) {
-      await this.expire(id);
+    const state = await this.#readPreview(parseId(inputId));
+    if (this.#safeNow() >= state.preview.expiresAt) {
+      await this.#removeOwnedDirectory(
+        state.rootIdentity,
+        state.previewIdentity,
+        state.preview.id
+      );
       throw new InstallerError("PREVIEW_EXPIRED", "Installation preview has expired");
     }
-    this.#previews.set(id, preview);
-    return preview;
+    return state.preview;
   }
 
   async expire(inputId: string): Promise<void> {
     const id = parseId(inputId);
-    const root = await this.#ensureRoot(false);
-    if (root === undefined) {
-      this.#previews.delete(id);
-      return;
-    }
-    const directory = this.#previewPath(id);
-    const before = await inspectDirectory(directory);
-    if (before === undefined) {
-      this.#previews.delete(id);
-      return;
-    }
-    await this.#readPreview(id);
-
-    const owned = resolve(root, `.expired-${id}-${randomUUID()}`);
-    if (dirname(owned) !== root) throw invalidState("Expired preview path escapes staging");
+    let state: PreviewState;
     try {
-      await rename(directory, owned);
+      state = await this.#readPreview(id);
     } catch (error) {
-      if (isFileSystemError(error, "ENOENT")) {
-        this.#previews.delete(id);
-        return;
-      }
+      if (error instanceof InstallerError && error.code === "PREVIEW_NOT_FOUND") return;
       throw error;
     }
-    const after = await inspectDirectory(owned);
-    if (
-      after === undefined
-      || before.dev !== after.dev
-      || before.ino !== after.ino
-    ) {
-      throw invalidState("Installation preview changed while it was being expired");
+    await this.#removeOwnedDirectory(
+      state.rootIdentity,
+      state.previewIdentity,
+      state.preview.id
+    );
+  }
+
+  async cleanupExpired(): Promise<number> {
+    const rootIdentity = await this.#ensureRoot(false);
+    if (rootIdentity === undefined) return 0;
+    await assertDirectoryIdentity(this.#root, rootIdentity);
+    let removed = 0;
+    let inspected = 0;
+    for await (const entry of await opendir(this.#root)) {
+      inspected += 1;
+      if (inspected > MAX_CLEANUP_CANDIDATES) break;
+      const parsedId = previewIdSchema.safeParse(entry.name);
+      if (!parsedId.success) continue;
+      try {
+        await assertDirectoryIdentity(this.#root, rootIdentity);
+        const state = await this.#readPreview(parsedId.data, rootIdentity);
+        if (this.#safeNow() < state.preview.expiresAt) continue;
+        if (await this.#removeOwnedDirectory(
+          state.rootIdentity,
+          state.previewIdentity,
+          state.preview.id
+        )) {
+          removed += 1;
+        }
+      } catch {
+        // Invalid, raced, or unreadable candidates are retained unless ownership is proven.
+        await assertDirectoryIdentity(this.#root, rootIdentity);
+      }
     }
-    await rm(owned, { recursive: true, force: false });
-    this.#previews.delete(id);
+    await assertDirectoryIdentity(this.#root, rootIdentity);
+    return removed;
+  }
+
+  #safeNow(): number {
+    const now = this.#now();
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new InstallerError("INVALID_PREVIEW_TIME", "Preview time must be a safe timestamp");
+    }
+    return now;
   }
 
   #previewPath(id: string): string {
@@ -210,84 +311,89 @@ export class StagingRegistry {
     return directory;
   }
 
-  async #ensureRoot(create: boolean): Promise<string | undefined> {
-    let state = await inspectDirectory(this.#stateDirectory);
-    if (state === undefined && create) {
+  async #ensureRoot(create: boolean): Promise<DirectoryIdentity | undefined> {
+    let stateIdentity = await inspectDirectory(this.#stateDirectory);
+    if (stateIdentity === undefined && create) {
       await mkdir(this.#stateDirectory, { recursive: true, mode: 0o700 });
-      state = await inspectDirectory(this.#stateDirectory);
+      stateIdentity = await inspectDirectory(this.#stateDirectory);
     }
-    if (state === undefined) return undefined;
+    if (stateIdentity === undefined) return undefined;
 
-    let root = await inspectDirectory(this.#root);
-    if (root === undefined && create) {
+    let rootIdentity = await inspectDirectory(this.#root);
+    if (rootIdentity === undefined && create) {
       try {
         await mkdir(this.#root, { mode: 0o700 });
       } catch (error) {
         if (!isFileSystemError(error, "EEXIST")) throw error;
       }
-      root = await inspectDirectory(this.#root);
+      rootIdentity = await inspectDirectory(this.#root);
     }
-    if (root === undefined) return undefined;
+    if (rootIdentity === undefined) return undefined;
+    if (dirname(rootIdentity.physicalPath) !== stateIdentity.physicalPath) {
+      throw invalidState("Installation staging root is not physically contained in state");
+    }
     await chmod(this.#root, 0o700);
-    return this.#root;
+    await Promise.all([
+      assertDirectoryIdentity(this.#stateDirectory, stateIdentity),
+      assertDirectoryIdentity(this.#root, rootIdentity)
+    ]);
+    return rootIdentity;
   }
 
-  async #readPreview(id: string): Promise<StagedPreview> {
-    const root = await this.#ensureRoot(false);
-    if (root === undefined) {
-      throw new InstallerError("PREVIEW_NOT_FOUND", "Installation preview was not found");
-    }
+  async #inspectContainedPreview(
+    rootIdentity: DirectoryIdentity,
+    id: string
+  ): Promise<DirectoryIdentity> {
+    await assertDirectoryIdentity(this.#root, rootIdentity);
     const directory = this.#previewPath(id);
-    if (await inspectDirectory(directory) === undefined) {
+    const previewIdentity = await inspectDirectory(directory);
+    if (previewIdentity === undefined) {
       throw new InstallerError("PREVIEW_NOT_FOUND", "Installation preview was not found");
     }
-    const [physicalRoot, physicalDirectory] = await Promise.all([
-      realpath(root),
-      realpath(directory)
-    ]);
-    if (dirname(physicalDirectory) !== physicalRoot) {
+    await assertDirectoryIdentity(this.#root, rootIdentity);
+    if (dirname(previewIdentity.physicalPath) !== rootIdentity.physicalPath) {
       throw invalidState("Installation preview is not physically contained in staging");
     }
+    return previewIdentity;
+  }
 
+  async #readPreview(
+    id: string,
+    knownRoot?: DirectoryIdentity
+  ): Promise<PreviewState> {
+    const rootIdentity = knownRoot ?? await this.#ensureRoot(false);
+    if (rootIdentity === undefined) {
+      throw new InstallerError("PREVIEW_NOT_FOUND", "Installation preview was not found");
+    }
+    await assertDirectoryIdentity(this.#root, rootIdentity);
+    const directory = this.#previewPath(id);
+    const previewIdentity = await this.#inspectContainedPreview(rootIdentity, id);
     const metadataPath = resolve(directory, PREVIEW_METADATA);
     if (dirname(metadataPath) !== directory) {
       throw invalidState("Installation preview metadata escapes its directory");
     }
-    const pathMetadata = await inspectRegularFile(metadataPath);
+    const fileIdentity = await inspectRegularFile(metadataPath);
+    await Promise.all([
+      assertDirectoryIdentity(this.#root, rootIdentity),
+      assertDirectoryIdentity(directory, previewIdentity)
+    ]);
+
     let handle;
+    let source: string;
     try {
       handle = await open(metadataPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const openedMetadata = await handle.stat();
-      if (
-        !openedMetadata.isFile()
-        || openedMetadata.dev !== pathMetadata.dev
-        || openedMetadata.ino !== pathMetadata.ino
-      ) {
+      const openedMetadata = await handle.stat({ bigint: true });
+      if (!openedMetadata.isFile()) {
+        throw invalidState("Installation preview metadata must remain a regular file");
+      }
+      const openedIdentity = requireUsableIdentity(
+        openedMetadata,
+        "Installation preview metadata"
+      );
+      if (!sameIdentity(fileIdentity, openedIdentity)) {
         throw invalidState("Installation preview metadata changed while it was read");
       }
-      const source = await handle.readFile({ encoding: "utf8" });
-      let parsedJson: unknown;
-      try {
-        parsedJson = JSON.parse(source) as unknown;
-      } catch {
-        throw new InstallerError(
-          "INVALID_PREVIEW_METADATA",
-          "Installation preview metadata is invalid"
-        );
-      }
-      const parsed = previewMetadataSchema.safeParse(parsedJson);
-      if (!parsed.success || parsed.data.id !== id) {
-        throw new InstallerError(
-          "INVALID_PREVIEW_METADATA",
-          "Installation preview metadata is invalid"
-        );
-      }
-      return {
-        id,
-        directory,
-        createdAt: parsed.data.createdAt,
-        expiresAt: parsed.data.expiresAt
-      };
+      source = await handle.readFile({ encoding: "utf8" });
     } catch (error) {
       if (isFileSystemError(error, "ELOOP")) {
         throw invalidState("Installation preview metadata must not be a symlink");
@@ -296,23 +402,114 @@ export class StagingRegistry {
     } finally {
       await handle?.close();
     }
+
+    await Promise.all([
+      assertDirectoryIdentity(this.#root, rootIdentity),
+      assertDirectoryIdentity(directory, previewIdentity)
+    ]);
+    const finalFileIdentity = await inspectRegularFile(metadataPath);
+    if (!sameIdentity(fileIdentity, finalFileIdentity)) {
+      throw invalidState("Installation preview metadata ownership changed");
+    }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(source) as unknown;
+    } catch {
+      throw new InstallerError(
+        "INVALID_PREVIEW_METADATA",
+        "Installation preview metadata is invalid"
+      );
+    }
+    const parsed = previewMetadataSchema.safeParse(parsedJson);
+    if (!parsed.success || parsed.data.id !== id) {
+      throw new InstallerError(
+        "INVALID_PREVIEW_METADATA",
+        "Installation preview metadata is invalid"
+      );
+    }
+    return {
+      preview: {
+        id,
+        directory,
+        createdAt: parsed.data.createdAt,
+        expiresAt: parsed.data.expiresAt
+      },
+      rootIdentity,
+      previewIdentity
+    };
   }
 
-  async #writeMetadata(directory: string, metadata: PreviewMetadata): Promise<void> {
+  async #removeOwnedDirectory(
+    rootIdentity: DirectoryIdentity,
+    previewIdentity: DirectoryIdentity,
+    id: string
+  ): Promise<boolean> {
+    const directory = this.#previewPath(id);
+    await Promise.all([
+      assertDirectoryIdentity(this.#root, rootIdentity),
+      assertDirectoryIdentity(directory, previewIdentity)
+    ]);
+    const owned = resolve(this.#root, `.expired-${id}-${randomUUID()}`);
+    if (dirname(owned) !== this.#root) {
+      throw invalidState("Expired preview path escapes staging");
+    }
+    try {
+      await rename(directory, owned);
+    } catch (error) {
+      if (isFileSystemError(error, "ENOENT")) return false;
+      throw error;
+    }
+    await assertDirectoryIdentity(this.#root, rootIdentity);
+    const ownedIdentity = await inspectDirectory(owned);
+    const expectedOwnedPhysical = resolve(rootIdentity.physicalPath, basename(owned));
+    if (
+      ownedIdentity === undefined
+      || !sameIdentity(ownedIdentity, previewIdentity)
+      || ownedIdentity.physicalPath !== expectedOwnedPhysical
+    ) {
+      throw invalidState("Installation preview changed before cleanup could claim it");
+    }
+    if (dirname(ownedIdentity.physicalPath) !== rootIdentity.physicalPath) {
+      throw invalidState("Claimed installation preview escapes staging");
+    }
+    await Promise.all([
+      assertDirectoryIdentity(this.#root, rootIdentity),
+      assertDirectoryIdentity(owned, ownedIdentity)
+    ]);
+    await rm(owned, { recursive: true, force: false });
+    return true;
+  }
+
+  async #writeMetadata(
+    rootIdentity: DirectoryIdentity,
+    previewIdentity: DirectoryIdentity,
+    directory: string,
+    metadata: PreviewMetadata
+  ): Promise<void> {
     const destination = resolve(directory, PREVIEW_METADATA);
     const temporary = resolve(directory, `.preview-${randomUUID()}.tmp`);
     const serialized = `${JSON.stringify(previewMetadataSchema.parse(metadata), null, 2)}\n`;
-    let created = false;
+    await Promise.all([
+      assertDirectoryIdentity(this.#root, rootIdentity),
+      assertDirectoryIdentity(directory, previewIdentity)
+    ]);
+    const handle = await open(temporary, "wx", 0o600);
+    let temporaryIdentity: FileIdentity | undefined;
     try {
-      const handle = await open(temporary, "wx", 0o600);
-      created = true;
-      try {
-        await handle.writeFile(serialized, "utf8");
-        await handle.sync();
-        await handle.chmod(0o600);
-      } finally {
-        await handle.close();
-      }
+      await handle.writeFile(serialized, "utf8");
+      await handle.sync();
+      await handle.chmod(0o600);
+      const openedMetadata = await handle.stat({ bigint: true });
+      temporaryIdentity = requireUsableIdentity(openedMetadata, "Preview metadata temporary");
+    } finally {
+      await handle.close();
+    }
+    try {
+      await Promise.all([
+        assertDirectoryIdentity(this.#root, rootIdentity),
+        assertDirectoryIdentity(directory, previewIdentity)
+      ]);
       try {
         await link(temporary, destination);
       } catch (error) {
@@ -321,10 +518,26 @@ export class StagingRegistry {
         }
         throw error;
       }
-      await unlink(temporary);
-      created = false;
+      await Promise.all([
+        assertDirectoryIdentity(this.#root, rootIdentity),
+        assertDirectoryIdentity(directory, previewIdentity)
+      ]);
+      const destinationIdentity = await inspectRegularFile(destination);
+      if (!sameIdentity(temporaryIdentity, destinationIdentity)) {
+        throw invalidState("Installation preview metadata publication changed ownership");
+      }
     } finally {
-      if (created) await unlinkIfPresent(temporary);
+      if (temporaryIdentity !== undefined) {
+        try {
+          await Promise.all([
+            assertDirectoryIdentity(this.#root, rootIdentity),
+            assertDirectoryIdentity(directory, previewIdentity)
+          ]);
+          await unlinkOwnedFile(temporary, temporaryIdentity);
+        } catch {
+          // Retain uncertain temporary state rather than unlinking another file.
+        }
+      }
     }
   }
 }
