@@ -6,6 +6,7 @@ import { SkillsPage } from "../features/skills/SkillsPage.js";
 import { FindingsPage } from "../features/findings/FindingsPage.js";
 import { HistoryPage } from "../features/history/HistoryPage.js";
 import { SettingsPage } from "../features/settings/SettingsPage.js";
+import { PreflightPage } from "../features/preflight/PreflightPage.js";
 
 function Placeholder({ title, description }: { title: TranslationKey; description: TranslationKey }) {
   const { t } = useI18n();
@@ -24,6 +25,7 @@ export function AppRoutes() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage />} />
+        <Route path="preflight" element={<PreflightPage />} />
         <Route path="skills" element={<SkillsPage />} />
         <Route path="findings" element={<FindingsPage />} />
         <Route path="history" element={<HistoryPage />} />

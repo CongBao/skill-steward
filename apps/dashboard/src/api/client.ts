@@ -139,6 +139,68 @@ export interface InstallationTransaction {
   backupDirectory?: string | null;
 }
 
+export type PreflightReasonCode =
+  | "TASK_TERM_MATCH"
+  | "NAME_MATCH"
+  | "PROJECT_SCOPE_FIT"
+  | "UNIQUE_COVERAGE"
+  | "REDUNDANT_WITH_SELECTED"
+  | "LOW_RELEVANCE"
+  | "PORTFOLIO_RISK";
+
+export interface PreflightCandidate {
+  skillId: string;
+  name: string;
+  description: string;
+  scope: "global" | "project" | "unknown";
+  visibleTo: string[];
+  relevance: number;
+  uniqueCoverage: number;
+  riskPenalty: number;
+  redundancyPenalty: number;
+  contextTokens: number;
+  decision: "selected" | "excluded";
+  reasons: Array<{ code: PreflightReasonCode; detail: string }>;
+}
+
+export interface PreflightResult {
+  schemaVersion: 1;
+  algorithmVersion: 1;
+  id: string;
+  generatedAt: string;
+  portfolioFingerprint: string;
+  taskHash: string;
+  taskCharacterCount: number;
+  taskTermCount: number;
+  selectedSkillIds: string[];
+  candidates: PreflightCandidate[];
+  conflicts: FindingSummary[];
+  selectedContextTokens: number;
+  plausibleContextTokens: number;
+  estimatedContextSaved: number;
+}
+
+export function runPreflight(
+  task: string,
+  maxSkills: number
+): Promise<PreflightResult> {
+  return apiRequest("/api/v1/preflights", {
+    method: "POST",
+    body: JSON.stringify({ task, maxSkills })
+  });
+}
+
+export function submitPreflightFeedback(
+  id: string,
+  label: "useful" | "incomplete" | "incorrect",
+  selectedSkillIds: string[]
+): Promise<{ saved: boolean }> {
+  return apiRequest(`/api/v1/preflights/${encodeURIComponent(id)}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ label, selectedSkillIds })
+  });
+}
+
 export function inspectInstallation(payload: unknown): Promise<InspectionResult> {
   return apiRequest("/api/v1/install-sources/inspect", {
     method: "POST",

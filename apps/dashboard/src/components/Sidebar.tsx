@@ -5,6 +5,7 @@ import {
   ChevronRight,
   History,
   LayoutDashboard,
+  Route as RouteIcon,
   Settings2
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -48,6 +49,7 @@ export function Sidebar() {
 
   const navigation = [
     ["/", t("nav.overview"), LayoutDashboard],
+    ["/preflight", t("nav.preflight"), RouteIcon],
     ["/skills", t("nav.skills"), Boxes],
     ["/findings", t("nav.findings"), AlertTriangle],
     ["/history", t("nav.history"), History],

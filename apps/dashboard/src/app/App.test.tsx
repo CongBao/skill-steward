@@ -24,10 +24,15 @@ describe("dashboard application shell", () => {
     const user = userEvent.setup();
     render(<App />);
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Preflight" })).toHaveAttribute(
+      "href",
+      "/preflight"
+    );
 
     await user.click(screen.getByRole("button", { name: "中文" }));
 
     expect(screen.getByRole("link", { name: "概览" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "任务预检" })).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem("skill-steward:preferences") ?? "{}").locale).toBe(
       "zh-CN"
     );
