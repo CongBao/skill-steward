@@ -13,6 +13,58 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
+const fileSystemObservation = vi.hoisted(() => ({
+  publishRaceDestination: undefined as string | undefined,
+  cleanupDirectory: undefined as string | undefined,
+  cleanupInspectedPaths: [] as string[],
+  cleanupUsedStreamingDirectory: false
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const createExternalDestination = async (source: unknown, destination: unknown) => {
+    if (
+      fileSystemObservation.publishRaceDestination === String(destination)
+      && String(source).endsWith(".tmp")
+    ) {
+      fileSystemObservation.publishRaceDestination = undefined;
+      await actual.writeFile(destination as string, "external-sentinel", {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600
+      });
+    }
+  };
+  return {
+    ...actual,
+    link: async (...args: Parameters<typeof actual.link>) => {
+      await createExternalDestination(args[0], args[1]);
+      return actual.link(...args);
+    },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (
+        fileSystemObservation.cleanupDirectory !== undefined
+        && typeof args[1] === "number"
+        && String(args[0]).startsWith(`${fileSystemObservation.cleanupDirectory}/`)
+      ) {
+        fileSystemObservation.cleanupInspectedPaths.push(String(args[0]));
+      }
+      return actual.open(...args);
+    },
+    opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      if (String(args[0]) === fileSystemObservation.cleanupDirectory) {
+        fileSystemObservation.cleanupUsedStreamingDirectory = true;
+      }
+      return actual.opendir(...args);
+    },
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      await createExternalDestination(args[0], args[1]);
+      return actual.rename(...args);
+    }
+  };
+});
+
 import {
   claimReviewedPlan,
   cleanupExpiredReviewedPlans,
@@ -173,6 +225,29 @@ describe("reviewed plan store", () => {
     })).resolves.toEqual(first);
   });
 
+  it("atomically refuses an external destination created in the publish window", async () => {
+    const stateDir = await state("steward-reviewed-publish-race-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const destination = join(directory, "publish-race.json");
+    fileSystemObservation.publishRaceDestination = destination;
+
+    let result = "resolved";
+    try {
+      await writeReviewedPlan(stateDir, envelope("publish-race"));
+    } catch (error) {
+      result = error instanceof Error && "code" in error
+        ? String(error.code)
+        : "unknown-error";
+    } finally {
+      fileSystemObservation.publishRaceDestination = undefined;
+    }
+
+    expect(result).toBe("REVIEWED_PLAN_CONFLICT");
+    expect(await readFile(destination, "utf8")).toBe("external-sentinel");
+    expect(await readdir(directory)).toEqual(["publish-race.json"]);
+  });
+
   it("does not remove a write lock owned by another process", async () => {
     const stateDir = await state("steward-reviewed-lock-");
     const directory = join(stateDir, "reviewed-plans");
@@ -261,13 +336,30 @@ describe("reviewed plan store", () => {
       })}\n`, { mode: 0o600 });
     }));
     await writeFile(join(directory, "unrelated.txt"), "keep", { mode: 0o600 });
+    await writeFile(join(directory, "leftover.claimed"), "keep", { mode: 0o600 });
 
-    await expect(cleanupExpiredReviewedPlans(
-      stateDir,
-      new Date("2026-07-03T00:01:00.000Z")
-    )).resolves.toBe(1000);
+    fileSystemObservation.cleanupDirectory = directory;
+    fileSystemObservation.cleanupInspectedPaths = [];
+    fileSystemObservation.cleanupUsedStreamingDirectory = false;
+    let removed: number;
+    try {
+      removed = await cleanupExpiredReviewedPlans(
+        stateDir,
+        new Date("2026-07-03T00:01:00.000Z")
+      );
+    } finally {
+      fileSystemObservation.cleanupDirectory = undefined;
+    }
+
+    expect(removed).toBe(1000);
+    expect(fileSystemObservation.cleanupUsedStreamingDirectory).toBe(true);
+    expect(fileSystemObservation.cleanupInspectedPaths).toHaveLength(1000);
+    expect(fileSystemObservation.cleanupInspectedPaths.every((path) =>
+      path.endsWith(".json")
+    )).toBe(true);
     const remaining = await readdir(directory);
     expect(remaining.filter((name) => name.endsWith(".json"))).toHaveLength(1);
     expect(remaining).toContain("unrelated.txt");
+    expect(remaining).toContain("leftover.claimed");
   });
 });

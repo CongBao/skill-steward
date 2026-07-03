@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   open,
+  opendir,
   readdir,
   rename,
   unlink,
@@ -309,7 +311,15 @@ export async function writeReviewedPlan<TPayload>(
       } finally {
         await temporaryHandle.close();
       }
-      await rename(temporary, destination);
+      try {
+        await link(temporary, destination);
+      } catch (error) {
+        if (isFileSystemError(error, "EEXIST")) {
+          throw storeError("REVIEWED_PLAN_CONFLICT", "Reviewed plan already exists");
+        }
+        throw error;
+      }
+      await removeFile(temporary);
       temporaryCreated = false;
     } finally {
       await lock?.close();
@@ -414,11 +424,12 @@ export async function cleanupExpiredReviewedPlans(
     const now = parseNow(inputNow);
     const directory = await reviewedPlansDirectory(stateDirectory, false);
     if (directory === undefined) return 0;
-    const entries = (await readdir(directory, { withFileTypes: true }))
-      .filter((entry) => entry.name.endsWith(".json"))
-      .slice(0, MAX_CLEANUP_FILES);
     let removed = 0;
-    for (const entry of entries) {
+    let inspected = 0;
+    for await (const entry of await opendir(directory)) {
+      if (!entry.name.endsWith(".json")) continue;
+      if (inspected >= MAX_CLEANUP_FILES) break;
+      inspected += 1;
       const id = entry.name.slice(0, -".json".length);
       if (!reviewedPlanIdSchema.safeParse(id).success) continue;
       const path = resolve(directory, entry.name);
