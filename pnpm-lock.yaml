@@ -64,6 +64,18 @@ importers:
         specifier: ^7.0.0
         version: 7.3.6(@types/node@22.20.0)(yaml@2.9.0)
 
+  packages/catalog:
+    dependencies:
+      '@skill-steward/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@skill-steward/installer':
+        specifier: workspace:*
+        version: link:../installer
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
   packages/cli:
     devDependencies:
       '@skill-steward/dashboard':
