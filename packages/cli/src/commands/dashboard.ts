@@ -4,8 +4,12 @@ import {
   createDashboardApp,
   createDashboardServices,
   createInstallationServices,
+  createPreflightServices,
+  type DashboardApp,
   startDashboardServer
 } from "@skill-steward/dashboard-server";
+import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import { writeLatestReport } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
 
 export interface DashboardCommandOptions {
@@ -32,6 +36,17 @@ export function dashboardPort(input: string): number {
 }
 
 async function launch({ port, context }: DashboardLaunchInput): Promise<{ url: string }> {
+  const { app } = createDashboardApplication(
+    context,
+    fileURLToPath(new URL("./dashboard/", import.meta.url))
+  );
+  return startDashboardServer({ app, port });
+}
+
+export function createDashboardApplication(
+  context: CliContext,
+  assetsDirectory?: string
+): DashboardApp {
   const dashboardServices = createDashboardServices({
     stateDirectory: context.stateDir,
     home: context.home,
@@ -45,12 +60,22 @@ async function launch({ port, context }: DashboardLaunchInput): Promise<{ url: s
       await dashboardServices.scan([]);
     }
   });
-  const { app } = createDashboardApp({
+  const preflightServices = createPreflightServices({
+    stateDirectory: context.stateDir,
+    currentPortfolio: async () => {
+      const report = await scanPortfolio(
+        standardRoots({ home: context.home, cwd: context.cwd })
+      );
+      await writeLatestReport(context.stateDir, report);
+      return report;
+    }
+  });
+  return createDashboardApp({
     services: dashboardServices,
     installationServices,
-    assetsDirectory: fileURLToPath(new URL("./dashboard/", import.meta.url))
+    preflightServices,
+    ...(assetsDirectory ? { assetsDirectory } : {})
   });
-  return startDashboardServer({ app, port });
 }
 
 async function openBrowser(url: string): Promise<void> {

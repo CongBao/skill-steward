@@ -12,15 +12,18 @@ import { registerDetailRoutes } from "./routes/details.js";
 import { registerHistoryRoute } from "./routes/history.js";
 import { registerInstallationRoutes } from "./routes/installations.js";
 import { registerLabelRoute } from "./routes/labels.js";
+import { registerPreflightRoutes } from "./routes/preflights.js";
 import { registerRootRoute } from "./routes/roots.js";
 import { registerScanRoute } from "./routes/scans.js";
 import { installSecurityBoundary } from "./security.js";
 import type { DashboardServices } from "./services.js";
+import type { PreflightServices } from "./preflight-services.js";
 
 export interface CreateDashboardAppOptions {
   mutationToken?: string;
   services?: DashboardServices;
   installationServices?: InstallationServices;
+  preflightServices?: PreflightServices;
   assetsDirectory?: string;
 }
 
@@ -77,6 +80,9 @@ export function createDashboardApp(
   }
   if (options.installationServices) {
     registerInstallationRoutes(app, options.installationServices);
+  }
+  if (options.preflightServices) {
+    registerPreflightRoutes(app, options.preflightServices);
   }
 
   app.setErrorHandler(async (error: FastifyError, _request, reply) => {
