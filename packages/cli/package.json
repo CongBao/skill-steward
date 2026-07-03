@@ -1,0 +1,41 @@
+{
+  "name": "skill-steward",
+  "version": "0.2.0-alpha.1",
+  "description": "Local-first portfolio health and safe installation for Agent Skills across harnesses",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "codex",
+    "claude-code",
+    "github-copilot",
+    "developer-tools"
+  ],
+  "private": false,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "skill-steward": "./dist/main.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter @skill-steward/dashboard build && node build.mjs",
+    "pretest": "pnpm build",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "pnpm build"
+  },
+  "devDependencies": {
+    "@skill-steward/dashboard": "workspace:*",
+    "@skill-steward/dashboard-server": "workspace:*",
+    "@skill-steward/engine": "workspace:*",
+    "@skill-steward/insights": "workspace:*",
+    "@skill-steward/installer": "workspace:*",
+    "@skill-steward/report": "workspace:*",
+    "@skill-steward/store": "workspace:*",
+    "commander": "^14.0.0"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-packages/
+coverage/
+*.log
+.DS_Store
+.skill-steward/
+.superpowers/
+.worktrees/
+playwright-report/
+test-results/
+.playwright-cli/
+docs/superpowers/

@@ -1,0 +1,84 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import {
+  createDashboardApp,
+  createDashboardServices,
+  createInstallationServices,
+  startDashboardServer
+} from "@skill-steward/dashboard-server";
+import type { CliContext } from "../context.js";
+
+export interface DashboardCommandOptions {
+  port: number;
+  open: boolean;
+}
+
+export interface DashboardLaunchInput {
+  port: number;
+  context: CliContext;
+}
+
+export interface DashboardCommandDependencies {
+  launch(input: DashboardLaunchInput): Promise<{ url: string }>;
+  open(url: string): Promise<void>;
+}
+
+export function dashboardPort(input: string): number {
+  const port = Number(input);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error("Dashboard port must be an integer from 0 through 65535");
+  }
+  return port;
+}
+
+async function launch({ port, context }: DashboardLaunchInput): Promise<{ url: string }> {
+  const dashboardServices = createDashboardServices({
+    stateDirectory: context.stateDir,
+    home: context.home,
+    cwd: context.cwd
+  });
+  const installationServices = createInstallationServices({
+    stateDirectory: context.stateDir,
+    home: context.home,
+    workspace: context.cwd,
+    afterCommit: async () => {
+      await dashboardServices.scan([]);
+    }
+  });
+  const { app } = createDashboardApp({
+    services: dashboardServices,
+    installationServices,
+    assetsDirectory: fileURLToPath(new URL("./dashboard/", import.meta.url))
+  });
+  return startDashboardServer({ app, port });
+}
+
+async function openBrowser(url: string): Promise<void> {
+  const command =
+    process.platform === "darwin"
+      ? { file: "open", args: [url] }
+      : process.platform === "win32"
+        ? { file: "cmd", args: ["/c", "start", "", url] }
+        : { file: "xdg-open", args: [url] };
+  const child = spawn(command.file, command.args, {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+}
+
+const defaults: DashboardCommandDependencies = {
+  launch,
+  open: openBrowser
+};
+
+export async function dashboardCommand(
+  options: DashboardCommandOptions,
+  context: CliContext,
+  dependencies: DashboardCommandDependencies = defaults
+): Promise<number> {
+  const { url } = await dependencies.launch({ port: options.port, context });
+  context.stdout(`Skill Steward dashboard: ${url}\n`);
+  if (options.open) await dependencies.open(url);
+  return 0;
+}

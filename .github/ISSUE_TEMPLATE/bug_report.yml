@@ -1,0 +1,46 @@
+name: Bug report
+description: Report reproducible incorrect behavior using sanitized local fixtures.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include private Skill bodies, credentials, or sensitive local paths. Report security issues privately through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Skill Steward version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Node.js version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include commands and sanitized fixture structure.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, private Skill contents, and identifying local paths.
+          required: true

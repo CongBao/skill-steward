@@ -1,0 +1,8 @@
+.scan-freshness { display: flex; align-items: center; gap: 7px; margin: -11px 0 16px; color: var(--muted); font-size: 12px; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 13%, transparent); }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; container-type: inline-size; }
+.overview-panel { margin-top: 18px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.overview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }.overview-panel h2 { margin: 3px 0 0; font-size: 18px; letter-spacing: -.025em; }
+.section-eyebrow { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }.count-badge { min-width: 26px; height: 26px; display: grid; place-items: center; border-radius: 99px; color: var(--brand-strong); background: var(--brand-soft); font-weight: 750; }
+.finding-list { display: grid; }.finding-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 2px; border-top: 1px solid var(--line); }.finding-row strong, .finding-row code { display: block; }.finding-row code { margin-top: 4px; color: var(--muted); font-size: 11px; }.confidence { color: var(--muted); font-variant-numeric: tabular-nums; }.empty-copy { color: var(--muted); }
+@container (max-width: 520px) { .kpi-card.hero { grid-column: auto; } }
