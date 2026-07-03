@@ -7,6 +7,8 @@ const safeRelativePath = z.string().min(1).max(512).refine(
   "Catalog subdirectory must be a safe relative path"
 );
 
+const catalogCandidateRelativePath = z.union([z.literal("."), safeRelativePath]);
+
 const publicHttpsUrl = z.string().url().superRefine((value, context) => {
   const url = new URL(value);
   if (url.protocol !== "https:") {
@@ -37,7 +39,7 @@ export const catalogSkillRecordSchema = z.object({
   id: z.string().min(1),
   sourceId: z.string().min(1),
   sourceRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
-  relativePath: safeRelativePath,
+  relativePath: catalogCandidateRelativePath,
   name: z.string().min(1),
   description: z.string(),
   fingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -61,7 +63,7 @@ export const catalogSourceStateSchema = z.object({
 export const catalogSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   generatedAt: z.string().datetime(),
-  sources: z.array(catalogSourceStateSchema).max(5),
+  sources: z.array(catalogSourceStateSchema).max(8),
   skills: z.array(catalogSkillRecordSchema).max(5_000)
 });
 

@@ -60,4 +60,43 @@ describe("catalog domain", () => {
       skills: [skill]
     }).skills[0]?.name).toBe("review");
   });
+
+  it("supports a root Skill and all configured source states", () => {
+    const rootSkill = catalogSkillRecordSchema.parse({
+      id: "catalog:root",
+      sourceId: "root-source",
+      sourceRevision: "a".repeat(40),
+      relativePath: ".",
+      name: "root-skill",
+      description: "A Skill at the configured catalog root",
+      fingerprint: `sha256:${"b".repeat(64)}`,
+      estimatedTokens: 100,
+      scripts: [],
+      executables: [],
+      findings: [],
+      compatibleHarnesses: [],
+      compatibility: "unknown"
+    });
+    const sources = Array.from({ length: 8 }, (_, index) => ({
+      sourceId: `source-${index}`,
+      status: "disabled" as const,
+      skillCount: 0
+    }));
+    expect(catalogSnapshotSchema.parse({
+      schemaVersion: 1,
+      generatedAt: "2026-07-03T00:00:00.000Z",
+      sources,
+      skills: [rootSkill]
+    }).sources).toHaveLength(8);
+    expect(() => catalogSourceSchema.parse({
+      id: "bad-subdirectory",
+      name: "Bad subdirectory",
+      kind: "git",
+      url: "https://example.com/skills.git",
+      subdirectory: ".",
+      enabled: false,
+      trust: "user",
+      preset: false
+    })).toThrow();
+  });
 });
