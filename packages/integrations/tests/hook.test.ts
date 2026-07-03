@@ -159,3 +159,42 @@ it("parses native input and fails open for invalid input or analysis errors", as
     analyze: async () => { throw new Error("state unavailable"); }
   })).toEqual({});
 });
+
+it("records a content-free delivery without changing prompt output when evidence fails", async () => {
+  const deliveries: unknown[] = [];
+  const output = await runPromptHook({
+    harness: "codex",
+    stdin: JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      prompt: rawTask,
+      cwd: "/private/customer/project",
+      session_id: "raw-session",
+      turn_id: "raw-turn",
+      transcript_path: "/private/transcript.jsonl"
+    }),
+    analyze: async () => result(),
+    privacy: {
+      key: (namespace) => `hmac-sha256:${(namespace === "session" ? "a" : "b").repeat(64)}`
+    },
+    now: () => new Date("2026-07-03T00:01:00.000Z"),
+    id: () => "delivery-1",
+    onDelivery: async (event) => {
+      deliveries.push(event);
+      throw new Error("journal unavailable");
+    }
+  });
+  expect(output.hookSpecificOutput?.additionalContext).toContain("security-review");
+  expect(deliveries).toHaveLength(1);
+  expect(deliveries[0]).toEqual({
+    schemaVersion: 1,
+    id: "delivery-1",
+    createdAt: "2026-07-03T00:01:00.000Z",
+    kind: "preflight-delivered",
+    harness: "codex",
+    preflightId: "run-1",
+    algorithmVersion: 2,
+    sessionKey: `hmac-sha256:${"a".repeat(64)}`,
+    turnKey: `hmac-sha256:${"b".repeat(64)}`
+  });
+  expect(JSON.stringify(deliveries)).not.toMatch(/PRIVATE|raw-session|raw-turn|transcript|customer/);
+});
