@@ -10,6 +10,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -50,15 +51,23 @@ interface StoredInstallationPlan {
   payload: {
     plan: {
       id: string;
+      status?: string;
+      action?: string;
       source: string;
       destination: string;
+      changes?: Array<{ operation: string; path: string }>;
       createdAt: number;
       expiresAt: number;
       provenance?: Record<string, string>;
     };
     previewId: string;
     candidateName: string;
-    workspace: string;
+    route: {
+      harness: string;
+      scope: string;
+      targetName: string;
+      workspace: string;
+    };
   };
 }
 
@@ -220,7 +229,12 @@ describe("catalog install command", () => {
           }
         },
         candidateName: "testing-review",
-        workspace: current.base
+        route: {
+          harness: "codex",
+          scope: "global",
+          targetName: "testing-review",
+          workspace: current.base
+        }
       }
     });
     expect(stored.payload.previewId).toBe(preview.planId);
@@ -346,6 +360,79 @@ describe("catalog install command", () => {
       expect(await readInstallationHistory(current.stateDir)).toEqual([]);
     }
   );
+
+  it("rejects a schema-valid destination and changes tampered outside the reviewed route", async () => {
+    expect(await run(previewArgs(), current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    const path = join(current.stateDir, "reviewed-plans", `${preview.planId}.json`);
+    const stored = await storedPlan(current.stateDir, preview.planId);
+    const outside = join(current.base, "outside", "tampered-skill");
+    stored.payload.plan.destination = outside;
+    stored.payload.plan.changes = [{ operation: "create", path: outside }];
+    await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+
+    expect(await run([
+      "install", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
+    await expect(access(outside)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await stagingEntries(current.stateDir)).toEqual([]);
+    expect(await readInstallationHistory(current.stateDir)).toEqual([]);
+  });
+
+  it("rejects a destination ancestor replaced by a symlink after preview", async () => {
+    expect(await run(previewArgs(), current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    const outside = join(current.base, "outside-destination");
+    await mkdir(outside);
+    await symlink(outside, join(current.base, ".agents"), "dir");
+
+    expect(await run([
+      "install", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join(""))
+      .toMatch(/UNSAFE_INSTALL_DESTINATION.*consumed.*fresh reviewed plan/is);
+    await expect(access(join(outside, "skills", "testing-review")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(await stagingEntries(current.stateDir)).toEqual([]);
+    expect(await readInstallationHistory(current.stateDir)).toEqual([]);
+  });
+
+  it.each([
+    {
+      harness: "claude",
+      scope: "global",
+      destination: (base: string) => join(base, ".claude", "skills", "testing-review")
+    },
+    {
+      harness: "github-copilot",
+      scope: "project",
+      destination: (base: string) => join(base, ".github", "skills", "testing-review")
+    }
+  ] as const)("applies a bound $scope route for $harness", async ({ harness, scope, destination }) => {
+    expect(await run([
+      "install",
+      "--catalog-candidate", "testing-available",
+      "--harness", harness,
+      "--scope", scope,
+      "--workspace", current.base,
+      "--json"
+    ], current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    const stored = await storedPlan(current.stateDir, preview.planId);
+    expect(stored.payload.route).toEqual({
+      harness,
+      scope,
+      targetName: "testing-review",
+      workspace: current.base
+    });
+
+    expect(await run([
+      "install", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(0);
+    await expect(access(destination(current.base))).resolves.toBeUndefined();
+  });
 
   it("strictly rejects tampered payload identity and expires its referenced staging", async () => {
     expect(await run(previewArgs(), current.context)).toBe(0);

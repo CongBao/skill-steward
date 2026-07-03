@@ -1,6 +1,12 @@
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveInstallDestination } from "../src/destination.js";
+import {
+  installationRouteSchema,
+  resolveInstallDestination,
+  resolveVerifiedInstallDestination
+} from "../src/destination.js";
 
 describe("resolveInstallDestination", () => {
   const home = join("home", "alice");
@@ -51,4 +57,43 @@ describe("resolveInstallDestination", () => {
       })
     ).toThrow("workspace");
   });
+
+  it("strictly validates persisted routes and resolves them from the current home", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-route-"));
+    const route = {
+      harness: "github-copilot",
+      scope: "project",
+      targetName: "review",
+      workspace: base
+    };
+    expect(installationRouteSchema.parse(route)).toEqual(route);
+    expect(installationRouteSchema.safeParse({ ...route, extra: true }).success).toBe(false);
+    expect(installationRouteSchema.safeParse({ ...route, harness: "unknown" }).success).toBe(false);
+    await expect(resolveVerifiedInstallDestination({ route, home: base })).resolves.toEqual({
+      root: join(base, ".github", "skills"),
+      target: join(base, ".github", "skills", "review")
+    });
+  });
+
+  it.each(["symlink", "file"] as const)(
+    "rejects an existing %s in the route from anchor to destination parent",
+    async (kind) => {
+      const base = await mkdtemp(join(tmpdir(), `steward-route-${kind}-`));
+      const outside = join(base, "outside");
+      await mkdir(outside);
+      const agents = join(base, ".agents");
+      if (kind === "symlink") await symlink(outside, agents, "dir");
+      else await writeFile(agents, "not a directory");
+
+      await expect(resolveVerifiedInstallDestination({
+        home: base,
+        route: {
+          harness: "codex",
+          scope: "global",
+          targetName: "review",
+          workspace: base
+        }
+      })).rejects.toMatchObject({ code: "UNSAFE_INSTALL_DESTINATION" });
+    }
+  );
 });

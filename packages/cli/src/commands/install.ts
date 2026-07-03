@@ -1,9 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, normalize, relative } from "node:path";
-import type {
-  InstallableHarnessId,
-  InstallScope
-} from "@skill-steward/engine";
 import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
   catalogCandidateSource,
@@ -13,12 +9,14 @@ import {
   applyInstallationPlan,
   inspectStagedSkills,
   installationPlanSchema,
+  installationRouteSchema,
   InstallerError,
   planInstallation,
-  resolveInstallDestination,
+  resolveVerifiedInstallDestination,
   stagePublicGit,
   StagingRegistry,
   type InstallationPlan,
+  type InstallationRoute,
   type InstallationRecord
 } from "@skill-steward/installer";
 import {
@@ -61,7 +59,7 @@ interface InstallationReviewedPayload {
   plan: InstallationPlan;
   previewId: string;
   candidateName: string;
-  workspace: string;
+  route: InstallationRoute;
 }
 
 class InstallCommandError extends Error {
@@ -69,18 +67,6 @@ class InstallCommandError extends Error {
     super(message);
     this.name = "InstallCommandError";
   }
-}
-
-function installScope(value: string): InstallScope {
-  if (value === "global" || value === "project") return value;
-  throw new InstallerError("INVALID_INSTALL_SCOPE", "Scope must be global or project");
-}
-
-function installHarness(value: string): InstallableHarnessId {
-  if (!/^[a-z0-9-]+$/.test(value) || value === "unknown") {
-    throw new InstallerError("INVALID_HARNESS", `Unsupported Harness '${value}'`);
-  }
-  return value as InstallableHarnessId;
 }
 
 function errorText(error: unknown): string {
@@ -121,7 +107,7 @@ function parseReviewedPayload(input: unknown): InstallationReviewedPayload {
       "Stored installation payload is not a valid object"
     );
   }
-  const expectedKeys = ["candidateName", "plan", "previewId", "workspace"];
+  const expectedKeys = ["candidateName", "plan", "previewId", "route"];
   if (
     Object.keys(input).sort().join("\0") !== expectedKeys.join("\0")
     || typeof input.previewId !== "string"
@@ -129,11 +115,6 @@ function parseReviewedPayload(input: unknown): InstallationReviewedPayload {
     || typeof input.candidateName !== "string"
     || input.candidateName.length < 1
     || input.candidateName.length > 256
-    || typeof input.workspace !== "string"
-    || input.workspace.length < 1
-    || input.workspace.length > 4_096
-    || !isAbsolute(input.workspace)
-    || normalize(input.workspace) !== input.workspace
   ) {
     throw new InstallCommandError(
       "REVIEWED_PLAN_INVALID",
@@ -141,6 +122,13 @@ function parseReviewedPayload(input: unknown): InstallationReviewedPayload {
     );
   }
   const plan = parseInstallationPlan(input.plan);
+  const route = installationRouteSchema.safeParse(input.route);
+  if (!route.success) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Stored installation route is invalid"
+    );
+  }
   if (input.previewId !== plan.id) {
     throw new InstallCommandError(
       "REVIEWED_PLAN_INVALID",
@@ -151,7 +139,7 @@ function parseReviewedPayload(input: unknown): InstallationReviewedPayload {
     plan,
     previewId: input.previewId,
     candidateName: input.candidateName,
-    workspace: input.workspace
+    route: route.data
   };
 }
 
@@ -383,18 +371,23 @@ async function previewInstallation(
       commitSha: staged.commitSha,
       candidates: inspected
     });
-    const scope = installScope(request.scope);
-    const harness = installHarness(request.harness);
     const workspace = normalize(options.workspace ?? context.cwd);
     if (!isAbsolute(workspace)) {
       throw new InstallerError("INVALID_WORKSPACE", "Workspace must be an absolute path");
     }
-    const { target } = resolveInstallDestination({
-      harness,
-      scope,
-      home: context.home,
-      ...(scope === "project" ? { workspace } : {}),
-      name: options.targetName ?? candidate.name
+    const parsedRoute = installationRouteSchema.safeParse({
+      harness: request.harness,
+      scope: request.scope,
+      targetName: options.targetName ?? candidate.name,
+      workspace
+    });
+    if (!parsedRoute.success) {
+      throw new InstallerError("INVALID_INSTALL_ROUTE", "Installation route is invalid");
+    }
+    const route = parsedRoute.data;
+    const { target } = await resolveVerifiedInstallDestination({
+      route,
+      home: context.home
     });
     const planned = await planInstallation({
       source: staged.sourceDirectory,
@@ -412,7 +405,7 @@ async function previewInstallation(
         plan,
         previewId: preview.id,
         candidateName: candidate.name,
-        workspace
+        route
       };
       await writeReviewedPlan(context.stateDir, {
         schemaVersion: 1,
@@ -541,8 +534,28 @@ async function applyInstallation(
           "Stored installation plan identity does not match its envelope"
         );
       }
+      const reviewedDestination = await resolveVerifiedInstallDestination({
+        route: parsed.route,
+        home: context.home
+      });
+      if (reviewedDestination.target !== parsed.plan.destination) {
+        throw new InstallCommandError(
+          "REVIEWED_PLAN_INVALID",
+          "Stored installation destination does not match its reviewed route"
+        );
+      }
       const preview = await staging.resolve(envelope.id);
       await assertContainedSource(preview.directory, parsed.plan.source);
+      const currentDestination = await resolveVerifiedInstallDestination({
+        route: parsed.route,
+        home: context.home
+      });
+      if (currentDestination.target !== parsed.plan.destination) {
+        throw new InstallCommandError(
+          "REVIEWED_PLAN_INVALID",
+          "Installation destination changed from its reviewed route"
+        );
+      }
       return {
         payload: parsed,
         record: await applyInstallationPlan(parsed.plan, {
@@ -556,7 +569,7 @@ async function applyInstallation(
     throw error;
   }
   await expireAfterClaim(staging, envelope.id, context);
-  const refreshResult = await refreshAfterCommit(payload.workspace, context);
+  const refreshResult = await refreshAfterCommit(payload.route.workspace, context);
   context.stdout(options.json
     ? `${JSON.stringify({
         record,

@@ -19,7 +19,13 @@ import { InstallerError } from "./domain.js";
 const PREVIEW_METADATA = "preview.json";
 const MAX_CLEANUP_CANDIDATES = 1_000;
 const MAX_METADATA_BYTES = 16 * 1_024;
-const previewIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+const TOMBSTONE_GRACE_MS = 60 * 60 * 1_000;
+const PREVIEW_ID_PATTERN = "[A-Za-z0-9][A-Za-z0-9_-]{0,127}";
+const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const previewIdSchema = z.string().regex(new RegExp(`^${PREVIEW_ID_PATTERN}$`));
+const tombstoneNamePattern = new RegExp(
+  `^\\.expired-(${PREVIEW_ID_PATTERN})-([0-9]{1,16})-(${UUID_PATTERN})$`
+);
 const previewMetadataSchema = z.object({
   version: z.literal(1),
   id: previewIdSchema,
@@ -274,15 +280,40 @@ export class StagingRegistry {
       inspected += 1;
       if (inspected > MAX_CLEANUP_CANDIDATES) break;
       const parsedId = previewIdSchema.safeParse(entry.name);
-      if (!parsedId.success) continue;
+      const tombstone = tombstoneNamePattern.exec(entry.name);
+      if (!parsedId.success && tombstone === null) continue;
       try {
         await assertDirectoryIdentity(this.#root, rootIdentity);
-        const state = await this.#readPreview(parsedId.data, rootIdentity);
-        if (this.#safeNow() < state.preview.expiresAt) continue;
-        if (await this.#removeOwnedDirectory(
+        if (parsedId.success) {
+          const state = await this.#readPreview(parsedId.data, rootIdentity);
+          if (this.#safeNow() < state.preview.expiresAt) continue;
+          if (await this.#removeOwnedDirectory(
+            state.rootIdentity,
+            state.previewIdentity,
+            state.preview.id
+          )) {
+            removed += 1;
+          }
+          continue;
+        }
+
+        const id = tombstone?.[1];
+        const claimTime = Number(tombstone?.[2]);
+        if (
+          id === undefined
+          || !Number.isSafeInteger(claimTime)
+          || claimTime < 0
+          || this.#safeNow() - claimTime <= TOMBSTONE_GRACE_MS
+        ) {
+          continue;
+        }
+        const path = resolve(this.#root, entry.name);
+        if (dirname(path) !== this.#root) continue;
+        const state = await this.#readPreviewAt(id, path, rootIdentity);
+        if (await this.#removeClaimedTombstone(
           state.rootIdentity,
           state.previewIdentity,
-          state.preview.id
+          path
         )) {
           removed += 1;
         }
@@ -344,8 +375,17 @@ export class StagingRegistry {
     rootIdentity: DirectoryIdentity,
     id: string
   ): Promise<DirectoryIdentity> {
+    return this.#inspectContainedDirectory(rootIdentity, this.#previewPath(id));
+  }
+
+  async #inspectContainedDirectory(
+    rootIdentity: DirectoryIdentity,
+    directory: string
+  ): Promise<DirectoryIdentity> {
     await assertDirectoryIdentity(this.#root, rootIdentity);
-    const directory = this.#previewPath(id);
+    if (dirname(directory) !== this.#root) {
+      throw invalidState("Installation preview path escapes staging");
+    }
     const previewIdentity = await inspectDirectory(directory);
     if (previewIdentity === undefined) {
       throw new InstallerError("PREVIEW_NOT_FOUND", "Installation preview was not found");
@@ -365,9 +405,16 @@ export class StagingRegistry {
     if (rootIdentity === undefined) {
       throw new InstallerError("PREVIEW_NOT_FOUND", "Installation preview was not found");
     }
+    return this.#readPreviewAt(id, this.#previewPath(id), rootIdentity);
+  }
+
+  async #readPreviewAt(
+    id: string,
+    directory: string,
+    rootIdentity: DirectoryIdentity
+  ): Promise<PreviewState> {
     await assertDirectoryIdentity(this.#root, rootIdentity);
-    const directory = this.#previewPath(id);
-    const previewIdentity = await this.#inspectContainedPreview(rootIdentity, id);
+    const previewIdentity = await this.#inspectContainedDirectory(rootIdentity, directory);
     const metadataPath = resolve(directory, PREVIEW_METADATA);
     if (dirname(metadataPath) !== directory) {
       throw invalidState("Installation preview metadata escapes its directory");
@@ -450,7 +497,10 @@ export class StagingRegistry {
       assertDirectoryIdentity(this.#root, rootIdentity),
       assertDirectoryIdentity(directory, previewIdentity)
     ]);
-    const owned = resolve(this.#root, `.expired-${id}-${randomUUID()}`);
+    const owned = resolve(
+      this.#root,
+      `.expired-${id}-${this.#safeNow()}-${randomUUID()}`
+    );
     if (dirname(owned) !== this.#root) {
       throw invalidState("Expired preview path escapes staging");
     }
@@ -479,6 +529,27 @@ export class StagingRegistry {
     ]);
     await rm(owned, { recursive: true, force: false });
     return true;
+  }
+
+  async #removeClaimedTombstone(
+    rootIdentity: DirectoryIdentity,
+    tombstoneIdentity: DirectoryIdentity,
+    path: string
+  ): Promise<boolean> {
+    try {
+      await Promise.all([
+        assertDirectoryIdentity(this.#root, rootIdentity),
+        assertDirectoryIdentity(path, tombstoneIdentity)
+      ]);
+      if (dirname(tombstoneIdentity.physicalPath) !== rootIdentity.physicalPath) {
+        throw invalidState("Cleanup tombstone escapes installation staging");
+      }
+      await rm(path, { recursive: true, force: false });
+      return true;
+    } catch (error) {
+      if (isFileSystemError(error, "ENOENT")) return false;
+      throw error;
+    }
   }
 
   async #writeMetadata(

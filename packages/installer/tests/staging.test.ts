@@ -259,6 +259,29 @@ describe("StagingRegistry", () => {
     await expect(access(expired.directory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("retains an old tombstone whose metadata is invalid", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-invalid-tombstone-"));
+    const root = join(stateDirectory, "staging");
+    const tombstone = join(
+      root,
+      ".expired-preview-invalid-1000-48fd7ba6-3ab0-4d20-98ca-b20a1519ce5d"
+    );
+    await mkdir(tombstone, { recursive: true });
+    await writeFile(join(tombstone, "preview.json"), JSON.stringify({
+      version: 1,
+      id: "another-preview",
+      createdAt: 1,
+      expiresAt: 2,
+      unexpected: true
+    }));
+
+    await expect(new StagingRegistry({
+      stateDirectory,
+      now: () => 2 * 60 * 60 * 1_000
+    }).cleanupExpired()).resolves.toBe(0);
+    await expect(access(tombstone)).resolves.toBeUndefined();
+  });
+
   it("fails closed when cleanup sees an unsafe staging root", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-cleanup-root-link-"));
     const stateDirectory = join(base, "state");
