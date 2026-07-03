@@ -77,6 +77,7 @@ it("packages the built dashboard alongside the CLI binary", async () => {
 
 it("declares complete public package metadata", async () => {
   expect(await packageJson()).toMatchObject({
+    version: "0.5.0-alpha.3",
     description: "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
     repository: {
       type: "git",

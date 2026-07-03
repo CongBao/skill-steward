@@ -104,8 +104,25 @@ describe("open-source repository", () => {
     expect(readme).toContain("No ranking threshold or weight changes automatically");
     expect(readme).toContain("skill-steward govern quarantine");
     expect(readme).toContain("skill-steward evidence erase");
+    for (const command of [
+      "skill-steward install --plan <id> --confirm",
+      "skill-steward integrate apply --plan <id> --confirm",
+      "skill-steward evidence policy set --plan <id> --confirm",
+      "skill-steward evidence erase --plan <id> --confirm",
+      "skill-steward govern quarantine --plan <id> --confirm",
+      "skill-steward govern restore --plan <id> --confirm"
+    ]) {
+      expect(readme).toContain(command);
+    }
+    expect(readme).toMatch(/initial scan[^.]*cached portfolio/i);
+    expect(readme).toMatch(/readiness scan[^.]*rolls back/i);
+    expect(readme).toMatch(/busy[^.]*does not consume[^.]*reviewed plan/i);
+    expect(readme).toContain("THIRD_PARTY_NOTICES.txt");
+    expect(readme).toContain("runtime-audit.json");
+    expect(readme).toMatch(/real npm and pnpm tarballs/i);
+    expect(readme).toContain("Status: active alpha");
     expect(readme).not.toContain("Managed native prompt Hooks are available only for Codex and Claude Code");
-    expect(readme).not.toMatch(/universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
+    expect(readme).not.toMatch(/status:\s*beta|beta-ready|complete native plugin (?:coverage|inventory)|universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.md", readme);
@@ -162,8 +179,25 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("不会自动修改任何排序阈值或权重");
     expect(chineseReadme).toContain("skill-steward govern quarantine");
     expect(chineseReadme).toContain("skill-steward evidence erase");
+    for (const command of [
+      "skill-steward install --plan <id> --confirm",
+      "skill-steward integrate apply --plan <id> --confirm",
+      "skill-steward evidence policy set --plan <id> --confirm",
+      "skill-steward evidence erase --plan <id> --confirm",
+      "skill-steward govern quarantine --plan <id> --confirm",
+      "skill-steward govern restore --plan <id> --confirm"
+    ]) {
+      expect(chineseReadme).toContain(command);
+    }
+    expect(chineseReadme).toMatch(/首次扫描[^。]*缓存[^。]*资产/);
+    expect(chineseReadme).toMatch(/就绪扫描[^。]*回滚/);
+    expect(chineseReadme).toMatch(/忙碌[^。]*不会消耗[^。]*计划/);
+    expect(chineseReadme).toContain("THIRD_PARTY_NOTICES.txt");
+    expect(chineseReadme).toContain("runtime-audit.json");
+    expect(chineseReadme).toMatch(/npm 和 pnpm[^。]*真实 tarball/);
+    expect(chineseReadme).toContain("当前状态：活跃 Alpha");
     expect(chineseReadme).not.toContain("托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code");
-    expect(chineseReadme).not.toMatch(/通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);
+    expect(chineseReadme).not.toMatch(/当前状态：\s*Beta|Beta 就绪|完整(?:的)?原生插件(?:覆盖|盘点)|通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);
     for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
     for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.zh-CN.md", chineseReadme);
@@ -196,6 +230,12 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain("skill-steward dashboard");
     expect(packageReadme).toContain("local-first");
     expect(packageReadme).toContain("reversible");
+    expect(packageReadme).toContain("--plan <id> --confirm");
+    expect(packageReadme).toContain("THIRD_PARTY_NOTICES.txt");
+    expect(packageReadme).toContain("runtime-audit.json");
+    expect(packageReadme).toMatch(/real npm and pnpm tarballs/i);
+    expect(packageReadme).toContain("Alpha");
+    expect(packageReadme).toContain("not a Harness");
     expect(packageReadme).not.toContain("OpenSpec");
     expect(await readFile(join(root, "packages/cli/LICENSE"), "utf8"))
       .toBe(await readFile(join(root, "LICENSE"), "utf8"));
@@ -240,6 +280,10 @@ describe("open-source repository", () => {
   it("keeps internal planning references out of the public documentation tree", async () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
+    expect(changelog).toContain("## [0.5.0-alpha.3] - 2026-07-03");
+    expect(changelog).toMatch(/exact, single-use reviewed plans/i);
+    expect(changelog).toMatch(/initial portfolio scan/i);
+    expect(changelog).toMatch(/npm and pnpm tarballs/i);
     expect(changelog).toContain("## [0.5.0-alpha.2]");
     expect(changelog).toContain("privacy-safe recommendation evidence");
     expect(changelog).toContain("reversible quarantine and restore");
@@ -255,6 +299,36 @@ describe("open-source repository", () => {
     expect(architecture).toContain("observe-only");
     expect(architecture).toContain("Preflight algorithm v3");
     expect(architecture).toContain("explicit CLI feedback command");
+    expect(architecture).toContain("reviewed-plans/");
+    expect(architecture).toContain("staging/");
+    expect(architecture).toContain("integration-records/");
+    expect(architecture).toContain("integration-mutation.lease");
+    expect(architecture).toMatch(/raw evidence[^.]*attribution/i);
+    expect(architecture).toContain("THIRD_PARTY_NOTICES.txt");
+    expect(architecture).toContain("runtime-audit.json");
+    expect(architecture).not.toMatch(/OpenSpec|Superpowers/);
+
+    const alphaTesting = await readFile(join(root, "docs/alpha-testing.md"), "utf8");
+    expect(alphaTesting).toContain("0.5.0-alpha.3");
+    expect(alphaTesting).toContain("--plan <id> --confirm");
+    expect(alphaTesting).toContain("## Alpha.3 test matrix");
+    expect(alphaTesting).toMatch(/busy[^.]*does not consume[^.]*plan/i);
+    expect(alphaTesting).toMatch(/readiness scan[^.]*rolls back/i);
+    expect(alphaTesting).toContain("THIRD_PARTY_NOTICES.txt");
+    expect(alphaTesting).toContain("runtime-audit.json");
+    expect(alphaTesting).toMatch(/npm and pnpm tarballs/i);
+    expect(alphaTesting).toMatch(/same operating-system user/i);
+    expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);
+
+    const gitignore = await readFile(join(root, ".gitignore"), "utf8");
+    for (const privateDirectory of [
+      ".superpowers/",
+      ".codex/",
+      "openspec/",
+      "docs/superpowers/"
+    ]) {
+      expect(gitignore.split("\n")).toContain(privateDirectory);
+    }
     const internalEntries = await readdir(join(root, "docs/superpowers"), {
       recursive: true,
       withFileTypes: true

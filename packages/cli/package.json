@@ -1,6 +1,6 @@
 {
   "name": "skill-steward",
-  "version": "0.5.0-alpha.2",
+  "version": "0.5.0-alpha.3",
   "description": "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
   "license": "MIT",
   "keywords": [

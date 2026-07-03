@@ -78,6 +78,8 @@ skill-steward dashboard
 
 If an older global build is already installed, repack and reinstall it before testing repository changes. Check the active binary with `skill-steward --version`.
 
+The packed CLI includes its package `README.md`, MIT `LICENSE`, generated `THIRD_PARTY_NOTICES.txt`, and a machine-readable third-party manifest. The artifact verifier checks real npm and pnpm tarballs against the trusted build tree and the source-controlled `runtime-audit.json`; normal builds fail rather than silently rewriting that audit.
+
 ## First use
 
 The shortest useful path is one scan, one real task, and the dashboard:
@@ -89,6 +91,8 @@ skill-steward preflight \
   --harness codex
 skill-steward dashboard
 ```
+
+This first path is read-only. When you later choose an installation, policy, governance, or integration change, stop at the preview and apply only the exact command it prints; no mutation is required to evaluate the portfolio or recommendations.
 
 For a headless inventory or report:
 
@@ -160,15 +164,15 @@ Learning mode is opt-in. It adds bounded numeric feature snapshots and content-f
 ```bash
 skill-steward evidence policy --json
 skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000
-skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000 --confirm
+skill-steward evidence policy set --plan <id> --confirm
 skill-steward evidence summary --json
 skill-steward evidence export --output ./skill-steward-evidence.json
 skill-steward evidence compact
 skill-steward evidence erase
-skill-steward evidence erase --confirm
+skill-steward evidence erase --plan <id> --confirm
 ```
 
-Policy changes and erasure show an exact, expiring plan before mutation. Retention is configurable from 7 to 365 days and lifecycle storage from 100 to 10,000 events.
+The request without `--confirm` creates an exact, expiring plan. Apply only with the emitted ID: `--plan <id> --confirm` loads that same plan in a later process instead of rebuilding it from new arguments. Plans are single-use; a claimed plan that encounters drift or another apply-time failure is consumed, and the CLI asks for a fresh preview. Retention is configurable from 7 to 365 days and lifecycle storage from 100 to 10,000 events.
 
 The Evidence dashboard shows the numerator and denominator for feedback rate, useful/incomplete/incorrect labels, corrected-set precision/recall/F1, and provenance-only install conversion. It separates lifecycle reasons from explicit labels and compares Harnesses, algorithm versions, and rolling 7/30-day windows. **Lifecycle completion is not task success.** Calibration review requires at least **100 labeled preflights**, 30 corrected candidate sets, and 20 portfolio fingerprints. **No ranking threshold or weight changes automatically**; calibration would require a separate reviewed release.
 
@@ -179,16 +183,18 @@ Skill Steward can manage reviewed native Hook configuration for Codex, Claude Co
 ```bash
 skill-steward integrate status
 skill-steward integrate plan --harness codex
-skill-steward integrate apply --harness codex --confirm
+skill-steward integrate apply --plan <id> --confirm
 
 skill-steward integrate plan --harness claude-code
-skill-steward integrate apply --harness claude-code --confirm
+skill-steward integrate apply --plan <id> --confirm
 
 skill-steward integrate plan --harness github-copilot
-skill-steward integrate apply --harness github-copilot --confirm
+skill-steward integrate apply --plan <id> --confirm
 ```
 
-The plan shows exact configuration and backup paths before writing. Unrelated settings and Hooks are preserved, and removal stops if managed configuration has changed externally:
+Each preview persists the exact configuration and backup paths. Apply accepts only the emitted plan ID. It then runs an initial scan and saves a cached portfolio before reporting the integration ready, so the first prompt Hook does not depend on a prior manual scan. If the readiness scan fails, Skill Steward rolls back the configuration and companion Skill created by that apply when safe; an incomplete rollback is reported rather than hidden.
+
+Integration mutations are serialized across CLI and dashboard processes. A busy attempt stops without changing Harness files and does not consume the reviewed plan, so the same plan can be retried after the active mutation finishes. Unrelated settings and Hooks are preserved, and removal stops if managed configuration has changed externally:
 
 ```bash
 skill-steward integrate remove --harness codex --confirm
@@ -223,6 +229,15 @@ Skill Steward never installs a recommendation automatically. A catalog recommend
 5. **Apply** — create or replace atomically, record provenance, and rescan the portfolio.
 6. **Rollback** — restore the backup only while destination drift checks still pass.
 
+For a catalog candidate, preview first and then run the exact command it prints:
+
+```bash
+skill-steward install --catalog-candidate <candidate-id> --harness codex --scope global
+skill-steward install --plan <id> --confirm
+```
+
+The preview keeps the inspected source in private staging until the plan is applied or expires. Apply reuses that staged content in a later process, checks source and destination fingerprints again, and never restages from the network behind the reviewed plan.
+
 ZIP traversal, absolute paths, links, case-folding collisions, excessive entries, and expansion limits are rejected. Git staging is non-interactive, disables repository Hooks and submodules, and never executes source content.
 
 ## Reversible governance
@@ -232,9 +247,9 @@ Quarantine removes an installed Skill from active discovery without deleting it 
 ```bash
 skill-steward govern history --json
 skill-steward govern quarantine --skill <skill-id>
-skill-steward govern quarantine --skill <skill-id> --confirm
+skill-steward govern quarantine --plan <id> --confirm
 skill-steward govern restore --transaction <quarantine-id>
-skill-steward govern restore --transaction <quarantine-id> --confirm
+skill-steward govern restore --plan <id> --confirm
 ```
 
 The dashboard exposes the same operation plan. There is no Delete action. Recovery keeps at least one verified copy if a transaction fails at copy, verification, move, vault, journal, or restore boundaries.
@@ -245,7 +260,7 @@ Codex, Claude Code, and GitHub Copilot already own the execution environment and
 
 | Product | External task-time discovery | Native workflow integration | Cross-Harness analysis | Reversible installation |
 |---|---|---|---|---|
-| **Skill Steward** | Opt-in cached public Git indexes; installed and available candidates ranked together | Codex/Claude recommend + observe; Copilot observe-only; companion Skill, CLI, API, dashboard | **One inventory, scoring, evidence, and governance model across 30 root conventions** | **Reviewed install/rollback plus verified quarantine/restore** |
+| **Skill Steward** | Opt-in cached public Git indexes; installed and available candidates ranked together | Codex/Claude recommend + observe; Copilot observe-only; reviewed setup with a readiness scan | **One inventory, scoring, evidence, and governance model across 30 root conventions** | **Cross-process exact plans, persistent staging, drift refusal, install/rollback, and verified quarantine/restore** |
 | [Codex Skills and Plugins](https://developers.openai.com/codex/plugins) | Plugin directory and marketplace browsing; install before use | Native Skills, plugins, and lifecycle Hooks | Codex scope | Native enable/disable/uninstall; no Skill Steward journal |
 | [Claude Code Skills and Plugins](https://code.claude.com/docs/en/discover-plugins) | Marketplaces separate catalog registration from plugin installation | Native Skills, plugins, marketplaces, and Hooks | Claude Code scope | Native plugin update/removal; no Skill Steward journal |
 | [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) | `gh skill` can discover and install Skills from GitHub repositories | Native Skills and Hooks in Copilot CLI/cloud agent | Copilot-compatible scopes | Native Skill management; no Skill Steward journal |
@@ -261,6 +276,9 @@ Codex, Claude Code, and GitHub Copilot already own the execution environment and
 - Persisted evidence excludes task text, extracted terms, descriptions, reasons, URLs, local paths, transcripts, assistant content, tool data, and raw Harness IDs.
 - Sanitized export and API responses never include the private HMAC salt.
 - Installation-source scripts, package managers, build commands, repository Hooks, and submodules are not executed.
+- CLI mutations apply private, expiring, single-use plan IDs; confirmation never regenerates a plan from request arguments.
+- Integration apply uses a cross-process mutation lease and persists a cached portfolio before reporting ready.
+- Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
 - Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.
 
 Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boundaries and trust decisions are documented in [docs/architecture.md](docs/architecture.md).
@@ -271,6 +289,9 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 - Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
 - GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.
 - Local inventory follows known Skill roots and does not yet enumerate every Skill nested inside a natively installed plugin.
+- Native workflow integration is limited to the three adapters in the capability matrix; inventory support for a Harness does not imply Hook or plugin integration.
+- A reviewed plan is intentionally consumed after it is claimed, including when later validation detects drift; create a new preview before retrying.
+- Skill Steward protects against detected filesystem drift and unsafe paths, but it is not an isolation boundary from another malicious process running as the same operating-system user.
 - Catalog refresh supports public credential-free HTTPS Git sources, not private repositories or SSH.
 - Catalog records are metadata snapshots, not endorsements. Source contents are reinspected before an install plan.
 - Finding explanations remain English when the dashboard locale is Chinese.

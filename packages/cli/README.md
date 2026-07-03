@@ -4,10 +4,12 @@ Skill Steward is a local-first companion for Agent Skill discovery, task preflig
 
 It is not a Harness, and it does not install recommendations automatically.
 
+> Status: Alpha. This package is currently verified as a local tarball; registry publication is not part of this release.
+
 ## Install
 
 ```bash
-npm install --global skill-steward
+npm install --global ./skill-steward-*.tgz
 ```
 
 Node.js 22 or newer is required.
@@ -33,6 +35,18 @@ skill-steward dashboard
 ```
 
 The dashboard, CLI, and supported Harness integrations use the same local state. Governance and installation actions show an exact plan first and require explicit confirmation; quarantine, restore, and managed integrations are reversible.
+
+Mutation previews print a copyable apply command. Use the emitted ID rather than repeating the original request:
+
+```bash
+skill-steward install --plan <id> --confirm
+```
+
+The same `--plan <id> --confirm` contract applies to integration, evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use.
+
+## Package trust
+
+The tarball includes this package `README.md`, the project `LICENSE`, generated `dist/THIRD_PARTY_NOTICES.txt`, and a machine-readable third-party manifest. Package tests verify real npm and pnpm tarballs against the trusted build tree and the source-controlled `runtime-audit.json`, including executable and Web asset bytes. Normal builds validate the runtime audit but never update it implicitly.
 
 ## Learn more
 

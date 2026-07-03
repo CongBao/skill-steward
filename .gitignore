@@ -6,6 +6,8 @@ coverage/
 .DS_Store
 .skill-steward/
 .superpowers/
+.codex/
+openspec/
 .worktrees/
 playwright-report/
 test-results/

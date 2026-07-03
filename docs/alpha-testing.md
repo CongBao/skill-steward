@@ -2,9 +2,23 @@
 
 Use anonymous or synthetic Skills unless the participant has reviewed what will be visible. Do not upload reports, prompts, or state files.
 
+Target build: `0.5.0-alpha.3`. This is still an Alpha protocol for a local Harness companion, not a Harness or a claim of complete native plugin coverage.
+
+## Alpha.3 test matrix
+
+Run each row from a clean checkout. Manual mutation journeys must use a disposable `HOME`, workspace, and `SKILL_STEWARD_HOME`.
+
+| Area | Executable check | Expected result |
+|---|---|---|
+| Public contract and CLI version | `pnpm --filter skill-steward test -- tests/repository.test.ts tests/binary.test.ts` | Both READMEs use `--plan <id> --confirm`, help exposes the same syntax, and the binary reports `0.5.0-alpha.3`. |
+| Exact reviewed plans | `pnpm --filter skill-steward test -- tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts` | Plans survive a new process, apply the inspected payload once, stop on drift, and require a fresh preview after claim. |
+| Integration readiness and serialization | `pnpm --filter skill-steward test -- tests/integrate.test.ts tests/integrate-process.test.ts` | Apply writes an initial cached portfolio; a failed readiness scan rolls back safe new artifacts; a busy caller does not consume its plan. |
+| Package trust | `pnpm --filter skill-steward test -- tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs` | Package `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and the locked `runtime-audit.json` agree; real npm and pnpm tarballs pass exact-tree verification. |
+| Full repository | `CI=true pnpm check` | Every workspace builds, typechecks, and passes its test suite without writing private task content. |
+
 ## Build and first run
 
-Before judging repository behavior through a global install, compare `skill-steward --version` with `packages/cli/package.json`. Repack and reinstall if they differ. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
+Before judging repository behavior through a global install, compare `skill-steward --version` with `packages/cli/package.json`; both must report `0.5.0-alpha.3`. Repack and reinstall if they differ. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
 
 Scan an empty set of Skill roots. The result must be unscored and actionable: it must not report health 100. KPI settings must use the current dashboard snapshot and must not present example values as current measurements.
 
@@ -34,10 +48,12 @@ Always review the plan before apply:
 ```bash
 skill-steward integrate status
 skill-steward integrate plan --harness codex --json
-skill-steward integrate apply --harness codex --confirm
+skill-steward integrate apply --plan <id> --confirm
 ```
 
-Submit one synthetic task in the Harness. Verify that the Hook returns quickly, the Harness continues if Skill Steward state is missing, and the recommendation contains installed/available names but not raw task text or source URLs.
+Use the `id` emitted by the plan command. Confirm that apply writes `latest-report.json` before it reports ready, then submit one synthetic task in the Harness. The first Hook must return quickly from that cached portfolio without a separate manual scan. The Harness must continue if Skill Steward state later becomes missing, and the recommendation may contain installed/available names but not raw task text or source URLs.
+
+Force the initial report write to fail in a disposable state directory. The readiness scan failure must roll back configuration and a companion Skill created by this apply when safe. If another process holds the integration mutation lease, the second call must report busy and does not consume the plan; after the lease is released, the same plan remains applicable. Run two same-Harness apply processes with different plans and confirm exactly one succeeds while the stale plan stops on drift.
 
 Repeat against the declared capability matrix:
 
@@ -67,14 +83,14 @@ For incomplete feedback, include every candidate that should have been recommend
 ```bash
 skill-steward evidence policy
 skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000
-skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000 --confirm
+skill-steward evidence policy set --plan <id> --confirm
 ```
 
 Use a synthetic payload containing unique prompt, transcript, raw ID, working-path, assistant-message, tool-argument, and tool-output canaries. Confirm none appear in `preflights.json`, `evidence-events.jsonl`, sanitized export, Evidence API output, or the Evidence dashboard. Confirm the export does not contain the private salt in raw, hex, or base64 form.
 
 Review feedback and correction metrics with their numerator/denominator. Treat lifecycle reasons as proxy signals only; do not report them as task success. A readiness badge does not authorize ranking changes.
 
-Finally, review and apply evidence erasure. Confirm only `preflights.json`, `evidence-events.jsonl`, and `evidence-salt` are removed while portfolio, catalog, integration, installation, and governance state remains.
+Finally, run `skill-steward evidence erase`, inspect the preview, and apply it with `skill-steward evidence erase --plan <id> --confirm`. Confirm only `preflights.json`, `evidence-events.jsonl`, and `evidence-salt` are removed while portfolio, catalog, integration, installation, and governance state remains.
 
 ## Reversible governance
 
@@ -82,7 +98,7 @@ Use a synthetic disposable Skill. Run quarantine without `--confirm`, inspect th
 
 ```bash
 skill-steward govern quarantine --skill <skill-id>
-skill-steward govern quarantine --skill <skill-id> --confirm
+skill-steward govern quarantine --plan <id> --confirm
 skill-steward govern history --json
 ```
 
@@ -90,7 +106,7 @@ Verify the Skill no longer appears in active discovery and appears as quarantine
 
 ```bash
 skill-steward govern restore --transaction <quarantine-id>
-skill-steward govern restore --transaction <quarantine-id> --confirm
+skill-steward govern restore --plan <id> --confirm
 ```
 
 Also test refusal: edit the active source after planning quarantine, occupy the original destination before restore, and alter a disposable vault fixture. Each case must stop without deleting or overwriting the only verified copy. There is no permanent-delete acceptance path.
@@ -112,6 +128,28 @@ CI=true pnpm --filter skill-steward test -- tests/binary.test.ts
 ```
 
 It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, applies all three integration adapters, verifies the shared Skill and configuration, checks drift refusal, and removes managed entries while preserving unrelated configuration.
+
+## Package trust review
+
+Build both artifact forms and run the same verifier used in CI:
+
+```bash
+mkdir -p artifacts/npm artifacts/pnpm
+(cd packages/cli && npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm)
+pnpm --filter skill-steward pack --pack-destination artifacts/pnpm
+node packages/cli/tests/verify-packed-artifact.mjs artifacts/npm/skill-steward-*.tgz
+node packages/cli/tests/verify-packed-artifact.mjs artifacts/pnpm/skill-steward-*.tgz
+```
+
+Inspect the file list for package `README.md`, `LICENSE`, `dist/THIRD_PARTY_NOTICES.txt`, and `dist/third-party-manifest.json`. Confirm every bundled package in the source-controlled `packages/cli/runtime-audit.json` has matching notice coverage and that neither notices nor manifests contain local paths or credentials. Do not update the audit during a normal build.
+
+## Risk boundary
+
+- Exact plans, leases, fingerprints, no-follow path checks, backups, journals, and rollback reduce accidental or detected local drift; they are not an isolation boundary from a malicious process running as the same operating-system user.
+- A plan is intentionally single-use after claim. A crash or validation failure can require a fresh preview even when no domain mutation committed.
+- A rollback-incomplete error means Skill Steward retained state because it could not prove that removing or overwriting it was safe. Inspect the named files before retrying.
+- Catalog metadata and known publisher labels are not endorsements. Installation still reinspects the recorded revision.
+- Inventory support for 30 root conventions does not imply complete native plugin inventory or prompt-Hook support. The capability matrix remains the integration boundary.
 
 ## Advancement criteria
 

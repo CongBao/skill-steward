@@ -34,7 +34,7 @@ describe("built CLI", () => {
     };
     const { stdout } = await execFileAsync(process.execPath, [binary, "--version"]);
 
-    expect(manifest.version).toBe("0.5.0-alpha.2");
+    expect(manifest.version).toBe("0.5.0-alpha.3");
     expect(stdout.trim()).toBe(manifest.version);
   });
 
@@ -50,6 +50,17 @@ describe("built CLI", () => {
     )).stdout;
     expect(applyHelp).toContain("--plan <id>");
     expect(applyHelp).toContain("--confirm");
+    for (const args of [
+      ["install", "--help"],
+      ["govern", "quarantine", "--help"],
+      ["govern", "restore", "--help"],
+      ["evidence", "policy", "set", "--help"],
+      ["evidence", "erase", "--help"]
+    ]) {
+      const help = (await execFileAsync(process.execPath, [binary, ...args])).stdout;
+      expect(help, args.join(" ")).toContain("--plan <id>");
+      expect(help, args.join(" ")).toContain("--confirm");
+    }
   });
 
   it("runs as an ESM executable", async () => {

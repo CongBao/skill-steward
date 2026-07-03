@@ -4,6 +4,30 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.5.0-alpha.3] - 2026-07-03
+
+### Added
+
+- CLI installation, governance, integration, evidence-policy, and evidence-erasure now use exact, single-use reviewed plans that persist privately across processes and apply only through the emitted `--plan <id> --confirm` command.
+- Catalog installation retains the inspected source in private staging until apply or expiry, then rechecks source, destination, route, provenance, and filesystem safety without restaging from the network.
+- Managed integration apply persists an initial portfolio scan before reporting ready, rolls back safely on readiness failure, and serializes CLI and dashboard mutations through a private cross-process lease without consuming a waiting plan.
+- Integration history uses private immutable journal fragments with bounded recovery and cleanup rather than concurrent rewrites of one shared record.
+- Preflight evidence preserves normalized Harness and CLI/dashboard/Hook delivery attribution while continuing to exclude raw task content.
+
+### Distribution
+
+- The CLI package now ships a package README, MIT license, deterministic complete third-party notices, and complete repository metadata.
+- CI and local package tests verify real npm and pnpm tarballs against the trusted package tree and source-controlled runtime audit, including exact files, manifest semantics, runtime bytes, license attribution, and hostile archive metadata.
+
+### Security
+
+- Reviewed plans use strict private envelopes, atomic single-use claim, bounded fail-safe cleanup, and domain fingerprint revalidation; a claimed plan that fails validation is not silently regenerated.
+- Integration readiness, journal commit, compensation, and shared companion cleanup preserve original failures and report rollback-incomplete state when safe recovery cannot be proven.
+
+### Limitations
+
+- This remains an Alpha release. Native workflow adapters remain limited to Codex, Claude Code, and the documented observe-only GitHub Copilot CLI path; the broader root catalog does not imply complete plugin inventory or Hook coverage.
+
 ## [0.5.0-alpha.2] - 2026-07-03
 
 ### Changed
