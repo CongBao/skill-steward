@@ -148,6 +148,12 @@ importers:
         specifier: ^3.25.67
         version: 3.25.76
 
+  packages/evidence:
+    dependencies:
+      zod:
+        specifier: ^3.25.67
+        version: 3.25.76
+
   packages/insights:
     dependencies:
       '@skill-steward/engine':
