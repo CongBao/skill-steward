@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { CatalogSnapshot, CatalogSource } from "@skill-steward/catalog";
 import type { PortfolioReport } from "@skill-steward/engine";
 import {
   analyzePreflight,
@@ -18,7 +19,7 @@ export class PreflightServiceError extends Error {
   constructor(
     public readonly code:
       | "PREFLIGHT_NOT_FOUND"
-      | "INVALID_FEEDBACK_SKILL",
+      | "INVALID_FEEDBACK_CANDIDATE",
     message: string
   ) {
     super(message);
@@ -34,6 +35,10 @@ export interface PreflightServices {
 export interface PreflightServiceOptions {
   stateDirectory: string;
   currentPortfolio: () => Promise<PortfolioReport>;
+  catalogState?: () => Promise<{
+    sources: CatalogSource[];
+    snapshot: CatalogSnapshot | null;
+  }>;
   now?: () => Date;
   id?: () => string;
 }
@@ -47,10 +52,18 @@ export function createPreflightServices(
   return {
     async run(input) {
       const request = preflightRequestSchema.parse(input);
-      const report = await options.currentPortfolio();
+      const [report, catalog] = await Promise.all([
+        options.currentPortfolio(),
+        options.catalogState?.() ?? Promise.resolve({ sources: [], snapshot: null })
+      ]);
       const result = analyzePreflight({
-        ...request,
+        task: request.task,
+        maxSkills: request.maxSkills,
+        includeAvailable: request.includeAvailable,
+        ...(request.harness ? { harness: request.harness } : {}),
         report,
+        catalogSkills: catalog.snapshot?.skills ?? [],
+        catalogSources: catalog.sources,
         id: id(),
         now: now()
       });

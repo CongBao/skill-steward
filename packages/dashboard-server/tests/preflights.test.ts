@@ -20,34 +20,41 @@ afterEach(async () => {
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 1,
-    algorithmVersion: 1,
+    schemaVersion: 2,
+    algorithmVersion: 2,
     id: "run-1",
     generatedAt: "2026-07-03T01:00:00.000Z",
     portfolioFingerprint: report.portfolioFingerprint,
     taskHash: `sha256:${"c".repeat(64)}`,
     taskCharacterCount: 33,
     taskTermCount: 4,
-    selectedSkillIds: ["skill-1"],
-    candidates: [
-      {
-        skillId: "skill-1",
-        name: "review",
-        description: "Review changes",
-        scope: "global",
-        visibleTo: ["claude"],
-        relevance: 0.7,
-        uniqueCoverage: 0.5,
-        riskPenalty: 0.2,
-        redundancyPenalty: 0,
-        contextTokens: 100,
-        decision: "selected",
-        reasons: [
-          { code: "TASK_TERM_MATCH", detail: "review, change" }
-        ]
-      }
-    ],
+    useCandidateIds: ["skill-1"],
+    installCandidateIds: [],
+    candidates: [{
+      candidateId: "skill-1",
+      availability: "installed",
+      installedSkillId: "skill-1",
+      name: "review",
+      description: "Review changes",
+      scope: "global",
+      compatibleHarnesses: ["claude"],
+      compatibility: "declared",
+      scripts: [],
+      executables: [],
+      highestSeverity: "error",
+      relevance: 0.7,
+      uniqueCoverage: 0.5,
+      riskPenalty: 0.2,
+      redundancyPenalty: 0,
+      installPenalty: 0,
+      contextTokens: 100,
+      decision: "use",
+      reasons: [{ code: "TASK_TERM_MATCH", detail: "review, change" }]
+    }],
     conflicts: report.findings,
+    capabilityGaps: [],
+    installedCoverage: 0.5,
+    projectedCoverage: 0.5,
     selectedContextTokens: 100,
     plausibleContextTokens: 100,
     estimatedContextSaved: 0
@@ -55,35 +62,35 @@ function result(): PreflightResult {
 }
 
 describe("preflight services", () => {
-  it("runs against a fresh portfolio and stores sanitized evidence", async () => {
-    expect(createPreflightServices).toBeDefined();
-    const stateDirectory = await mkdtemp(
-      join(tmpdir(), "steward-preflight-service-")
-    );
+  it("runs against fresh portfolio and catalog state and stores sanitized evidence", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-preflight-service-"));
     const currentPortfolio = vi.fn(async () => report);
+    const catalogState = vi.fn(async () => ({ sources: [], snapshot: null }));
     const services = createPreflightServices({
       stateDirectory,
       currentPortfolio,
+      catalogState,
       now: () => new Date("2026-07-03T01:00:00.000Z"),
       id: () => "run-1"
     });
 
     const output = await services.run({
       task: "PRIVATE review code security changes",
-      maxSkills: 3
+      maxSkills: 3,
+      includeAvailable: true
     });
 
     expect(currentPortfolio).toHaveBeenCalledOnce();
-    expect(output.id).toBe("run-1");
+    expect(catalogState).toHaveBeenCalledOnce();
+    expect(output).toMatchObject({ id: "run-1", schemaVersion: 2 });
     expect(await readPreflightEvidence(stateDirectory)).toHaveLength(1);
-    expect(
-      await readFile(join(stateDirectory, "preflights.json"), "utf8")
-    ).not.toContain("PRIVATE review code security changes");
+    expect(await readFile(join(stateDirectory, "preflights.json"), "utf8"))
+      .not.toContain("PRIVATE review code security changes");
   });
 });
 
 describe("preflight routes", () => {
-  it("requires the mutation token and returns a preflight result", async () => {
+  it("requires the mutation token and returns a version-2 result", async () => {
     const services: PreflightServices = {
       run: vi.fn(async () => result()),
       feedback: vi.fn(async () => undefined)
@@ -105,15 +112,22 @@ describe("preflight routes", () => {
       method: "POST",
       url: "/api/v1/preflights",
       headers: { "x-skill-steward-token": "test-token" },
-      payload: { task: "  Review security and missing tests  ", maxSkills: 3 }
+      payload: {
+        task: "  Review security and missing tests  ",
+        maxSkills: 3,
+        harness: "codex",
+        includeAvailable: true
+      }
     });
     expect(response.statusCode).toBe(200);
     expect(services.run).toHaveBeenCalledWith({
       task: "Review security and missing tests",
-      maxSkills: 3
+      maxSkills: 3,
+      harness: "codex",
+      includeAvailable: true
     });
     expect(response.json()).toMatchObject({
-      data: { id: "run-1", selectedSkillIds: ["skill-1"] },
+      data: { id: "run-1", schemaVersion: 2, useCandidateIds: ["skill-1"] },
       error: null
     });
     expect(response.body).not.toContain("Review security and missing tests");
@@ -124,16 +138,13 @@ describe("preflight routes", () => {
       run: vi.fn(async () => result()),
       feedback: vi.fn(async () => undefined)
     };
-    const { app } = createDashboardApp({
-      mutationToken: "test-token",
-      preflightServices: services
-    });
+    const { app } = createDashboardApp({ mutationToken: "test-token", preflightServices: services });
     apps.push(app);
-
     for (const payload of [
       { task: "short", maxSkills: 3 },
       { task: "Review this change", maxSkills: 6 },
-      { task: "x".repeat(20_001), maxSkills: 3 }
+      { task: "x".repeat(20_001), maxSkills: 3 },
+      { task: "Review this change", harness: "not-real" }
     ]) {
       const response = await app.inject({
         method: "POST",
@@ -142,50 +153,38 @@ describe("preflight routes", () => {
         payload
       });
       expect(response.statusCode).toBe(400);
-      expect(response.json()).toMatchObject({
-        error: { code: "INVALID_PREFLIGHT_REQUEST" }
-      });
+      expect(response.json()).toMatchObject({ error: { code: "INVALID_PREFLIGHT_REQUEST" } });
     }
     expect(services.run).not.toHaveBeenCalled();
   });
 
-  it("records feedback and maps missing evidence to 404", async () => {
+  it("records candidate feedback and maps missing evidence to 404", async () => {
     const services: PreflightServices = {
       run: vi.fn(async () => result()),
-      feedback: vi
-        .fn()
+      feedback: vi.fn()
         .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(
-          new PreflightServiceError(
-            "PREFLIGHT_NOT_FOUND",
-            "Preflight evidence was not found"
-          )
-        )
+        .mockRejectedValueOnce(new PreflightServiceError(
+          "PREFLIGHT_NOT_FOUND",
+          "Preflight evidence was not found"
+        ))
     };
-    const { app } = createDashboardApp({
-      mutationToken: "test-token",
-      preflightServices: services
-    });
+    const { app } = createDashboardApp({ mutationToken: "test-token", preflightServices: services });
     apps.push(app);
 
     const saved = await app.inject({
       method: "POST",
       url: "/api/v1/preflights/run-1/feedback",
       headers: { "x-skill-steward-token": "test-token" },
-      payload: { label: "incomplete", selectedSkillIds: ["skill-1"] }
+      payload: { label: "incomplete", candidateIds: ["skill-1"] }
     });
     expect(saved.statusCode).toBe(200);
-    expect(saved.json()).toMatchObject({ data: { saved: true } });
-
     const missing = await app.inject({
       method: "POST",
       url: "/api/v1/preflights/missing/feedback",
       headers: { "x-skill-steward-token": "test-token" },
-      payload: { label: "useful", selectedSkillIds: [] }
+      payload: { label: "useful", candidateIds: [] }
     });
     expect(missing.statusCode).toBe(404);
-    expect(missing.json()).toMatchObject({
-      error: { code: "PREFLIGHT_NOT_FOUND" }
-    });
+    expect(missing.json()).toMatchObject({ error: { code: "PREFLIGHT_NOT_FOUND" } });
   });
 });

@@ -1,4 +1,5 @@
 export * from "./app.js";
+export * from "./catalog-services.js";
 export * from "./installation-services.js";
 export * from "./preflight-services.js";
 export * from "./security.js";

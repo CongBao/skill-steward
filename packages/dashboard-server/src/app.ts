@@ -6,8 +6,10 @@ import Fastify, {
   type FastifyInstance
 } from "fastify";
 import { apiFailure, apiSuccess } from "./api.js";
+import type { CatalogServices } from "./catalog-services.js";
 import type { InstallationServices } from "./installation-services.js";
 import { registerDashboardRoute } from "./routes/dashboard.js";
+import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerDetailRoutes } from "./routes/details.js";
 import { registerHistoryRoute } from "./routes/history.js";
 import { registerInstallationRoutes } from "./routes/installations.js";
@@ -24,6 +26,7 @@ export interface CreateDashboardAppOptions {
   services?: DashboardServices;
   installationServices?: InstallationServices;
   preflightServices?: PreflightServices;
+  catalogServices?: CatalogServices;
   assetsDirectory?: string;
 }
 
@@ -83,6 +86,9 @@ export function createDashboardApp(
   }
   if (options.preflightServices) {
     registerPreflightRoutes(app, options.preflightServices);
+  }
+  if (options.catalogServices) {
+    registerCatalogRoutes(app, options.catalogServices);
   }
 
   app.setErrorHandler(async (error: FastifyError, _request, reply) => {

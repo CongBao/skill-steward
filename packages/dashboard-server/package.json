@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@skill-steward/catalog": "workspace:*",
     "@skill-steward/engine": "workspace:*",
     "@skill-steward/insights": "workspace:*",
     "@skill-steward/installer": "workspace:*",
