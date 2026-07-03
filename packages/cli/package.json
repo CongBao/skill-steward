@@ -52,6 +52,7 @@
     "pretest": "pnpm build",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "runtime-audit:update": "pnpm --filter @skill-steward/dashboard build && node build.mjs --update-runtime-audit",
     "prepack": "pnpm --filter \"skill-steward^...\" build && pnpm build"
   },
   "devDependencies": {

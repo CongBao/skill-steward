@@ -44,14 +44,34 @@ it("normalizes GitHub shorthand and accepts only explicit remote source protocol
   for (const unsafe of [
     "../license",
     "./project",
+    "owner/..",
+    "owner/.",
     "/Users/alice/project",
     "C:\\Users\\alice\\project",
     "file:///tmp/project",
     "git+file:///tmp/project",
     "git:relative-project",
-    "example.com/project"
+    "example.com/project",
+    "github:token@example/project",
+    "token@example/project",
+    "https://token@github.com/example/project",
+    "https://git:secret@github.com/example/project",
+    "ssh://git@example.com/project",
+    "https://localhost/project",
+    "https://build.localhost/project",
+    "https://127.0.0.1/project",
+    "https://0.0.0.0/project",
+    "https://169.254.1.2/project",
+    "https://10.1.2.3/project",
+    "https://172.16.1.2/project",
+    "https://192.168.1.2/project",
+    "https://[::]/project",
+    "https://[::1]/project",
+    "https://[fe80::1]/project",
+    "https://[fc00::1]/project",
+    "https://[fd00::1]/project"
   ]) {
-    expect(() => normalizeSourceUrl(unsafe)).toThrow(/remote source URL/i);
+    expect(() => normalizeSourceUrl(unsafe), unsafe).toThrow(/remote source URL/i);
   }
 });
 

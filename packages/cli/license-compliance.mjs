@@ -1,17 +1,59 @@
 import parseSpdx from "spdx-expression-parse";
+import { isIP } from "node:net";
 
 const REMOTE_PROTOCOLS = new Set(["git:", "http:", "https:", "ssh:"]);
+const GITHUB_OWNER = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?";
+const GITHUB_REPOSITORY = "[A-Za-z0-9_.-]*[A-Za-z0-9][A-Za-z0-9_.-]*";
+const GITHUB_PATH = `(${GITHUB_OWNER})/(${GITHUB_REPOSITORY}(?:#[A-Za-z0-9_.\/-]+)?)`;
+
+function privateIpv4(parts) {
+  return parts[0] === 0
+    || parts[0] === 10
+    || parts[0] === 127
+    || (parts[0] === 169 && parts[1] === 254)
+    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+    || (parts[0] === 192 && parts[1] === 168);
+}
+
+function ipv6Words(input) {
+  const halves = input.split("::");
+  if (halves.length > 2) return undefined;
+  const parse = (part) => part === "" ? [] : part.split(":").map((word) => Number.parseInt(word, 16));
+  const left = parse(halves[0]);
+  const right = parse(halves[1] ?? "");
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return undefined;
+  return [...left, ...Array(missing).fill(0), ...right];
+}
+
+function privateHost(input) {
+  const hostname = input.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  if (isIP(hostname) === 4) return privateIpv4(hostname.split(".").map(Number));
+  if (isIP(hostname) !== 6) return false;
+  const words = ipv6Words(hostname);
+  if (!words) return true;
+  const unspecified = words.every((word) => word === 0);
+  const loopback = words.slice(0, 7).every((word) => word === 0) && words[7] === 1;
+  const uniqueLocal = (words[0] & 0xfe00) === 0xfc00;
+  const linkLocal = (words[0] & 0xffc0) === 0xfe80;
+  const mappedIpv4 = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff
+    ? [(words[6] >> 8) & 0xff, words[6] & 0xff, (words[7] >> 8) & 0xff, words[7] & 0xff]
+    : undefined;
+  return unspecified || loopback || uniqueLocal || linkLocal
+    || (mappedIpv4 !== undefined && privateIpv4(mappedIpv4));
+}
 
 export function normalizeSourceUrl(input) {
   if (typeof input !== "string" || input.trim() !== input || input === "") {
     throw new Error("Expected an explicit remote source URL");
   }
 
-  const github = input.match(/^github:([^/]+)\/(.+)$/);
+  const github = input.match(new RegExp(`^github:${GITHUB_PATH}$`));
   if (github) return `https://github.com/${github[1]}/${github[2]}`;
 
-  const shorthand = input.match(/^([^./][^/]*)\/(.+)$/);
-  if (shorthand && !shorthand[1].includes(".") && !shorthand[1].includes(":")) {
+  const shorthand = input.match(new RegExp(`^${GITHUB_PATH}$`));
+  if (shorthand) {
     return `https://github.com/${shorthand[1]}/${shorthand[2]}`;
   }
 
@@ -28,7 +70,17 @@ export function normalizeSourceUrl(input) {
   if (!REMOTE_PROTOCOLS.has(url.protocol)) {
     throw new Error(`Expected an explicit remote source URL, received '${input}'`);
   }
-  if (url.hostname.toLowerCase() === "github.com") {
+  const githubHost = url.hostname.toLowerCase() === "github.com";
+  const allowedGithubSshUser = githubHost && url.protocol === "ssh:" && url.username === "git";
+  if (
+    url.hostname === ""
+    || url.password !== ""
+    || (url.username !== "" && !allowedGithubSshUser)
+    || privateHost(url.hostname)
+  ) {
+    throw new Error(`Expected a public credential-free remote source URL, received '${input}'`);
+  }
+  if (githubHost) {
     return `https://github.com${url.pathname}`;
   }
   return url.href;

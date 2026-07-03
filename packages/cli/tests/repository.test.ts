@@ -215,6 +215,18 @@ describe("open-source repository", () => {
     expect(workflow).toContain("windows-smoke:");
   });
 
+  it("keeps runtime audit updates explicit and outside normal build and CI", async () => {
+    const packageJson = JSON.parse(
+      await readFile(join(root, "packages/cli/package.json"), "utf8")
+    ) as { scripts?: Record<string, string> };
+    expect(packageJson.scripts?.["runtime-audit:update"]).toContain("--update-runtime-audit");
+    const packageReadme = await readFile(join(root, "packages/cli/README.md"), "utf8");
+    expect(packageReadme).toMatch(/generated full runtime (?:lock|bundle audit)/i);
+    expect(packageReadme).toContain("runtime-audit:update");
+    const workflow = await readFile(join(root, ".github/workflows/ci.yml"), "utf8");
+    expect(workflow).not.toContain("--update-runtime-audit");
+  });
+
   it("states the local filesystem threat boundary without weakening symlink defenses", async () => {
     const security = await readFile(join(root, "SECURITY.md"), "utf8");
     expect(security).toContain("same operating-system user");

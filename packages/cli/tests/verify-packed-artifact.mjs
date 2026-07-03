@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
+import {
+  manifestPackagesFromAudit,
+  sha256,
+  validateRuntimeAuditSnapshot
+} from "../runtime-audit.mjs";
 
 const BLOCK_SIZE = 512;
 const REQUIRED_FILES = [
@@ -12,14 +17,16 @@ const REQUIRED_FILES = [
   "package/dist/third-party-manifest.json",
   "package/package.json"
 ];
-const TRUSTED_FILES = [
-  ["package/LICENSE", "LICENSE"],
-  ["package/README.md", "README.md"],
-  ["package/dist/THIRD_PARTY_NOTICES.txt", "dist/THIRD_PARTY_NOTICES.txt"],
-  ["package/dist/third-party-manifest.json", "dist/third-party-manifest.json"]
-];
-const REQUIRED_RUNTIME_ROOTS = ["commander", "fastify", "react", "vite", "yaml", "zod"];
 const defaultTrustedPackageDirectory = fileURLToPath(new URL("../", import.meta.url));
+const runtimeAuditPath = fileURLToPath(new URL("../runtime-audit.json", import.meta.url));
+const PNPM_REMOVED_LIFECYCLES = new Set([
+  "postpack",
+  "postpublish",
+  "prepack",
+  "prepare",
+  "prepublishOnly",
+  "publish"
+]);
 
 function compare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -187,66 +194,167 @@ function assertMetadata(packageJson) {
   }
 }
 
-async function trustedBaseline(trustedPackageDirectory) {
-  const files = new Map();
-  for (const [archivePath, relativePath] of TRUSTED_FILES) {
-    const value = await readFile(join(trustedPackageDirectory, relativePath));
-    if (value.length === 0) throw new Error(`Trusted expected file is empty: ${relativePath}`);
-    files.set(archivePath, value);
-  }
-  const manifest = JSON.parse(
-    files.get("package/dist/third-party-manifest.json").toString("utf8")
-  );
-  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.packages) || manifest.packages.length === 0) {
-    throw new Error("Trusted expected dependency manifest is empty or invalid");
-  }
-  const identifiers = [];
-  const names = new Set();
-  for (const entry of manifest.packages) {
-    if (
-      typeof entry?.name !== "string"
-      || typeof entry?.version !== "string"
-      || typeof entry?.license !== "string"
-      || !Array.isArray(entry?.attributions)
-      || entry.attributions.length === 0
-    ) {
-      throw new Error("Trusted expected dependency manifest has incomplete attribution");
+async function regularFile(path, label) {
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error(`Trusted package tree is missing ${label}`);
     }
-    names.add(entry.name);
-    identifiers.push(`${entry.name}@${entry.version}`);
+    throw error;
   }
-  const sorted = [...identifiers].sort(compare);
-  if (new Set(identifiers).size !== identifiers.length || JSON.stringify(identifiers) !== JSON.stringify(sorted)) {
-    throw new Error("Trusted expected dependency manifest is not a unique deterministic set");
+  if (!metadata.isFile()) {
+    throw new Error(`Trusted package tree ${label} must be a regular file, not a symbolic link or other entry`);
   }
-  for (const name of REQUIRED_RUNTIME_ROOTS) {
-    if (!names.has(name)) throw new Error(`Trusted expected dependency manifest is missing ${name}`);
-  }
-  const notices = files.get("package/dist/THIRD_PARTY_NOTICES.txt").toString("utf8");
-  if (notices.trim() === "# Third-Party Notices") {
-    throw new Error("Trusted expected third-party notices are empty");
-  }
-  for (const identifier of identifiers) {
-    if (!notices.includes(`## ${identifier}\n`)) {
-      throw new Error(`Trusted expected notices do not cover ${identifier}`);
-    }
-  }
-  return { files, identifiers };
+  return readFile(path);
 }
 
-export async function verifyPackedArtifact(path, options = {}) {
+export async function readTrustedPackageTree(packageDirectory) {
+  const files = new Map();
+  for (const name of ["LICENSE", "README.md", "package.json"]) {
+    files.set(`package/${name}`, await regularFile(join(packageDirectory, name), name));
+  }
+  const dist = join(packageDirectory, "dist");
+  let distMetadata;
+  try {
+    distMetadata = await lstat(dist);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error("Trusted package tree is missing dist/");
+    }
+    throw error;
+  }
+  if (!distMetadata.isDirectory() || distMetadata.isSymbolicLink()) {
+    throw new Error("Trusted package tree dist/ must be a real directory");
+  }
+  async function visit(directory, archiveDirectory) {
+    for (const entry of (await readdir(directory, { withFileTypes: true }))
+      .sort((left, right) => compare(left.name, right.name))) {
+      const path = join(directory, entry.name);
+      const archivePath = `${archiveDirectory}/${entry.name}`;
+      const metadata = await lstat(path);
+      if (metadata.isSymbolicLink()) {
+        throw new Error(`Trusted package tree rejects symbolic link ${archivePath}`);
+      }
+      if (metadata.isDirectory()) {
+        await visit(path, archivePath);
+      } else if (metadata.isFile()) {
+        files.set(archivePath, await readFile(path));
+      } else {
+        throw new Error(`Trusted package tree rejects non-regular entry ${archivePath}`);
+      }
+    }
+  }
+  await visit(dist, "package/dist");
+  if (files.size === 3) {
+    throw new Error("Trusted package tree dist/ contains no regular files");
+  }
+  return files;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort(compare).map((key) => [key, canonicalJson(value[key])])
+    );
+  }
+  return value;
+}
+
+async function pnpmPackedManifest(source, packageDirectory) {
+  const expected = structuredClone(source);
+  for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    if (expected[field] === undefined) continue;
+    for (const [name, specifier] of Object.entries(expected[field])) {
+      if (typeof specifier !== "string" || !specifier.startsWith("workspace:")) continue;
+      if (!/^workspace:[*^~]$/.test(specifier)) {
+        throw new Error(`Trusted package.json uses unsupported pnpm workspace specifier ${name}=${specifier}`);
+      }
+      const dependencyManifest = JSON.parse(await readFile(join(
+        packageDirectory,
+        "node_modules",
+        ...name.split("/"),
+        "package.json"
+      ), "utf8"));
+      if (typeof dependencyManifest.version !== "string" || dependencyManifest.version === "") {
+        throw new Error(`Trusted pnpm workspace dependency ${name} has no version`);
+      }
+      const selector = specifier.slice("workspace:".length);
+      expected[field][name] = selector === "*"
+        ? dependencyManifest.version
+        : `${selector}${dependencyManifest.version}`;
+    }
+  }
+  if (expected.scripts !== undefined) {
+    expected.scripts = Object.fromEntries(
+      Object.entries(expected.scripts).filter(([name]) => !PNPM_REMOVED_LIFECYCLES.has(name))
+    );
+  }
+  return expected;
+}
+
+async function assertPackedManifest(actual, expected, packageDirectory) {
+  if (actual.equals(expected)) return;
+  let parsedActual;
+  let parsedExpected;
+  try {
+    parsedActual = JSON.parse(actual.toString("utf8"));
+    parsedExpected = JSON.parse(expected.toString("utf8"));
+  } catch (error) {
+    throw new Error("Packed package.json differs from expected bytes and is not valid JSON", {
+      cause: error
+    });
+  }
+  const pnpmExpected = await pnpmPackedManifest(parsedExpected, packageDirectory);
+  if (
+    JSON.stringify(canonicalJson(parsedActual))
+    !== JSON.stringify(canonicalJson(pnpmExpected))
+  ) {
+    throw new Error("Packed package.json contains changes outside strict pnpm canonical normalization");
+  }
+}
+
+async function assertExactPackageTree(files, expected, packageDirectory) {
+  const paths = [...files.keys()].sort(compare);
+  const expectedPaths = [...expected.keys()].sort(compare);
+  if (JSON.stringify(paths) !== JSON.stringify(expectedPaths)) {
+    const missing = expectedPaths.filter((path) => !files.has(path));
+    const extra = paths.filter((path) => !expected.has(path));
+    throw new Error(
+      `Packed package tree differs from expected files; missing=[${missing.join(", ")}], extra=[${extra.join(", ")}]`
+    );
+  }
+  for (const [path, value] of expected) {
+    if (path === "package/package.json") {
+      await assertPackedManifest(files.get(path), value, packageDirectory);
+    } else if (!files.get(path).equals(value)) {
+      throw new Error(`Packed package tree bytes differ from expected ${path}`);
+    }
+  }
+}
+
+async function sourceControlledAudit() {
+  const snapshot = JSON.parse(await readFile(runtimeAuditPath, "utf8"));
+  try {
+    return validateRuntimeAuditSnapshot(snapshot);
+  } catch (error) {
+    throw new Error("Source-controlled full runtime audit is invalid", { cause: error });
+  }
+}
+
+export async function verifyPackedArtifact(path) {
   const files = parseTarEntries(await readFile(path));
   for (const required of REQUIRED_FILES) {
     if (!files.has(required)) throw new Error(`Missing ${required}`);
   }
-  const trusted = await trustedBaseline(
-    options.trustedPackageDirectory ?? defaultTrustedPackageDirectory
+  await assertExactPackageTree(
+    files,
+    await readTrustedPackageTree(defaultTrustedPackageDirectory),
+    defaultTrustedPackageDirectory
   );
-  for (const [archivePath, expected] of trusted.files) {
-    if (!files.get(archivePath)?.equals(expected)) {
-      throw new Error(`Packed ${archivePath} differs from the trusted expected build output`);
-    }
-  }
+  const audit = await sourceControlledAudit();
   const packageJson = jsonFile(files, "package/package.json");
   assertMetadata(packageJson);
   const manifest = jsonFile(files, "package/dist/third-party-manifest.json");
@@ -277,8 +385,11 @@ export async function verifyPackedArtifact(path, options = {}) {
   if (/(?:^|[\s('"`])(?:\/[Uu]sers\/|\/home\/|\/private\/|\/tmp\/|[A-Za-z]:[\\/])/m.test(notices)) {
     throw new Error("Third-party notices contain an absolute local path");
   }
-  if (JSON.stringify(identifiers) !== JSON.stringify(trusted.identifiers)) {
-    throw new Error("Packed dependency manifest differs from the trusted expected package set");
+  if (sha256(notices) !== audit.noticesSha256) {
+    throw new Error("Packed notices differ from the source-controlled full runtime audit");
+  }
+  if (JSON.stringify(manifest.packages) !== JSON.stringify(manifestPackagesFromAudit(audit))) {
+    throw new Error("Packed manifest differs from the source-controlled full runtime audit");
   }
   return { files: files.size, packages: identifiers.length };
 }

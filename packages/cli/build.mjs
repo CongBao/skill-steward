@@ -12,6 +12,12 @@ import {
   validateLicenseOverrides,
   validateSpdxExpression
 } from "./license-compliance.mjs";
+import {
+  assertRuntimeAuditSnapshot,
+  createRuntimeAuditSnapshot,
+  manifestPackagesFromAudit,
+  validateRuntimeAuditSnapshot
+} from "./runtime-audit.mjs";
 
 const packageDirectory = fileURLToPath(new URL(".", import.meta.url));
 const workspaceDirectory = fileURLToPath(new URL("../../", import.meta.url));
@@ -24,8 +30,13 @@ const integrationsDestination = join(outputDirectory, "integrations");
 const manifestPath = join(outputDirectory, "third-party-manifest.json");
 const noticesPath = join(outputDirectory, "THIRD_PARTY_NOTICES.txt");
 const licenseOverridesPath = join(packageDirectory, "license-overrides.json");
+const runtimeAuditPath = join(packageDirectory, "runtime-audit.json");
 const packageCache = new Map();
 const modulePreloadSignature = /relList[\s\S]+modulepreload[\s\S]+MutationObserver/;
+const updateRuntimeAudit = process.argv.slice(2).includes("--update-runtime-audit");
+if (process.argv.slice(2).some((argument) => argument !== "--update-runtime-audit")) {
+  throw new Error("Usage: node build.mjs [--update-runtime-audit]");
+}
 
 function compare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -336,14 +347,19 @@ if (!cliBuild.metafile || !dashboardAnalysis.metafile) {
 await assertViteModulePreloadRuntime();
 const overrides = validateLicenseOverrides(await readJson(licenseOverridesPath));
 const dependencies = await runtimeClosure(cliBuild.metafile, dashboardAnalysis.metafile, overrides);
+const notices = renderNotices(dependencies);
+const generatedAudit = createRuntimeAuditSnapshot(dependencies, notices);
+validateRuntimeAuditSnapshot(generatedAudit);
+if (updateRuntimeAudit) {
+  await writeFile(runtimeAuditPath, `${JSON.stringify(generatedAudit, null, 2)}\n`, "utf8");
+} else {
+  assertRuntimeAuditSnapshot(generatedAudit, await readJson(runtimeAuditPath));
+}
 const publicManifest = {
   schemaVersion: 1,
-  packages: dependencies.map(({ identifier: _identifier, attributions, ...entry }) => ({
-    ...entry,
-    attributions: attributions.map(({ text: _text, ...attribution }) => attribution)
-  }))
+  packages: manifestPackagesFromAudit(generatedAudit)
 };
 await writeFile(manifestPath, `${JSON.stringify(publicManifest, null, 2)}\n`, "utf8");
-await writeFile(noticesPath, renderNotices(dependencies), "utf8");
+await writeFile(noticesPath, notices, "utf8");
 await cp(dashboardSource, dashboardDestination, { recursive: true });
 await cp(integrationsSource, integrationsDestination, { recursive: true });

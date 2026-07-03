@@ -37,3 +37,13 @@ The dashboard, CLI, and supported Harness integrations use the same local state.
 ## Learn more
 
 Full documentation, security notes, supported Harness details, and contribution guidance are available in the [Skill Steward repository](https://github.com/CongBao/skill-steward).
+
+## Maintainer runtime audit
+
+`runtime-audit.json` is a generated full runtime bundle audit, not a manually curated partial package list. Normal builds and CI only verify it. After intentionally changing runtime dependencies, review the generated notices and update the source-controlled lock explicitly:
+
+```bash
+pnpm --filter skill-steward runtime-audit:update
+```
+
+Commit the resulting audit diff only after reviewing every package, attribution source, and license-text digest.
