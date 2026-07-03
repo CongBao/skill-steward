@@ -33,6 +33,8 @@
     "@skill-steward/dashboard": "workspace:*",
     "@skill-steward/dashboard-server": "workspace:*",
     "@skill-steward/engine": "workspace:*",
+    "@skill-steward/evidence": "workspace:*",
+    "@skill-steward/governance": "workspace:*",
     "@skill-steward/insights": "workspace:*",
     "@skill-steward/integrations": "workspace:*",
     "@skill-steward/installer": "workspace:*",

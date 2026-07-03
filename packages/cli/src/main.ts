@@ -18,6 +18,19 @@ import {
 import { discoverCommand } from "./commands/discover.js";
 import { diffCommand } from "./commands/diff.js";
 import { doctorCommand } from "./commands/doctor.js";
+import {
+  evidenceCompactCommand,
+  evidenceEraseCommand,
+  evidenceExportCommand,
+  evidencePolicyCommand,
+  evidencePolicySetCommand,
+  evidenceSummaryCommand
+} from "./commands/evidence.js";
+import {
+  governHistoryCommand,
+  governQuarantineCommand,
+  governRestoreCommand
+} from "./commands/govern.js";
 import { labelCommand } from "./commands/label.js";
 import {
   hookLifecycleCommand,
@@ -95,6 +108,104 @@ export async function run(
   const integrate = program
     .command("integrate")
     .description("Plan and manage Harness preflight integrations");
+
+  const evidence = program
+    .command("evidence")
+    .description("Inspect and manage private local recommendation evidence");
+
+  const evidencePolicy = evidence
+    .command("policy")
+    .description("Show the local evidence policy")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await evidencePolicyCommand(options.json, context);
+    });
+
+  evidencePolicy
+    .command("set")
+    .requiredOption("--mode <mode>", "minimal or learning")
+    .requiredOption("--retention-days <number>")
+    .requiredOption("--max-events <number>")
+    .option("--confirm", "apply the reviewed policy plan", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      mode: string;
+      retentionDays: string;
+      maxEvents: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await evidencePolicySetCommand({
+        ...options,
+        json: options.json || Boolean(evidencePolicy.opts().json)
+      }, context);
+    });
+
+  evidence
+    .command("summary")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await evidenceSummaryCommand(options.json, context);
+    });
+
+  evidence
+    .command("export")
+    .requiredOption("--output <path>")
+    .option("--replace", "replace an existing export", false)
+    .action(async (options: { output: string; replace: boolean }) => {
+      exitCode = await evidenceExportCommand(options.output, options.replace, context);
+    });
+
+  evidence.command("compact").action(async () => {
+    exitCode = await evidenceCompactCommand(context);
+  });
+
+  evidence
+    .command("erase")
+    .option("--confirm", "erase the reviewed evidence files", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { confirm: boolean; json: boolean }) => {
+      exitCode = await evidenceEraseCommand(options.confirm, options.json, context);
+    });
+
+  const govern = program
+    .command("govern")
+    .description("Review and apply reversible Skill lifecycle actions");
+
+  govern
+    .command("quarantine")
+    .requiredOption("--skill <id>")
+    .option("--confirm", "apply the reviewed quarantine", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { skill: string; confirm: boolean; json: boolean }) => {
+      exitCode = await governQuarantineCommand(
+        options.skill,
+        options.confirm,
+        options.json,
+        context
+      );
+    });
+
+  govern
+    .command("restore")
+    .requiredOption("--transaction <id>")
+    .option("--confirm", "apply the reviewed restore", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { transaction: string; confirm: boolean; json: boolean }) => {
+      exitCode = await governRestoreCommand(
+        options.transaction,
+        options.confirm,
+        options.json,
+        context
+      );
+    });
+
+  govern
+    .command("history")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await governHistoryCommand(options.json, context);
+    });
 
   integrate
     .command("plan")

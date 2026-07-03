@@ -90,6 +90,12 @@ importers:
       '@skill-steward/engine':
         specifier: workspace:*
         version: link:../engine
+      '@skill-steward/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@skill-steward/governance':
+        specifier: workspace:*
+        version: link:../governance
       '@skill-steward/insights':
         specifier: workspace:*
         version: link:../insights
