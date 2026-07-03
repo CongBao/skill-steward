@@ -163,6 +163,26 @@ describe("preflight command", () => {
     expect(output).not.toHaveProperty("task");
   });
 
+  it("attributes valid cursor and gemini preflight requests", async () => {
+    for (const harness of ["cursor", "gemini"]) {
+      expect(await run([
+        "preflight",
+        "--task", "Review security changes and missing tests",
+        "--harness", harness,
+        "--json"
+      ], current.context)).toBe(0);
+      current.stdout.splice(0);
+    }
+
+    expect((await readPreflightEvidence(current.stateDir)).map((record) => ({
+      harness: record.schemaVersion === 3 ? record.harness : undefined,
+      delivery: record.schemaVersion === 3 ? record.delivery : undefined
+    }))).toEqual([
+      { harness: "gemini", delivery: "cli" },
+      { harness: "cursor", delivery: "cli" }
+    ]);
+  });
+
   it("rejects missing or multiple task sources", async () => {
     expect(await run(["preflight"], current.context)).toBe(1);
     expect(

@@ -162,6 +162,9 @@ importers:
 
   packages/evidence:
     dependencies:
+      '@skill-steward/engine':
+        specifier: workspace:*
+        version: link:../engine
       zod:
         specifier: ^3.25.67
         version: 3.25.76

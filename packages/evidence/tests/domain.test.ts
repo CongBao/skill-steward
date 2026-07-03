@@ -4,6 +4,7 @@ import {
   evidenceDeliverySchema,
   evidenceDatasetSchema,
   evidenceEventSchema,
+  evidenceHarnessSchema,
   evidencePolicySchema,
   evidencePreflightSchema,
   evidenceSummarySchema,
@@ -30,20 +31,36 @@ const zeroBreakdown = {
 };
 
 describe("evidence domain", () => {
-  it("normalizes preflight Harness IDs and validates delivery attribution", () => {
+  it("preserves valid engine Harness IDs while canonicalizing Claude", () => {
     expect([
       normalizeEvidenceHarness("codex"),
       normalizeEvidenceHarness("claude"),
       normalizeEvidenceHarness("github-copilot"),
+      normalizeEvidenceHarness("cursor"),
+      normalizeEvidenceHarness("gemini"),
+      normalizeEvidenceHarness("agents"),
+      normalizeEvidenceHarness("unknown"),
       normalizeEvidenceHarness("claude-code"),
+      normalizeEvidenceHarness("not-a-harness"),
       normalizeEvidenceHarness(undefined)
     ]).toEqual([
       "codex",
       "claude-code",
       "github-copilot",
+      "cursor",
+      "gemini",
+      "agents",
+      "unknown",
+      "claude-code",
       undefined,
       undefined
     ]);
+    expect(evidenceHarnessSchema.parse("cursor")).toBe("cursor");
+    expect(evidenceHarnessSchema.parse("gemini")).toBe("gemini");
+    expect(() => evidenceHarnessSchema.parse("not-a-harness")).toThrow();
+  });
+
+  it("validates delivery attribution", () => {
     expect(evidenceDeliverySchema.options).toEqual(["cli", "dashboard", "hook"]);
   });
 

@@ -1,3 +1,7 @@
+import {
+  harnessIdSchema,
+  type HarnessId
+} from "@skill-steward/engine";
 import { z } from "zod";
 
 const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -7,20 +11,19 @@ const countSchema = z.number().int().nonnegative();
 const probabilitySchema = z.number().min(0).max(1);
 
 export const pseudonymousKeySchema = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
-export const evidenceHarnessSchema = z.enum(["codex", "claude-code", "github-copilot"]);
+type EvidenceHarnessId = Exclude<HarnessId, "claude"> | "claude-code";
+const evidenceHarnessIds = harnessIdSchema.options.map((harness) =>
+  harness === "claude" ? "claude-code" : harness
+) as [EvidenceHarnessId, ...EvidenceHarnessId[]];
+export const evidenceHarnessSchema = z.enum(evidenceHarnessIds);
 export const evidenceDeliverySchema = z.enum(["cli", "dashboard", "hook"]);
 export const evidenceModeSchema = z.enum(["minimal", "learning"]);
 
 export function normalizeEvidenceHarness(harness: string | undefined): EvidenceHarness | undefined {
-  switch (harness) {
-    case "codex":
-    case "github-copilot":
-      return harness;
-    case "claude":
-      return "claude-code";
-    default:
-      return undefined;
-  }
+  const parsed = evidenceHarnessSchema.safeParse(
+    harness === "claude" ? "claude-code" : harness
+  );
+  return parsed.success ? parsed.data : undefined;
 }
 
 export const evidencePolicySchema = z.object({
