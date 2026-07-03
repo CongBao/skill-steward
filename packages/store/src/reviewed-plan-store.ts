@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import {
   chmod,
   link,
@@ -17,7 +17,22 @@ import { z } from "zod";
 
 const REVIEWED_PLANS_DIRECTORY = "reviewed-plans";
 const MAX_CLEANUP_FILES = 1_000;
-const reviewedPlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/);
+const CRASH_RESIDUE_GRACE_MS = 60 * 60 * 1_000;
+const REVIEWED_PLAN_ID_PATTERN = "[A-Za-z0-9][A-Za-z0-9_-]{0,127}";
+const UUID_V4_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const reviewedPlanIdSchema = z.string().regex(
+  new RegExp(`^${REVIEWED_PLAN_ID_PATTERN}$`)
+);
+const pendingPlanNamePattern = new RegExp(`^(${REVIEWED_PLAN_ID_PATTERN})\\.json$`);
+const temporaryNamePattern = new RegExp(
+  `^\\.(${REVIEWED_PLAN_ID_PATTERN})\\.[1-9][0-9]*-${UUID_V4_PATTERN}\\.tmp$`
+);
+const claimedNamePattern = new RegExp(
+  `^(${REVIEWED_PLAN_ID_PATTERN})\\.[1-9][0-9]*-${UUID_V4_PATTERN}\\.claimed$`
+);
+const writeLockNamePattern = new RegExp(
+  `^\\.(${REVIEWED_PLAN_ID_PATTERN})\\.write\\.lock$`
+);
 const reviewedPlanKindSchema = z.enum([
   "installation",
   "governance",
@@ -212,6 +227,10 @@ async function reviewedPlansDirectory(
 }
 
 async function inspectPlanFile(path: string): Promise<"missing" | "file"> {
+  return (await inspectPlanFileMetadata(path)) === undefined ? "missing" : "file";
+}
+
+async function inspectPlanFileMetadata(path: string): Promise<Stats | undefined> {
   try {
     const metadata = await lstat(path);
     if (metadata.isSymbolicLink() || !metadata.isFile()) {
@@ -220,9 +239,9 @@ async function inspectPlanFile(path: string): Promise<"missing" | "file"> {
         "Reviewed plan path must be a regular non-symlink file"
       );
     }
-    return "file";
+    return metadata;
   } catch (error) {
-    if (isFileSystemError(error, "ENOENT")) return "missing";
+    if (isFileSystemError(error, "ENOENT")) return undefined;
     throw error;
   }
 }
@@ -268,6 +287,7 @@ export async function writeReviewedPlan<TPayload>(
 ): Promise<void> {
   try {
     const envelope = parseEnvelope(input);
+    const serialized = `${JSON.stringify(envelope, null, 2)}\n`;
     const directory = await reviewedPlansDirectory(stateDirectory, true);
     if (directory === undefined) {
       throw storeError("REVIEWED_PLAN_UNSAFE_STATE", "Reviewed plan directory is unavailable");
@@ -305,7 +325,7 @@ export async function writeReviewedPlan<TPayload>(
       const temporaryHandle = await open(temporary, "wx", 0o600);
       temporaryCreated = true;
       try {
-        await temporaryHandle.writeFile(`${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+        await temporaryHandle.writeFile(serialized, "utf8");
         await temporaryHandle.sync();
         await temporaryHandle.chmod(0o600);
       } finally {
@@ -331,10 +351,10 @@ export async function writeReviewedPlan<TPayload>(
   }
 }
 
-export async function claimReviewedPlan<TPayload = unknown>(
+export async function claimReviewedPlan(
   stateDirectory: string,
   input: { id: string; kind: ReviewedPlanKind; now?: Date }
-): Promise<ReviewedPlanEnvelope<TPayload>> {
+): Promise<ReviewedPlanEnvelope<unknown>> {
   try {
     const id = parseId(input.id);
     const kind = parseKind(input.kind);
@@ -380,7 +400,7 @@ export async function claimReviewedPlan<TPayload = unknown>(
       if (Date.parse(envelope.expiresAt) <= now) {
         throw storeError("REVIEWED_PLAN_EXPIRED", "Reviewed plan has expired");
       }
-      return envelope as ReviewedPlanEnvelope<TPayload>;
+      return envelope;
     } finally {
       await removeFile(claimed);
     }
@@ -427,33 +447,60 @@ export async function cleanupExpiredReviewedPlans(
     let removed = 0;
     let inspected = 0;
     for await (const entry of await opendir(directory)) {
-      if (!entry.name.endsWith(".json")) continue;
-      if (inspected >= MAX_CLEANUP_FILES) break;
+      const pendingMatch = pendingPlanNamePattern.exec(entry.name);
+      const isCrashResidue = temporaryNamePattern.test(entry.name)
+        || claimedNamePattern.test(entry.name)
+        || writeLockNamePattern.test(entry.name);
+      if (!pendingMatch && !isCrashResidue) continue;
       inspected += 1;
-      const id = entry.name.slice(0, -".json".length);
-      if (!reviewedPlanIdSchema.safeParse(id).success) continue;
       const path = resolve(directory, entry.name);
-      if (dirname(path) !== directory) continue;
-      const status = await inspectPlanFile(path);
-      if (status === "missing") continue;
-
-      let shouldRemove = false;
-      try {
-        const envelope = parseEnvelope(JSON.parse(await readRegularFile(path)) as unknown);
-        shouldRemove = envelope.id !== id || Date.parse(envelope.expiresAt) <= now;
-      } catch (error) {
-        if (
-          error instanceof ReviewedPlanStoreError
-          && error.code === "REVIEWED_PLAN_UNSAFE_STATE"
-        ) {
-          throw error;
+      if (dirname(path) === directory) {
+        if (pendingMatch) {
+          const id = pendingMatch[1];
+          if (id !== undefined && await cleanupPendingPlan(path, id, now)) removed += 1;
+        } else {
+          const metadata = await inspectPlanFileMetadata(path);
+          if (
+            metadata !== undefined
+            && now - metadata.mtimeMs > CRASH_RESIDUE_GRACE_MS
+            && await removeFile(path)
+          ) {
+            removed += 1;
+          }
         }
-        shouldRemove = true;
       }
-      if (shouldRemove && await removeFile(path)) removed += 1;
+      if (inspected >= MAX_CLEANUP_FILES) break;
     }
     return removed;
   } catch (error) {
     throw normalizeStoreError(error, "clean up");
   }
+}
+
+async function cleanupPendingPlan(
+  path: string,
+  id: string,
+  now: number
+): Promise<boolean> {
+  if (await inspectPlanFile(path) === "missing") return false;
+  const source = await readRegularFile(path);
+  let envelope: ReviewedPlanEnvelope;
+  try {
+    envelope = parseEnvelope(JSON.parse(source) as unknown);
+  } catch (error) {
+    if (
+      error instanceof SyntaxError
+      || (
+        error instanceof ReviewedPlanStoreError
+        && error.code === "REVIEWED_PLAN_INVALID"
+      )
+    ) {
+      return removeFile(path);
+    }
+    throw error;
+  }
+  if (envelope.id !== id || Date.parse(envelope.expiresAt) <= now) {
+    return removeFile(path);
+  }
+  return false;
 }

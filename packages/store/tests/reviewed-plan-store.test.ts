@@ -6,18 +6,21 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   symlink,
+  utimes,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const fileSystemObservation = vi.hoisted(() => ({
   publishRaceDestination: undefined as string | undefined,
   cleanupDirectory: undefined as string | undefined,
   cleanupInspectedPaths: [] as string[],
+  cleanupReadFailure: undefined as { path: string; code: "EACCES" | "EIO" } | undefined,
   cleanupUsedStreamingDirectory: false
 }));
 
@@ -43,6 +46,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return actual.link(...args);
     },
     open: async (...args: Parameters<typeof actual.open>) => {
+      if (
+        typeof args[1] === "number"
+        && fileSystemObservation.cleanupReadFailure?.path === String(args[0])
+      ) {
+        const error = new Error("injected cleanup read failure");
+        Object.assign(error, { code: fileSystemObservation.cleanupReadFailure.code });
+        throw error;
+      }
       if (
         fileSystemObservation.cleanupDirectory !== undefined
         && typeof args[1] === "number"
@@ -74,8 +85,18 @@ import {
   type ReviewedPlanKind
 } from "../src/reviewed-plan-store.js";
 
+if (false) {
+  // @ts-expect-error Claimed payloads remain unknown until a domain schema validates them.
+  void claimReviewedPlan<{ trusted: true }>("state", {
+    id: "plan",
+    kind: "installation"
+  });
+}
+
 const createdAt = "2026-07-03T00:00:00.000Z";
 const expiresAt = "2026-07-03T00:05:00.000Z";
+const residueUuid = "11111111-1111-4111-8111-111111111111";
+const temporaryStateDirectories: string[] = [];
 
 function envelope(
   id: string,
@@ -94,8 +115,21 @@ function envelope(
 }
 
 async function state(prefix: string): Promise<string> {
-  return mkdtemp(join(tmpdir(), prefix));
+  const directory = await mkdtemp(join(tmpdir(), prefix));
+  temporaryStateDirectories.push(directory);
+  return directory;
 }
+
+afterEach(async () => {
+  fileSystemObservation.publishRaceDestination = undefined;
+  fileSystemObservation.cleanupDirectory = undefined;
+  fileSystemObservation.cleanupInspectedPaths = [];
+  fileSystemObservation.cleanupReadFailure = undefined;
+  fileSystemObservation.cleanupUsedStreamingDirectory = false;
+  await Promise.all(temporaryStateDirectories.splice(0).map((directory) =>
+    rm(directory, { recursive: true, force: true })
+  ));
+});
 
 describe("reviewed plan store", () => {
   it("writes private files and lets a fresh module instance claim the payload", async () => {
@@ -117,6 +151,23 @@ describe("reviewed plan store", () => {
       now: new Date("2026-07-03T00:01:00.000Z")
     })).resolves.toEqual(plan);
     await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("snapshots nested payload data before yielding to caller mutation", async () => {
+    const stateDir = await state("steward-reviewed-snapshot-");
+    const payload = { review: { decision: "reviewed" } };
+    const writing = writeReviewedPlan(stateDir, envelope("snapshot", "installation", {
+      payload
+    }));
+
+    payload.review.decision = "mutated-after-write";
+    await writing;
+
+    await expect(claimReviewedPlan(stateDir, {
+      id: "snapshot",
+      kind: "installation",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toMatchObject({ payload: { review: { decision: "reviewed" } } });
   });
 
   it("allows each reviewed plan to be claimed only once", async () => {
@@ -208,6 +259,18 @@ describe("reviewed plan store", () => {
       });
     }
     expect(await readFile(sentinel, "utf8")).toBe("keep");
+  });
+
+  it("accepts 128-character IDs and rejects 129-character IDs on disk", async () => {
+    const stateDir = await state("steward-reviewed-id-length-");
+    const accepted = `a${"b".repeat(127)}`;
+    const rejected = `a${"b".repeat(128)}`;
+
+    await writeReviewedPlan(stateDir, envelope(accepted));
+    await expect(stat(join(stateDir, "reviewed-plans", `${accepted}.json`)))
+      .resolves.toMatchObject({ mode: expect.any(Number) });
+    await expect(writeReviewedPlan(stateDir, envelope(rejected)))
+      .rejects.toMatchObject({ code: "REVIEWED_PLAN_INVALID" });
   });
 
   it("reports a conflict instead of overwriting a preexisting plan", async () => {
@@ -320,20 +383,80 @@ describe("reviewed plan store", () => {
     ]);
   });
 
-  it("processes at most 1000 pending JSON files per cleanup", async () => {
+  it.each(["EACCES", "EIO"] as const)(
+    "fails closed and preserves a live plan when its read fails with %s",
+    async (code) => {
+      const stateDir = await state(`steward-reviewed-cleanup-${code.toLowerCase()}-`);
+      await writeReviewedPlan(stateDir, envelope(`live-${code.toLowerCase()}`));
+      const path = join(
+        stateDir,
+        "reviewed-plans",
+        `live-${code.toLowerCase()}.json`
+      );
+      fileSystemObservation.cleanupReadFailure = { path, code };
+
+      let failure: unknown;
+      try {
+        await cleanupExpiredReviewedPlans(
+          stateDir,
+          new Date("2026-07-03T00:01:00.000Z")
+        );
+      } catch (error) {
+        failure = error;
+      } finally {
+        fileSystemObservation.cleanupReadFailure = undefined;
+      }
+
+      expect(failure).toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+      await expect(readFile(path, "utf8")).resolves.toContain(`live-${code.toLowerCase()}`);
+    }
+  );
+
+  it("removes only stale strict crash residues after a one-hour grace window", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-residue-");
+    const directory = join(stateDir, "reviewed-plans");
+    await mkdir(directory, { mode: 0o700 });
+    const staleNames = [
+      `.stale-temp.123-${residueUuid}.tmp`,
+      `stale-claim.123-${residueUuid}.claimed`,
+      ".stale-lock.write.lock"
+    ];
+    const freshNames = [
+      `.fresh-temp.123-${residueUuid}.tmp`,
+      `fresh-claim.123-${residueUuid}.claimed`,
+      ".fresh-lock.write.lock"
+    ];
+    const unrelatedNames = ["manual.tmp", "manual.claimed", ".manual.lock"];
+    for (const name of [...staleNames, ...freshNames, ...unrelatedNames]) {
+      await writeFile(join(directory, name), "residue", { mode: 0o600 });
+    }
+    const now = new Date("2026-07-03T03:00:00.000Z");
+    const stale = new Date("2026-07-03T01:00:00.000Z");
+    const fresh = new Date("2026-07-03T02:30:00.000Z");
+    await Promise.all(staleNames.map((name) => utimes(join(directory, name), stale, stale)));
+    await Promise.all(freshNames.map((name) => utimes(join(directory, name), fresh, fresh)));
+
+    await expect(cleanupExpiredReviewedPlans(stateDir, now)).resolves.toBe(3);
+    expect((await readdir(directory)).sort()).toEqual(
+      [...freshNames, ...unrelatedNames].sort()
+    );
+  });
+
+  it("shares a 1000-candidate cleanup bound across pending plans and crash residues", async () => {
     const stateDir = await state("steward-reviewed-cleanup-bound-");
     const directory = join(stateDir, "reviewed-plans");
     await mkdir(directory, { mode: 0o700 });
     await chmod(directory, 0o700);
-    const expired = envelope("placeholder", "integration", {
-      expiresAt: "2026-07-03T00:00:30.000Z"
-    });
-    await Promise.all(Array.from({ length: 1001 }, async (_, index) => {
-      const id = `expired-${String(index).padStart(4, "0")}`;
-      await writeFile(join(directory, `${id}.json`), `${JSON.stringify({
-        ...expired,
-        id
-      })}\n`, { mode: 0o600 });
+    await Promise.all(Array.from({ length: 501 }, async (_, index) => {
+      const id = `invalid-${String(index).padStart(4, "0")}`;
+      await writeFile(join(directory, `${id}.json`), "invalid", { mode: 0o600 });
+    }));
+    const stale = new Date("2026-07-03T00:00:00.000Z");
+    await Promise.all(Array.from({ length: 500 }, async (_, index) => {
+      const id = `residue-${String(index).padStart(4, "0")}`;
+      const path = join(directory, `.${id}.123-${residueUuid}.tmp`);
+      await writeFile(path, "residue", { mode: 0o600 });
+      await utimes(path, stale, stale);
     }));
     await writeFile(join(directory, "unrelated.txt"), "keep", { mode: 0o600 });
     await writeFile(join(directory, "leftover.claimed"), "keep", { mode: 0o600 });
@@ -345,7 +468,7 @@ describe("reviewed plan store", () => {
     try {
       removed = await cleanupExpiredReviewedPlans(
         stateDir,
-        new Date("2026-07-03T00:01:00.000Z")
+        new Date("2026-07-03T02:00:00.000Z")
       );
     } finally {
       fileSystemObservation.cleanupDirectory = undefined;
@@ -353,12 +476,14 @@ describe("reviewed plan store", () => {
 
     expect(removed).toBe(1000);
     expect(fileSystemObservation.cleanupUsedStreamingDirectory).toBe(true);
-    expect(fileSystemObservation.cleanupInspectedPaths).toHaveLength(1000);
+    expect(fileSystemObservation.cleanupInspectedPaths.length).toBeLessThanOrEqual(501);
     expect(fileSystemObservation.cleanupInspectedPaths.every((path) =>
       path.endsWith(".json")
     )).toBe(true);
     const remaining = await readdir(directory);
-    expect(remaining.filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    expect(remaining.filter((name) =>
+      name.endsWith(".json") || /^\.residue-.*\.tmp$/.test(name)
+    )).toHaveLength(1);
     expect(remaining).toContain("unrelated.txt");
     expect(remaining).toContain("leftover.claimed");
   });
