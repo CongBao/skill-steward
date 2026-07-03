@@ -124,15 +124,17 @@ export async function run(
 
   evidencePolicy
     .command("set")
-    .requiredOption("--mode <mode>", "minimal or learning")
-    .requiredOption("--retention-days <number>")
-    .requiredOption("--max-events <number>")
+    .option("--mode <mode>", "minimal or learning")
+    .option("--retention-days <number>")
+    .option("--max-events <number>")
+    .option("--plan <id>", "apply an exact reviewed policy plan")
     .option("--confirm", "apply the reviewed policy plan", false)
     .option("--json", "JSON output", false)
     .action(async (options: {
-      mode: string;
-      retentionDays: string;
-      maxEvents: string;
+      mode?: string;
+      retentionDays?: string;
+      maxEvents?: string;
+      plan?: string;
       confirm: boolean;
       json: boolean;
     }) => {
@@ -183,10 +185,11 @@ export async function run(
 
   evidence
     .command("erase")
+    .option("--plan <id>", "apply an exact reviewed evidence erase plan")
     .option("--confirm", "erase the reviewed evidence files", false)
     .option("--json", "JSON output", false)
-    .action(async (options: { confirm: boolean; json: boolean }) => {
-      exitCode = await evidenceEraseCommand(options.confirm, options.json, context);
+    .action(async (options: { plan?: string; confirm: boolean; json: boolean }) => {
+      exitCode = await evidenceEraseCommand(options, context);
     });
 
   const govern = program
@@ -195,30 +198,32 @@ export async function run(
 
   govern
     .command("quarantine")
-    .requiredOption("--skill <id>")
+    .option("--skill <id>")
+    .option("--plan <id>", "apply an exact reviewed quarantine plan")
     .option("--confirm", "apply the reviewed quarantine", false)
     .option("--json", "JSON output", false)
-    .action(async (options: { skill: string; confirm: boolean; json: boolean }) => {
-      exitCode = await governQuarantineCommand(
-        options.skill,
-        options.confirm,
-        options.json,
-        context
-      );
+    .action(async (options: {
+      skill?: string;
+      plan?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await governQuarantineCommand(options, context);
     });
 
   govern
     .command("restore")
-    .requiredOption("--transaction <id>")
+    .option("--transaction <id>")
+    .option("--plan <id>", "apply an exact reviewed restore plan")
     .option("--confirm", "apply the reviewed restore", false)
     .option("--json", "JSON output", false)
-    .action(async (options: { transaction: string; confirm: boolean; json: boolean }) => {
-      exitCode = await governRestoreCommand(
-        options.transaction,
-        options.confirm,
-        options.json,
-        context
-      );
+    .action(async (options: {
+      transaction?: string;
+      plan?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await governRestoreCommand(options, context);
     });
 
   govern

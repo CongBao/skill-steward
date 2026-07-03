@@ -9,22 +9,59 @@ import { preflightFeedbackSchema } from "@skill-steward/preflight";
 import {
   applyEvidenceErasePlan,
   applyEvidencePolicyPlan,
+  claimReviewedPlan,
+  cleanupExpiredReviewedPlans,
   compactEvidenceEvents,
+  evidenceErasePlanSchema,
+  evidencePolicyPlanSchema,
   planEvidenceErase,
   planEvidencePolicyChange,
   readEvidenceEvents,
   readNormalizedPreflightEvidence,
   readEvidencePolicy,
   recordPreflightFeedback,
+  ReviewedPlanStoreError,
+  writeReviewedPlan,
   writeEvidenceExport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
 
 function errorText(error: unknown): string {
   if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    return `${error.code}: ${error.message}`;
+    const retry = error.code.startsWith("REVIEWED_PLAN_")
+      ? " Run the preview command again to create a fresh reviewed plan."
+      : "";
+    return `${error.code}: ${error.message}${retry}`;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+class EvidenceReviewedPlanError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "EvidenceReviewedPlanError";
+  }
+}
+
+async function cleanupReviewedPlans(context: CliContext, now: Date): Promise<void> {
+  try {
+    await cleanupExpiredReviewedPlans(context.stateDir, now);
+  } catch (error) {
+    if (
+      !(error instanceof ReviewedPlanStoreError)
+      || error.code === "REVIEWED_PLAN_UNSAFE_STATE"
+    ) {
+      throw error;
+    }
+  }
+}
+
+function policyApplyCommand(id: string): string {
+  return `skill-steward evidence policy set --plan ${id} --confirm`;
+}
+
+function eraseApplyCommand(id: string): string {
+  return `skill-steward evidence erase --plan ${id} --confirm`;
 }
 
 function integer(value: string, label: string): number {
@@ -74,33 +111,95 @@ export async function evidencePolicyCommand(
 
 export async function evidencePolicySetCommand(
   options: {
-    mode: string;
-    retentionDays: string;
-    maxEvents: string;
+    mode?: string;
+    retentionDays?: string;
+    maxEvents?: string;
+    plan?: string;
     confirm: boolean;
     json: boolean;
   },
   context: CliContext
 ): Promise<number> {
   try {
+    const now = context.now?.() ?? new Date();
+    const hasRequest = options.mode !== undefined
+      || options.retentionDays !== undefined
+      || options.maxEvents !== undefined;
+    if (options.plan !== undefined) {
+      if (!options.confirm) {
+        throw new EvidenceReviewedPlanError(
+          "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
+          "Use --confirm with the reviewed plan ID, or run a new preview"
+        );
+      }
+      if (hasRequest) {
+        throw new EvidenceReviewedPlanError(
+          "REVIEWED_PLAN_AMBIGUOUS",
+          "Apply accepts only --plan <id> --confirm; request options are ambiguous"
+        );
+      }
+      const envelope = await claimReviewedPlan(context.stateDir, {
+        id: options.plan,
+        kind: "evidence-policy",
+        now
+      });
+      const parsed = evidencePolicyPlanSchema.safeParse(envelope.payload);
+      if (!parsed.success) {
+        throw new EvidenceReviewedPlanError(
+          "REVIEWED_PLAN_INVALID",
+          "Stored evidence policy payload is invalid"
+        );
+      }
+      const policy = await applyEvidencePolicyPlan(context.stateDir, parsed.data, { now });
+      context.stdout(options.json
+        ? `${JSON.stringify({ ...policy, planId: envelope.id }, null, 2)}\n`
+        : `Evidence policy updated to ${policy.mode} (plan ${envelope.id}).\n`
+      );
+      return 0;
+    }
+    if (options.confirm) {
+      throw new EvidenceReviewedPlanError(
+        "REVIEWED_PLAN_REQUIRED",
+        "--confirm requires --plan <id>; run the policy set request first to preview it"
+      );
+    }
+    if (
+      options.mode === undefined
+      || options.retentionDays === undefined
+      || options.maxEvents === undefined
+    ) {
+      throw new EvidenceReviewedPlanError(
+        "REVIEWED_PLAN_PREVIEW_REQUIRED",
+        "Preview requires --mode, --retention-days, and --max-events"
+      );
+    }
     if (options.mode !== "minimal" && options.mode !== "learning") {
       throw new Error("mode must be minimal or learning");
     }
+    await cleanupReviewedPlans(context, now);
     const plan = await planEvidencePolicyChange(context.stateDir, {
       mode: options.mode,
       retentionDays: integer(options.retentionDays, "retention-days"),
       maxEvents: integer(options.maxEvents, "max-events")
-    }, { now: context.now?.() ?? new Date() });
-    const result = options.confirm
-      ? await applyEvidencePolicyPlan(context.stateDir, plan, {
-          now: context.now?.() ?? new Date()
-        })
-      : plan;
+    }, { now });
+    await writeReviewedPlan(context.stateDir, {
+      schemaVersion: 1,
+      id: plan.id,
+      kind: "evidence-policy",
+      createdAt: plan.createdAt,
+      expiresAt: plan.expiresAt,
+      payload: plan
+    });
+    const applyCommand = policyApplyCommand(plan.id);
     context.stdout(options.json
-      ? `${JSON.stringify(result, null, 2)}\n`
-      : options.confirm
-        ? `Evidence policy updated to ${plan.after.mode}.\n`
-        : `Evidence policy plan: ${plan.before.mode} -> ${plan.after.mode}\nRerun with --confirm to apply.\n`
+      ? `${JSON.stringify({ ...plan, planId: plan.id, applyCommand }, null, 2)}\n`
+      : [
+          `Evidence policy plan: ${plan.before.mode} -> ${plan.after.mode}`,
+          `Plan ID: ${plan.id}`,
+          `Expires: ${plan.expiresAt}`,
+          `Apply: ${applyCommand}`,
+          ""
+        ].join("\n")
     );
     return 0;
   } catch (error) {
@@ -213,25 +312,67 @@ export async function evidenceCompactCommand(context: CliContext): Promise<numbe
 }
 
 export async function evidenceEraseCommand(
-  confirm: boolean,
-  json: boolean,
+  options: { plan?: string; confirm: boolean; json: boolean },
   context: CliContext
 ): Promise<number> {
   try {
-    const plan = await planEvidenceErase(context.stateDir, {
-      now: context.now?.() ?? new Date()
-    });
-    if (confirm) {
-      await applyEvidenceErasePlan(context.stateDir, plan, {
-        now: context.now?.() ?? new Date()
+    const now = context.now?.() ?? new Date();
+    if (options.plan !== undefined) {
+      if (!options.confirm) {
+        throw new EvidenceReviewedPlanError(
+          "REVIEWED_PLAN_CONFIRMATION_REQUIRED",
+          "Use --confirm with the reviewed plan ID, or run a new preview"
+        );
+      }
+      const envelope = await claimReviewedPlan(context.stateDir, {
+        id: options.plan,
+        kind: "evidence-erase",
+        now
       });
+      const parsed = evidenceErasePlanSchema.safeParse(envelope.payload);
+      if (!parsed.success) {
+        throw new EvidenceReviewedPlanError(
+          "REVIEWED_PLAN_INVALID",
+          "Stored evidence erase payload is invalid"
+        );
+      }
+      await applyEvidenceErasePlan(context.stateDir, parsed.data, { now });
+      context.stdout(options.json
+        ? `${JSON.stringify({ erased: true, planId: envelope.id }, null, 2)}\n`
+        : `Local evidence records and salt erased (plan ${envelope.id}).\n`
+      );
+      return 0;
     }
-    const result = confirm ? { erased: true, planId: plan.id } : plan;
-    context.stdout(json
-      ? `${JSON.stringify(result, null, 2)}\n`
-      : confirm
-        ? "Local evidence records and salt erased.\n"
-        : `${plan.paths.map(({ kind, path, exists }) => `- ${kind}: ${path} (${exists ? "present" : "absent"})`).join("\n")}\nRerun with --confirm to erase.\n`
+    if (options.confirm) {
+      throw new EvidenceReviewedPlanError(
+        "REVIEWED_PLAN_REQUIRED",
+        "--confirm requires --plan <id>; run evidence erase first to preview it"
+      );
+    }
+    await cleanupReviewedPlans(context, now);
+    const plan = await planEvidenceErase(context.stateDir, {
+      now
+    });
+    await writeReviewedPlan(context.stateDir, {
+      schemaVersion: 1,
+      id: plan.id,
+      kind: "evidence-erase",
+      createdAt: plan.createdAt,
+      expiresAt: plan.expiresAt,
+      payload: plan
+    });
+    const applyCommand = eraseApplyCommand(plan.id);
+    context.stdout(options.json
+      ? `${JSON.stringify({ ...plan, planId: plan.id, applyCommand }, null, 2)}\n`
+      : [
+          ...plan.paths.map(({ kind, path, exists }) =>
+            `- ${kind}: ${path} (${exists ? "present" : "absent"})`
+          ),
+          `Plan ID: ${plan.id}`,
+          `Expires: ${plan.expiresAt}`,
+          `Apply: ${applyCommand}`,
+          ""
+        ].join("\n")
     );
     return 0;
   } catch (error) {

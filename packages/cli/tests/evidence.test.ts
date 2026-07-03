@@ -7,9 +7,20 @@ import {
   readEvidencePolicy,
   readNormalizedPreflightEvidence
 } from "@skill-steward/store";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliContext } from "../src/context.js";
-import { run } from "../src/main.js";
+
+async function run(argv: string[], context: CliContext): Promise<number> {
+  vi.resetModules();
+  return (await import("../src/main.js")).run(argv, context);
+}
+
+async function storedPlan(stateDir: string, id: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await readFile(
+    join(stateDir, "reviewed-plans", `${id}.json`),
+    "utf8"
+  )) as Record<string, unknown>;
+}
 
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), "steward-cli-evidence-"));
@@ -87,7 +98,7 @@ describe("evidence command", () => {
     current = await fixture();
   });
 
-  it("reviews and explicitly applies a local evidence policy", async () => {
+  it("previews and applies the exact persisted evidence policy in separate runs", async () => {
     expect(await run(["evidence", "policy", "--json"], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
       mode: "minimal",
@@ -95,23 +106,46 @@ describe("evidence command", () => {
       maxEvents: 5_000
     });
 
-    const args = [
+    const previewArgs = [
       "evidence", "policy", "set",
       "--mode", "learning",
       "--retention-days", "45",
       "--max-events", "1000",
       "--json"
     ];
-    expect(await run(args, current.context)).toBe(0);
-    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
+    expect(await run(previewArgs, current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    expect(preview).toMatchObject({
       before: { mode: "minimal" },
-      after: { mode: "learning", retentionDays: 45, maxEvents: 1_000 }
+      after: { mode: "learning", retentionDays: 45, maxEvents: 1_000 },
+      planId: expect.any(String),
+      expiresAt: "2026-07-03T01:10:00.000Z",
+      applyCommand: expect.stringMatching(/^skill-steward evidence policy set --plan \S+ --confirm$/)
+    });
+    expect(preview.applyCommand).toBe(
+      `skill-steward evidence policy set --plan ${preview.planId} --confirm`
+    );
+    expect(await storedPlan(current.stateDir, preview.planId)).toMatchObject({
+      id: preview.planId,
+      kind: "evidence-policy",
+      payload: { after: { mode: "learning", retentionDays: 45, maxEvents: 1_000 } }
     });
     expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
 
-    expect(await run([...args, "--confirm"], current.context)).toBe(0);
-    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({ mode: "learning" });
+    previewArgs.splice(3, previewArgs.length - 3, "minimal");
+    expect(await run([
+      "evidence", "policy", "set", "--plan", preview.planId, "--confirm", "--json"
+    ], current.context)).toBe(0);
+    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
+      mode: "learning",
+      planId: preview.planId
+    });
     expect((await readEvidencePolicy(current.stateDir)).mode).toBe("learning");
+
+    expect(await run([
+      "evidence", "policy", "set", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join("")).toMatch(/REVIEWED_PLAN_NOT_FOUND.*preview/is);
   });
 
   it("summarizes, exports, compacts, and erases only scoped evidence", async () => {
@@ -142,13 +176,89 @@ describe("evidence command", () => {
 
     expect(await run(["evidence", "erase", "--json"], current.context)).toBe(0);
     const plan = JSON.parse(current.stdout.splice(0).join(""));
+    expect(plan).toMatchObject({
+      paths: expect.any(Array),
+      planId: expect.any(String),
+      expiresAt: "2026-07-03T01:10:00.000Z",
+      applyCommand: expect.stringMatching(/^skill-steward evidence erase --plan \S+ --confirm$/)
+    });
     expect(plan.paths).toHaveLength(3);
+    expect(await storedPlan(current.stateDir, plan.planId)).toMatchObject({
+      id: plan.planId,
+      kind: "evidence-erase"
+    });
     expect(await access(join(current.stateDir, "preflights.json"))).toBeUndefined();
-    expect(await run(["evidence", "erase", "--confirm", "--json"], current.context)).toBe(0);
+    expect(await run([
+      "evidence", "erase", "--plan", plan.planId, "--confirm", "--json"
+    ], current.context)).toBe(0);
+    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
+      erased: true,
+      planId: plan.planId
+    });
     await expect(access(join(current.stateDir, "preflights.json"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(current.stateDir, "evidence-events.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(current.stateDir, "evidence-salt"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(current.stateDir, "installations.jsonl"))).resolves.toBeUndefined();
+  });
+
+  it("refuses missing confirmation inputs and ambiguous evidence apply options", async () => {
+    for (const args of [
+      ["evidence", "policy", "set", "--confirm"],
+      ["evidence", "erase", "--confirm"],
+      ["evidence", "policy", "set", "--plan", "missing"],
+      ["evidence", "erase", "--plan", "missing"]
+    ]) {
+      expect(await run(args, current.context)).toBe(1);
+      expect(current.stderr.splice(0).join("")).toMatch(/preview|--confirm/i);
+    }
+
+    expect(await run([
+      "evidence", "policy", "set",
+      "--mode", "learning",
+      "--retention-days", "45",
+      "--max-events", "1000",
+      "--json"
+    ], current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    expect(await run([
+      "evidence", "policy", "set",
+      "--plan", preview.planId,
+      "--confirm",
+      "--mode", "minimal"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join("")).toMatch(/ambiguous/i);
+    expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
+  });
+
+  it("refuses wrong-kind and expired evidence plans without mutation", async () => {
+    expect(await run([
+      "evidence", "policy", "set",
+      "--mode", "learning",
+      "--retention-days", "45",
+      "--max-events", "1000",
+      "--json"
+    ], current.context)).toBe(0);
+    const wrongKind = JSON.parse(current.stdout.splice(0).join(""));
+    expect(await run([
+      "evidence", "erase", "--plan", wrongKind.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join("")).toMatch(/REVIEWED_PLAN_KIND_MISMATCH.*preview/is);
+    expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
+
+    expect(await run([
+      "evidence", "policy", "set",
+      "--mode", "learning",
+      "--retention-days", "45",
+      "--max-events", "1000",
+      "--json"
+    ], current.context)).toBe(0);
+    const expired = JSON.parse(current.stdout.splice(0).join(""));
+    current.context.now = () => new Date("2026-07-03T02:00:00.000Z");
+    expect(await run([
+      "evidence", "policy", "set", "--plan", expired.planId, "--confirm"
+    ], current.context)).toBe(1);
+    expect(current.stderr.splice(0).join("")).toMatch(/REVIEWED_PLAN_EXPIRED.*preview/is);
+    expect((await readEvidencePolicy(current.stateDir)).mode).toBe("minimal");
   });
 
   it("records explicit Preflight feedback from the CLI", async () => {
