@@ -7,7 +7,6 @@ import {
   mkdir,
   open,
   opendir,
-  readdir,
   rename,
   unlink,
   type FileHandle
@@ -30,8 +29,8 @@ const temporaryNamePattern = new RegExp(
 const claimedNamePattern = new RegExp(
   `^(${REVIEWED_PLAN_ID_PATTERN})\\.[1-9][0-9]*-${UUID_V4_PATTERN}\\.claimed$`
 );
-const writeLockNamePattern = new RegExp(
-  `^\\.(${REVIEWED_PLAN_ID_PATTERN})\\.write\\.lock$`
+const cleanupNamePattern = new RegExp(
+  `^\\.(${REVIEWED_PLAN_ID_PATTERN})\\.[1-9][0-9]*-${UUID_V4_PATTERN}\\.cleanup$`
 );
 const reviewedPlanKindSchema = z.enum([
   "installation",
@@ -296,27 +295,12 @@ export async function writeReviewedPlan<TPayload>(
     if (dirname(destination) !== directory) {
       throw storeError("REVIEWED_PLAN_INVALID", "Reviewed plan ID escapes state");
     }
-    const lockPath = resolve(directory, `.${envelope.id}.write.lock`);
     const temporary = resolve(
       directory,
       `.${envelope.id}.${process.pid}-${randomUUID()}.tmp`
     );
-    let lock: FileHandle | undefined;
-    let lockCreated = false;
     let temporaryCreated = false;
     try {
-      try {
-        lock = await open(lockPath, "wx", 0o600);
-        lockCreated = true;
-      } catch (error) {
-        if (!isFileSystemError(error, "EEXIST")) throw error;
-        const lockStatus = await inspectPlanFile(lockPath);
-        if (lockStatus === "file") {
-          throw storeError("REVIEWED_PLAN_CONFLICT", "Reviewed plan is already being written");
-        }
-        throw error;
-      }
-
       const destinationStatus = await inspectPlanFile(destination);
       if (destinationStatus === "file") {
         throw storeError("REVIEWED_PLAN_CONFLICT", "Reviewed plan already exists");
@@ -342,9 +326,7 @@ export async function writeReviewedPlan<TPayload>(
       await removeFile(temporary);
       temporaryCreated = false;
     } finally {
-      await lock?.close();
       if (temporaryCreated) await removeFile(temporary);
-      if (lockCreated) await removeFile(lockPath);
     }
   } catch (error) {
     throw normalizeStoreError(error, "write");
@@ -417,20 +399,16 @@ export async function discardReviewedPlan(
     const id = parseId(inputId);
     const directory = await reviewedPlansDirectory(stateDirectory, false);
     if (directory === undefined) return;
-    const pendingName = `${id}.json`;
-    const claimedPrefix = `${id}.`;
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      if (
-        entry.name !== pendingName
-        && !(entry.name.startsWith(claimedPrefix) && entry.name.endsWith(".claimed"))
-      ) {
-        continue;
-      }
-      const path = resolve(directory, entry.name);
-      if (dirname(path) !== directory || await inspectPlanFile(path) === "missing") continue;
-      await removeFile(path);
+    const pending = resolve(directory, `${id}.json`);
+    if (await inspectPlanFile(pending) === "missing") return;
+    const owned = cleanupPath(directory, id);
+    try {
+      await rename(pending, owned);
+    } catch (error) {
+      if (isFileSystemError(error, "ENOENT")) return;
+      throw error;
     }
+    if (await inspectPlanFile(owned) === "file") await removeFile(owned);
   } catch (error) {
     throw normalizeStoreError(error, "discard");
   }
@@ -450,7 +428,7 @@ export async function cleanupExpiredReviewedPlans(
       const pendingMatch = pendingPlanNamePattern.exec(entry.name);
       const isCrashResidue = temporaryNamePattern.test(entry.name)
         || claimedNamePattern.test(entry.name)
-        || writeLockNamePattern.test(entry.name);
+        || cleanupNamePattern.test(entry.name);
       if (!pendingMatch && !isCrashResidue) continue;
       inspected += 1;
       const path = resolve(directory, entry.name);
@@ -478,12 +456,26 @@ export async function cleanupExpiredReviewedPlans(
 }
 
 async function cleanupPendingPlan(
-  path: string,
+  pending: string,
   id: string,
   now: number
 ): Promise<boolean> {
-  if (await inspectPlanFile(path) === "missing") return false;
-  const source = await readRegularFile(path);
+  if (await inspectPlanFile(pending) === "missing") return false;
+  const owned = cleanupPath(dirname(pending), id);
+  try {
+    await rename(pending, owned);
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return false;
+    throw error;
+  }
+
+  let source: string;
+  try {
+    source = await readRegularFile(owned);
+  } catch (error) {
+    await restoreOwnedPlan(owned, pending);
+    throw error;
+  }
   let envelope: ReviewedPlanEnvelope;
   try {
     envelope = parseEnvelope(JSON.parse(source) as unknown);
@@ -495,12 +487,42 @@ async function cleanupPendingPlan(
         && error.code === "REVIEWED_PLAN_INVALID"
       )
     ) {
-      return removeFile(path);
+      return removeFile(owned);
     }
+    await restoreOwnedPlan(owned, pending);
     throw error;
   }
   if (envelope.id !== id || Date.parse(envelope.expiresAt) <= now) {
-    return removeFile(path);
+    return removeFile(owned);
   }
+  await restoreOwnedPlan(owned, pending);
   return false;
+}
+
+function cleanupPath(directory: string, id: string): string {
+  return resolve(
+    directory,
+    `.${id}.${process.pid}-${randomUUID()}.cleanup`
+  );
+}
+
+async function restoreOwnedPlan(owned: string, pending: string): Promise<void> {
+  if (await inspectPlanFile(owned) === "missing") {
+    throw storeError(
+      "REVIEWED_PLAN_UNSAFE_STATE",
+      "Owned reviewed plan disappeared before it could be restored"
+    );
+  }
+  try {
+    await link(owned, pending);
+  } catch (error) {
+    if (isFileSystemError(error, "EEXIST")) {
+      throw storeError(
+        "REVIEWED_PLAN_UNSAFE_STATE",
+        "Reviewed plan could not be restored without overwriting newer state"
+      );
+    }
+    throw error;
+  }
+  await removeFile(owned);
 }

@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  rename,
   rm,
   stat,
   symlink,
@@ -20,7 +19,14 @@ const fileSystemObservation = vi.hoisted(() => ({
   publishRaceDestination: undefined as string | undefined,
   cleanupDirectory: undefined as string | undefined,
   cleanupInspectedPaths: [] as string[],
-  cleanupReadFailure: undefined as { path: string; code: "EACCES" | "EIO" } | undefined,
+  cleanupReadFailure: undefined as { id: string; code: "EACCES" | "EIO" } | undefined,
+  cleanupReadPause: undefined as {
+    id: string;
+    reached: () => void;
+    release: Promise<void>;
+    releaseNow: () => void;
+    triggered: boolean;
+  } | undefined,
   cleanupUsedStreamingDirectory: false
 }));
 
@@ -46,9 +52,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return actual.link(...args);
     },
     open: async (...args: Parameters<typeof actual.open>) => {
+      const path = String(args[0]);
+      const isPendingOrCleanup = (id: string) =>
+        path.endsWith(`/${id}.json`)
+        || (path.includes(`/.${id}.`) && path.endsWith(".cleanup"));
       if (
         typeof args[1] === "number"
-        && fileSystemObservation.cleanupReadFailure?.path === String(args[0])
+        && fileSystemObservation.cleanupReadFailure !== undefined
+        && isPendingOrCleanup(fileSystemObservation.cleanupReadFailure.id)
       ) {
         const error = new Error("injected cleanup read failure");
         Object.assign(error, { code: fileSystemObservation.cleanupReadFailure.code });
@@ -61,7 +72,32 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       ) {
         fileSystemObservation.cleanupInspectedPaths.push(String(args[0]));
       }
-      return actual.open(...args);
+      const handle = await actual.open(...args);
+      const pause = fileSystemObservation.cleanupReadPause;
+      if (
+        typeof args[1] === "number"
+        && pause !== undefined
+        && !pause.triggered
+        && isPendingOrCleanup(pause.id)
+      ) {
+        pause.triggered = true;
+        const originalReadFile = handle.readFile.bind(handle);
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === "readFile") {
+              return async (...readArgs: Parameters<typeof handle.readFile>) => {
+                const source = await originalReadFile(...readArgs);
+                pause.reached();
+                await pause.release;
+                return source;
+              };
+            }
+            const value: unknown = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+        });
+      }
+      return handle;
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       if (String(args[0]) === fileSystemObservation.cleanupDirectory) {
@@ -120,11 +156,35 @@ async function state(prefix: string): Promise<string> {
   return directory;
 }
 
+function pauseCleanupRead(id: string): {
+  reached: Promise<void>;
+  release: () => void;
+} {
+  let reachedNow = () => {};
+  let releaseNow = () => {};
+  const reached = new Promise<void>((resolve) => {
+    reachedNow = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    releaseNow = resolve;
+  });
+  fileSystemObservation.cleanupReadPause = {
+    id,
+    reached: reachedNow,
+    release,
+    releaseNow,
+    triggered: false
+  };
+  return { reached, release: releaseNow };
+}
+
 afterEach(async () => {
   fileSystemObservation.publishRaceDestination = undefined;
   fileSystemObservation.cleanupDirectory = undefined;
   fileSystemObservation.cleanupInspectedPaths = [];
   fileSystemObservation.cleanupReadFailure = undefined;
+  fileSystemObservation.cleanupReadPause?.releaseNow();
+  fileSystemObservation.cleanupReadPause = undefined;
   fileSystemObservation.cleanupUsedStreamingDirectory = false;
   await Promise.all(temporaryStateDirectories.splice(0).map((directory) =>
     rm(directory, { recursive: true, force: true })
@@ -311,16 +371,37 @@ describe("reviewed plan store", () => {
     expect(await readdir(directory)).toEqual(["publish-race.json"]);
   });
 
-  it("does not remove a write lock owned by another process", async () => {
+  it("ignores a legacy fixed write lock without deleting it", async () => {
     const stateDir = await state("steward-reviewed-lock-");
     const directory = join(stateDir, "reviewed-plans");
     await mkdir(directory, { mode: 0o700 });
     const lock = join(directory, ".locked.write.lock");
     await writeFile(lock, "other-owner", { encoding: "utf8", mode: 0o600 });
 
-    await expect(writeReviewedPlan(stateDir, envelope("locked")))
-      .rejects.toMatchObject({ code: "REVIEWED_PLAN_CONFLICT" });
+    await expect(writeReviewedPlan(stateDir, envelope("locked"))).resolves.toBeUndefined();
     await expect(readFile(lock, "utf8")).resolves.toBe("other-owner");
+  });
+
+  it("lets exactly one concurrent writer publish without lock residue", async () => {
+    const stateDir = await state("steward-reviewed-concurrent-write-");
+    const attempts = await Promise.allSettled([
+      writeReviewedPlan(stateDir, envelope("concurrent", "installation", {
+        payload: { writer: 1 }
+      })),
+      writeReviewedPlan(stateDir, envelope("concurrent", "installation", {
+        payload: { writer: 2 }
+      }))
+    ]);
+
+    expect(attempts.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    const rejection = attempts.find(({ status }) => status === "rejected");
+    expect(rejection).toMatchObject({
+      status: "rejected",
+      reason: { code: "REVIEWED_PLAN_CONFLICT" }
+    });
+    expect(await readdir(join(stateDir, "reviewed-plans"))).toEqual([
+      "concurrent.json"
+    ]);
   });
 
   it("rejects symlinked reviewed-plan directories and files", async () => {
@@ -346,19 +427,17 @@ describe("reviewed plan store", () => {
     expect(await readFile(target, "utf8")).toBe("secret");
   });
 
-  it("discards pending and claimed leftovers without touching other files", async () => {
+  it("atomically discards only pending state and leaves active claimed files alone", async () => {
     const stateDir = await state("steward-reviewed-discard-");
     await writeReviewedPlan(stateDir, envelope("discard-me"));
     const directory = join(stateDir, "reviewed-plans");
-    await rename(
-      join(directory, "discard-me.json"),
-      join(directory, "discard-me.interrupted.claimed")
-    );
+    const claimed = `discard-me.123-${residueUuid}.claimed`;
+    await writeFile(join(directory, claimed), "active", { mode: 0o600 });
     await writeFile(join(directory, "keep.json"), "keep", { mode: 0o600 });
 
     await discardReviewedPlan(stateDir, "discard-me");
 
-    expect(await readdir(directory)).toEqual(["keep.json"]);
+    expect((await readdir(directory)).sort()).toEqual([claimed, "keep.json"]);
   });
 
   it("removes expired and invalid pending plans but leaves live and unrelated files", async () => {
@@ -393,7 +472,10 @@ describe("reviewed plan store", () => {
         "reviewed-plans",
         `live-${code.toLowerCase()}.json`
       );
-      fileSystemObservation.cleanupReadFailure = { path, code };
+      fileSystemObservation.cleanupReadFailure = {
+        id: `live-${code.toLowerCase()}`,
+        code
+      };
 
       let failure: unknown;
       try {
@@ -412,6 +494,78 @@ describe("reviewed plan store", () => {
     }
   );
 
+  it("never unlinks a new plan published after cleanup read the old plan", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-replacement-");
+    const id = "replacement-race";
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      expiresAt: "2026-07-03T00:00:30.000Z",
+      payload: { generation: "old" }
+    }));
+    const pause = pauseCleanupRead(id);
+    const cleaning = cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T00:01:00.000Z")
+    );
+    await pause.reached;
+
+    const claimOutcome = await claimReviewedPlan(stateDir, {
+      id,
+      kind: "installation",
+      now: new Date("2026-07-03T00:00:10.000Z")
+    }).then(
+      () => "claimed",
+      (error: unknown) => error instanceof Error && "code" in error
+        ? String(error.code)
+        : "unknown"
+    );
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      payload: { generation: "new" }
+    }));
+    pause.release();
+
+    expect(["claimed", "REVIEWED_PLAN_NOT_FOUND"]).toContain(claimOutcome);
+    await expect(cleaning).resolves.toBe(1);
+    await expect(claimReviewedPlan(stateDir, {
+      id,
+      kind: "installation",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toMatchObject({ payload: { generation: "new" } });
+  });
+
+  it("preserves owned live data and a new plan when no-clobber restore conflicts", async () => {
+    const stateDir = await state("steward-reviewed-cleanup-restore-conflict-");
+    const id = "restore-conflict";
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      payload: { generation: "old-live" }
+    }));
+    const pause = pauseCleanupRead(id);
+    const cleaning = cleanupExpiredReviewedPlans(
+      stateDir,
+      new Date("2026-07-03T00:01:00.000Z")
+    );
+    await pause.reached;
+
+    await claimReviewedPlan(stateDir, {
+      id,
+      kind: "installation",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    }).catch(() => undefined);
+    await writeReviewedPlan(stateDir, envelope(id, "installation", {
+      payload: { generation: "new-live" }
+    }));
+    pause.release();
+
+    await expect(cleaning).rejects.toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+    const names = await readdir(join(stateDir, "reviewed-plans"));
+    expect(names).toContain(`${id}.json`);
+    expect(names.filter((name) => name.endsWith(".cleanup"))).toHaveLength(1);
+    await expect(claimReviewedPlan(stateDir, {
+      id,
+      kind: "installation",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toMatchObject({ payload: { generation: "new-live" } });
+  });
+
   it("removes only stale strict crash residues after a one-hour grace window", async () => {
     const stateDir = await state("steward-reviewed-cleanup-residue-");
     const directory = join(stateDir, "reviewed-plans");
@@ -419,14 +573,19 @@ describe("reviewed plan store", () => {
     const staleNames = [
       `.stale-temp.123-${residueUuid}.tmp`,
       `stale-claim.123-${residueUuid}.claimed`,
-      ".stale-lock.write.lock"
+      `.stale-cleanup.123-${residueUuid}.cleanup`
     ];
     const freshNames = [
       `.fresh-temp.123-${residueUuid}.tmp`,
       `fresh-claim.123-${residueUuid}.claimed`,
-      ".fresh-lock.write.lock"
+      `.fresh-cleanup.123-${residueUuid}.cleanup`
     ];
-    const unrelatedNames = ["manual.tmp", "manual.claimed", ".manual.lock"];
+    const unrelatedNames = [
+      "manual.tmp",
+      "manual.claimed",
+      ".manual.lock",
+      ".legacy.write.lock"
+    ];
     for (const name of [...staleNames, ...freshNames, ...unrelatedNames]) {
       await writeFile(join(directory, name), "residue", { mode: 0o600 });
     }
@@ -478,7 +637,7 @@ describe("reviewed plan store", () => {
     expect(fileSystemObservation.cleanupUsedStreamingDirectory).toBe(true);
     expect(fileSystemObservation.cleanupInspectedPaths.length).toBeLessThanOrEqual(501);
     expect(fileSystemObservation.cleanupInspectedPaths.every((path) =>
-      path.endsWith(".json")
+      path.endsWith(".cleanup")
     )).toBe(true);
     const remaining = await readdir(directory);
     expect(remaining.filter((name) =>
