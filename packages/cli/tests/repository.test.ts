@@ -50,6 +50,9 @@ describe("open-source repository", () => {
       "## Installation",
       "## Quick start",
       "## Task preflight",
+      "## Evidence and data policy",
+      "## Reversible governance",
+      "## Harness capability matrix",
       "## Supported harnesses",
       "## How safe installation works",
       "## Comparison",
@@ -66,13 +69,22 @@ describe("open-source repository", () => {
     expect(readme).toContain("cross-Harness control plane");
     expect(readme).toContain("Use now");
     expect(readme).toContain("Consider installing");
-    expect(readme).toContain("Codex and Claude Code `UserPromptSubmit` Hooks");
+    expect(readme).toContain("Codex and Claude Code `UserPromptSubmit` and completion Hooks");
     expect(readme).toContain("no prompt-time network access");
     expect(readme).toContain("never installs a recommendation automatically");
     expect(readme).toContain("External task-time discovery");
     expect(readme).toContain("Native workflow integration");
     expect(readme).toContain("Cross-Harness analysis");
     expect(readme).toContain("Reversible installation");
+    expect(readme).toContain("minimal mode is the default");
+    expect(readme).toContain("100 labeled preflights");
+    expect(readme).toContain("Lifecycle completion is not task success");
+    expect(readme).toContain("GitHub Copilot CLI");
+    expect(readme).toContain("Observe only");
+    expect(readme).toContain("No ranking threshold or weight changes automatically");
+    expect(readme).toContain("skill-steward govern quarantine");
+    expect(readme).toContain("skill-steward evidence erase");
+    expect(readme).not.toContain("Managed native prompt Hooks are available only for Codex and Claude Code");
     expect(readme).not.toMatch(/universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
@@ -87,6 +99,9 @@ describe("open-source repository", () => {
       "## 安装",
       "## 快速开始",
       "## 任务预检",
+      "## 证据与数据策略",
+      "## 可恢复治理",
+      "## Harness 能力矩阵",
       "## 支持的 Harness",
       "## 安全安装如何工作",
       "## 竞品比较",
@@ -103,13 +118,22 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("跨 Harness 控制平面");
     expect(chineseReadme).toContain("立即使用");
     expect(chineseReadme).toContain("建议安装");
-    expect(chineseReadme).toContain("Codex 和 Claude Code 的 `UserPromptSubmit` Hook");
+    expect(chineseReadme).toContain("Codex 和 Claude Code 的 `UserPromptSubmit` 与结束 Hook");
     expect(chineseReadme).toContain("任务提交时不访问网络");
     expect(chineseReadme).toContain("绝不会自动安装推荐项");
     expect(chineseReadme).toContain("任务时外部发现");
     expect(chineseReadme).toContain("原生工作流集成");
     expect(chineseReadme).toContain("跨 Harness 分析");
     expect(chineseReadme).toContain("可逆安装");
+    expect(chineseReadme).toContain("最小模式是默认模式");
+    expect(chineseReadme).toContain("100 次带标签的预检");
+    expect(chineseReadme).toContain("生命周期结束不等于任务成功");
+    expect(chineseReadme).toContain("GitHub Copilot CLI");
+    expect(chineseReadme).toContain("仅观察");
+    expect(chineseReadme).toContain("不会自动修改任何排序阈值或权重");
+    expect(chineseReadme).toContain("skill-steward govern quarantine");
+    expect(chineseReadme).toContain("skill-steward evidence erase");
+    expect(chineseReadme).not.toContain("托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code");
     expect(chineseReadme).not.toMatch(/通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);
     for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
     for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
@@ -129,11 +153,18 @@ describe("open-source repository", () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
     expect(changelog).toContain("## [0.4.0-alpha.1]");
+    expect(changelog).toContain("privacy-safe recommendation evidence");
+    expect(changelog).toContain("reversible quarantine and restore");
     const architecture = await readFile(join(root, "docs/architecture.md"), "utf8");
     expect(architecture).toContain("packages/preflight");
     expect(architecture).toContain("preflights.json");
     expect(architecture).toContain("packages/catalog");
     expect(architecture).toContain("packages/integrations");
+    expect(architecture).toContain("packages/evidence");
+    expect(architecture).toContain("packages/governance");
+    expect(architecture).toContain("evidence-events.jsonl");
+    expect(architecture).toContain("governance.jsonl");
+    expect(architecture).toContain("observe-only");
     const internalEntries = await readdir(join(root, "docs/superpowers"), {
       recursive: true,
       withFileTypes: true

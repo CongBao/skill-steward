@@ -4,6 +4,30 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Added
+
+- Local privacy-safe recommendation evidence with explicit feedback, correction metrics, provenance-only install conversion, lifecycle reasons, Harness/algorithm breakdowns, and 7/30-day windows.
+- Minimal and opt-in learning policies with reviewed changes, bounded HMAC-pseudonymous lifecycle events, sanitized export, compaction, and exact erasure.
+- Codex and Claude Code recommend-and-observe lifecycle adapters plus an explicit GitHub Copilot CLI observe-only adapter and shared capability matrix.
+- Reviewed reversible quarantine and restore through CLI, loopback API, and dashboard, with verified vault copies, drift refusal, transaction history, and failure recovery.
+- Evidence, Data Policy, active/quarantined Skill, governance-plan, and three-Harness capability surfaces in the bilingual dashboard.
+
+### Privacy
+
+- Adversarial prompt, transcript, raw-ID, path, assistant, and tool-data canaries are tested across persisted evidence, sanitized export, API, and UI fixtures.
+- The private per-install HMAC salt is never included in sanitized export, API responses, or UI output.
+
+### Changed
+
+- Preflight persistence uses schema v3 numeric feature snapshots in learning mode while retaining deterministic algorithm version 2 behavior and performance budgets.
+- CLI integration status and companion-Skill cleanup now include Codex, Claude Code, and GitHub Copilot CLI consistently.
+
+### Limitations
+
+- Lifecycle completion is an operational proxy, not task success.
+- Evidence readiness does not change ranking weights or thresholds automatically.
+- GitHub Copilot CLI is observe-only; recommendations use the companion Skill or explicit CLI preflight.
+
 ## [0.4.0-alpha.1] - 2026-07-03
 
 ### Added
