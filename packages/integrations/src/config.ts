@@ -230,7 +230,7 @@ const integrationConfigDefaults: IntegrationConfigDependencies = {
   appendRecord: appendIntegrationRecord
 };
 
-function hash(value: string): string {
+function hash(value: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
@@ -341,14 +341,21 @@ function parseConfig(source: string): JsonObject {
 async function readTargetState(targetPath: string): Promise<{
   exists: boolean;
   source: string;
+  bytes: Buffer;
   fingerprint: string;
 }> {
   try {
-    const source = await readFile(targetPath, "utf8");
-    return { exists: true, source, fingerprint: hash(source) };
+    const bytes = await readFile(targetPath);
+    return {
+      exists: true,
+      source: bytes.toString("utf8"),
+      bytes,
+      fingerprint: hash(bytes)
+    };
   } catch (error) {
     if (isMissing(error)) {
-      return { exists: false, source: "", fingerprint: hash("") };
+      const bytes = Buffer.alloc(0);
+      return { exists: false, source: "", bytes, fingerprint: hash(bytes) };
     }
     throw error;
   }
@@ -357,6 +364,7 @@ async function readTargetState(targetPath: string): Promise<{
 async function readConfig(targetPath: string): Promise<{
   exists: boolean;
   source: string;
+  bytes: Buffer;
   fingerprint: string;
   config: JsonObject;
 }> {
@@ -509,7 +517,7 @@ function backupPath(targetPath: string, now: Date, discriminator: string): strin
 
 async function atomicWrite(
   path: string,
-  source: string,
+  source: string | Uint8Array,
   home: string,
   expected: {
     exists: boolean;
@@ -528,7 +536,8 @@ async function atomicWrite(
   );
   let renamed = false;
   try {
-    await handle.writeFile(source, "utf8");
+    if (typeof source === "string") await handle.writeFile(source, "utf8");
+    else await handle.writeFile(source);
     await handle.sync();
     await handle.close();
     handle = undefined;
@@ -553,9 +562,17 @@ async function atomicWrite(
   }
 }
 
-async function writeBackup(path: string, source: string, home: string): Promise<void> {
+async function writeBackup(
+  path: string,
+  source: string | Uint8Array,
+  home: string
+): Promise<void> {
   await assertSafeTarget(path, home);
-  await writeFile(path, source, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  if (typeof source === "string") {
+    await writeFile(path, source, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } else {
+    await writeFile(path, source, { mode: 0o600, flag: "wx" });
+  }
 }
 
 async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Promise<void> {
@@ -579,7 +596,7 @@ async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Pr
         "Integration backup target is invalid"
       );
     }
-    const backupSource = await readFile(plan.backupPath, "utf8");
+    const backupSource = await readFile(plan.backupPath);
     if (hash(backupSource) !== plan.expectedBeforeFingerprint) {
       throw new IntegrationError(
         "INTEGRATION_DRIFTED",
@@ -775,7 +792,7 @@ export async function applyIntegrationPlan(
     );
   }
   if (plan.backupPath && before.exists && plan.changes.length > 0) {
-    await writeBackup(plan.backupPath, before.source, options.home);
+    await writeBackup(plan.backupPath, before.bytes, options.home);
   }
   if (plan.changes.length > 0) {
     await atomicWrite(plan.targetPath, afterSource, options.home, {
@@ -1036,7 +1053,7 @@ export async function removeIntegration(
           expectedFingerprint: record.afterFingerprint,
           message: "Harness configuration changed while integration removal was journaling"
         });
-        await atomicWrite(targetPath, before.source, options.home, {
+        await atomicWrite(targetPath, before.bytes, options.home, {
           exists: harness !== "github-copilot",
           fingerprint: record.afterFingerprint,
           message: "Harness configuration changed while removal restoration was prepared"
@@ -1102,7 +1119,7 @@ export async function removeIntegration(
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();
   const path = backupPath(targetPath, now, `${id}-remove`);
-  await writeBackup(path, before.source, options.home);
+  await writeBackup(path, before.bytes, options.home);
   await atomicWrite(targetPath, afterSource, options.home, {
     exists: before.exists,
     fingerprint: before.fingerprint,

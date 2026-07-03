@@ -100,6 +100,20 @@ async function seed(home: string, harness: "codex" | "claude-code") {
   return path;
 }
 
+function replaceFirstBytes(
+  source: Buffer,
+  needle: Buffer,
+  replacement: Buffer
+): Buffer {
+  const index = source.indexOf(needle);
+  if (index < 0) throw new Error("Expected byte sequence was not found");
+  return Buffer.concat([
+    source.subarray(0, index),
+    replacement,
+    source.subarray(index + needle.length)
+  ]);
+}
+
 describe.each(["codex", "claude-code"] as const)("%s integration config", (harness) => {
   it("plans, backs up, applies, reports status, and removes without replacing unrelated settings", async () => {
     const home = await mkdtemp(join(tmpdir(), `steward-${harness}-home-`));
@@ -493,6 +507,60 @@ it("rechecks the target after syncing a large rollback temporary file", async ()
   expect(causes[0]).toBe(journalFailure);
   expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
   expect(await readFile(path, "utf8")).toBe(external);
+});
+
+it("distinguishes invalid UTF-8 bytes during journal compensation", async () => {
+  const invalidA = Buffer.from([0x80]);
+  const invalidB = Buffer.from([0x81]);
+  expect(invalidA.toString("utf8")).toBe(invalidB.toString("utf8"));
+  const replacement = Buffer.from("\uFFFD", "utf8");
+  const home = await mkdtemp(join(tmpdir(), "steward-raw-fingerprint-window-"));
+  const options = { home, stateDirectory: join(home, "state") };
+  const path = join(home, ".codex", "hooks.json");
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, Buffer.concat([
+    Buffer.from(`{"padding":"${"x".repeat(2 * 1024 * 1024)}","marker":"`),
+    invalidA,
+    Buffer.from('"}\n')
+  ]));
+  await applyIntegrationPlan(await planIntegration("codex", options), options);
+  const installedWithInvalidA = replaceFirstBytes(
+    await readFile(path),
+    replacement,
+    invalidA
+  );
+  await writeFile(path, installedWithInvalidA);
+  const appendFailure = new Error("removed record was not committed");
+  let watcher: Promise<void> | undefined;
+  let externalB: Buffer | undefined;
+
+  const failure = await removeIntegration("codex", options, {
+    appendRecord: async () => {
+      externalB = replaceFirstBytes(await readFile(path), replacement, invalidB);
+      watcher = (async () => {
+        for (let attempt = 0; attempt < 10_000; attempt += 1) {
+          const entries = await readdir(dirname(path));
+          if (entries.some((entry) =>
+            entry.startsWith("hooks.json.") && entry.endsWith(".tmp")
+          )) {
+            await writeFile(path, externalB!);
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        throw new Error("Timed out waiting for compensation temporary file");
+      })();
+      throw appendFailure;
+    }
+  }).catch((error: unknown) => error);
+  await watcher;
+
+  expect(failure).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+  expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+  const causes = ((failure as Error).cause as AggregateError).errors;
+  expect(causes[0]).toBe(appendFailure);
+  expect(causes[1]).toMatchObject({ code: "INTEGRATION_DRIFTED" });
+  expect(await readFile(path)).toEqual(externalB);
 });
 
 it("does not roll back configuration when journal commit is uncertain", async () => {
