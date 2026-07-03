@@ -34,7 +34,7 @@ function errorCode(error: unknown): string | undefined {
     : undefined;
 }
 
-function consumedReviewedPlanError(error: unknown): Error {
+export function consumedReviewedPlanError(error: unknown): Error {
   const code = errorCode(error);
   const message = error instanceof Error ? error.message : String(error);
   const consumed = "This reviewed plan has been consumed.";

@@ -17,7 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   fingerprintDirectory,
-  readInstallationHistory
+  readInstallationHistory,
+  StagingRegistry
 } from "@skill-steward/installer";
 import {
   writeCatalogSnapshot,
@@ -392,6 +393,43 @@ describe("catalog install command", () => {
     expect(await readInstallationHistory(current.stateDir)).toEqual([]);
   });
 
+  it.each(["extra-field", "invalid-timestamp"] as const)(
+    "preserves the consumed INVALID result for a real %s envelope and deletes only its staging",
+    async (tamper) => {
+      expect(await run(previewArgs(), current.context)).toBe(0);
+      const first = JSON.parse(current.stdout.splice(0).join(""));
+      expect(await run(previewArgs(), current.context)).toBe(0);
+      const second = JSON.parse(current.stdout.splice(0).join(""));
+      const firstPath = join(current.stateDir, "reviewed-plans", `${first.planId}.json`);
+      const envelope = JSON.parse(await readFile(firstPath, "utf8")) as Record<string, unknown>;
+      if (tamper === "extra-field") envelope.unexpected = true;
+      else envelope.createdAt = "not-a-timestamp";
+      await writeFile(firstPath, `${JSON.stringify(envelope, null, 2)}\n`, { mode: 0o600 });
+
+      expect(await run([
+        "install", "--plan", first.planId, "--confirm"
+      ], current.context)).toBe(1);
+      expect(current.stderr.splice(0).join(""))
+        .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
+      await expect(access(join(current.stateDir, "staging", first.planId)))
+        .rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(join(current.stateDir, "reviewed-plans", `${first.planId}.json`)))
+        .rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(join(current.stateDir, "staging", second.planId)))
+        .resolves.toBeUndefined();
+      await expect(access(join(current.stateDir, "reviewed-plans", `${second.planId}.json`)))
+        .resolves.toBeUndefined();
+
+      expect(await run([
+        "install", "--plan", first.planId, "--confirm"
+      ], current.context)).toBe(1);
+      const secondAttempt = current.stderr.splice(0).join("");
+      expect(secondAttempt).toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+      expect(secondAttempt).not.toMatch(/consumed/i);
+      expect(await readInstallationHistory(current.stateDir)).toEqual([]);
+    }
+  );
+
   it("keeps a committed installation successful when portfolio refresh fails", async () => {
     expect(await run(previewArgs(), current.context)).toBe(0);
     const preview = JSON.parse(current.stdout.splice(0).join(""));
@@ -430,7 +468,7 @@ describe("catalog install command", () => {
       "install", "--plan", "wrong-kind", "--confirm"
     ], current.context)).toBe(1);
     expect(current.stderr.splice(0).join(""))
-      .toMatch(/REVIEWED_PLAN_KIND_MISMATCH.*fresh reviewed plan/is);
+      .toMatch(/REVIEWED_PLAN_KIND_MISMATCH.*consumed.*fresh reviewed plan/is);
 
     expect(await run(previewArgs(), current.context)).toBe(0);
     const preview = JSON.parse(current.stdout.splice(0).join(""));
@@ -439,9 +477,39 @@ describe("catalog install command", () => {
       "install", "--plan", preview.planId, "--confirm"
     ], current.context)).toBe(1);
     expect(current.stderr.splice(0).join(""))
-      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+      .toMatch(/REVIEWED_PLAN_EXPIRED.*consumed.*fresh reviewed plan/is);
     expect(await readInstallationHistory(current.stateDir)).toEqual([]);
     expect(await stagingEntries(current.stateDir)).toEqual([]);
+
+    expect(await run([
+      "install", "--plan", preview.planId, "--confirm"
+    ], current.context)).toBe(1);
+    const secondAttempt = current.stderr.splice(0).join("");
+    expect(secondAttempt).toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+    expect(secondAttempt).not.toMatch(/consumed/i);
+  });
+
+  it("reports a genuinely missing plan without consuming or deleting live staging", async () => {
+    const missingPlanId = "80134d11-b27c-4b32-8321-2bb4b96e3957";
+    const sameNameStaging = await new StagingRegistry({
+      stateDirectory: current.stateDir,
+      now: () => current.context.now!().getTime(),
+      id: () => missingPlanId
+    }).create({ ttlMs: 5 * 60_000 });
+    expect(await run(previewArgs(), current.context)).toBe(0);
+    const other = JSON.parse(current.stdout.splice(0).join(""));
+
+    expect(await run([
+      "install", "--plan", missingPlanId, "--confirm"
+    ], current.context)).toBe(1);
+    const error = current.stderr.splice(0).join("");
+    expect(error).toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+    expect(error).not.toMatch(/consumed/i);
+    await expect(access(sameNameStaging.directory)).resolves.toBeUndefined();
+    await expect(access(join(current.stateDir, "staging", other.planId)))
+      .resolves.toBeUndefined();
+    await expect(access(join(current.stateDir, "reviewed-plans", `${other.planId}.json`)))
+      .resolves.toBeUndefined();
   });
 
   it.each(["preview", "apply"] as const)(

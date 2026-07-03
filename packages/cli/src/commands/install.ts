@@ -36,6 +36,7 @@ import {
 import type { CliContext } from "../context.js";
 import {
   applyClaimedReviewedPlan,
+  consumedReviewedPlanError,
   reviewedPlanRetryHint
 } from "../reviewed-plan.js";
 import { terminalSafeText } from "../terminal.js";
@@ -492,13 +493,43 @@ async function applyInstallation(
       "Apply accepts only --plan <id> --confirm; request options are ambiguous"
     );
   }
+  if (!previewIdPattern.test(planId)) {
+    throw new InstallCommandError(
+      "REVIEWED_PLAN_INVALID",
+      "Reviewed installation plan ID is unsafe"
+    );
+  }
   const contextNow = context.now;
   const now = context.now?.() ?? new Date();
-  await cleanupInstallState(staging, context, now);
-  const envelope: ReviewedPlanEnvelope<unknown> = await claimReviewedPlan(
-    context.stateDir,
-    { id: planId, kind: "installation", now }
-  );
+  await staging.cleanupExpired();
+  let envelope: ReviewedPlanEnvelope<unknown>;
+  try {
+    envelope = await claimReviewedPlan(
+      context.stateDir,
+      { id: planId, kind: "installation", now }
+    );
+  } catch (error) {
+    if (
+      error instanceof ReviewedPlanStoreError
+      && (
+        error.code === "REVIEWED_PLAN_INVALID"
+        || error.code === "REVIEWED_PLAN_EXPIRED"
+      )
+    ) {
+      await expireAfterClaim(staging, planId, context);
+    }
+    if (
+      error instanceof ReviewedPlanStoreError
+      && (
+        error.code === "REVIEWED_PLAN_INVALID"
+        || error.code === "REVIEWED_PLAN_EXPIRED"
+        || error.code === "REVIEWED_PLAN_KIND_MISMATCH"
+      )
+    ) {
+      throw consumedReviewedPlanError(error);
+    }
+    throw error;
+  }
   let payload: InstallationReviewedPayload;
   let record: InstallationRecord;
   try {
