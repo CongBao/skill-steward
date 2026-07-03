@@ -277,11 +277,11 @@ export class StagingRegistry {
     let removed = 0;
     let inspected = 0;
     for await (const entry of await opendir(this.#root)) {
-      inspected += 1;
-      if (inspected > MAX_CLEANUP_CANDIDATES) break;
       const parsedId = previewIdSchema.safeParse(entry.name);
       const tombstone = tombstoneNamePattern.exec(entry.name);
       if (!parsedId.success && tombstone === null) continue;
+      inspected += 1;
+      if (inspected > MAX_CLEANUP_CANDIDATES) break;
       try {
         await assertDirectoryIdentity(this.#root, rootIdentity);
         if (parsedId.success) {

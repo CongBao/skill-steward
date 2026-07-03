@@ -193,7 +193,8 @@ describe("open-source repository", () => {
     expect(security).toContain("not an isolation boundary");
     expect(security).toContain("must not share write access");
     expect(security).toContain("static symbolic links");
-    expect(security).toContain("post-preview destination-ancestor drift");
+    expect(security).toContain("post-preview ancestor symlink or non-directory drift");
+    expect(security).not.toContain("post-preview destination-ancestor drift");
   });
 
   it("keeps internal planning references out of the public documentation tree", async () => {

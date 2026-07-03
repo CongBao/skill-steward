@@ -282,6 +282,31 @@ describe("StagingRegistry", () => {
     await expect(access(tombstone)).resolves.toBeUndefined();
   });
 
+  it("does not let thousands of unrelated entries consume the candidate budget", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "steward-cleanup-budget-"));
+    const root = join(stateDirectory, "staging");
+    await mkdir(root);
+    for (let start = 0; start < 5_000; start += 250) {
+      await Promise.all(Array.from({ length: 250 }, (_value, offset) =>
+        writeFile(join(root, `.unrelated-${start + offset}`), "ignore")
+      ));
+    }
+    const expired = await new StagingRegistry({
+      stateDirectory,
+      now: () => 100,
+      id: () => "zzzz-expired-after-unrelated"
+    }).create({ ttlMs: 10 });
+    const cleaner = new StagingRegistry({ stateDirectory, now: () => 200 });
+
+    let removed = 0;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      removed += await cleaner.cleanupExpired();
+      if (removed > 0) break;
+    }
+    expect(removed).toBe(1);
+    await expect(access(expired.directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fails closed when cleanup sees an unsafe staging root", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-cleanup-root-link-"));
     const stateDirectory = join(base, "state");
