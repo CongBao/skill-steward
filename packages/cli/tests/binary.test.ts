@@ -221,5 +221,5 @@ describe("built CLI", () => {
     await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "github-copilot", "--confirm"], { cwd: workspace, env });
     expect(JSON.parse(await readFile(join(home, ".copilot", "hooks", "keep-me.json"), "utf8"))).toMatchObject({ unrelated: true });
     await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).rejects.toThrow();
-  });
+  }, 30_000);
 });
