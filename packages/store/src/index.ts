@@ -4,3 +4,5 @@ export * from "./manifest-store.js";
 export * from "./history-store.js";
 export * from "./integration-store.js";
 export * from "./preflight-store.js";
+export * from "./evidence-policy-store.js";
+export * from "./evidence-privacy.js";
