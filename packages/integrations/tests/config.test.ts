@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   integrationStatus,
   planIntegration,
   removeIntegration,
+  rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan
 } from "../src/config.js";
 
@@ -163,6 +164,102 @@ it("restores configuration when the post-apply journal cannot commit", async () 
     now: () => new Date("2026-07-03T00:00:00.000Z")
   })).rejects.toBeDefined();
   await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("cleans companions only when the domain proves configuration rollback", async () => {
+  const journalFailure = Object.assign(new Error("journal is unreadable"), { code: "EISDIR" });
+  const cleaned = await rethrowAfterIntegrationApplyFailure({
+    error: journalFailure,
+    companionCreated: true,
+    removeCompanion: async () => true
+  }).catch((error: unknown) => error);
+  expect(cleaned).toBe(journalFailure);
+
+  const cleanupFailure = await rethrowAfterIntegrationApplyFailure({
+    error: journalFailure,
+    companionCreated: true,
+    removeCompanion: async () => false
+  }).catch((error: unknown) => error);
+  expect(cleanupFailure).toMatchObject({
+    code: "INTEGRATION_ROLLBACK_FAILED",
+    cause: journalFailure
+  });
+  expect((cleanupFailure as Error).message).toContain("companion Skill");
+
+  const thrownCleanup = await rethrowAfterIntegrationApplyFailure({
+    error: journalFailure,
+    companionCreated: true,
+    removeCompanion: async () => {
+      throw new Error("permission denied");
+    }
+  }).catch((error: unknown) => error);
+  expect(thrownCleanup).toMatchObject({
+    code: "INTEGRATION_ROLLBACK_FAILED",
+    cause: journalFailure
+  });
+  expect((thrownCleanup as Error).message).toContain("permission denied");
+
+  const incompleteRollback = new Error("configuration may still be active");
+  Object.defineProperty(incompleteRollback, "code", {
+    value: "INTEGRATION_ROLLBACK_FAILED",
+    enumerable: true
+  });
+  let cleanupCalled = false;
+  const preserved = await rethrowAfterIntegrationApplyFailure({
+    error: incompleteRollback,
+    companionCreated: true,
+    removeCompanion: async () => {
+      cleanupCalled = true;
+      return true;
+    }
+  }).catch((error: unknown) => error);
+  expect(preserved).toBe(incompleteRollback);
+  expect(cleanupCalled).toBe(false);
+});
+
+it.each([
+  { harness: "codex" as const, ancestor: ".codex", outsideTarget: "hooks.json" },
+  {
+    harness: "github-copilot" as const,
+    ancestor: ".copilot",
+    outsideTarget: join("hooks", "skill-steward.json")
+  }
+])("refuses a static symlinked ancestor for $harness", async ({
+  harness,
+  ancestor,
+  outsideTarget
+}) => {
+  const home = await mkdtemp(join(tmpdir(), `steward-${harness}-ancestor-`));
+  const outside = await mkdtemp(join(tmpdir(), "steward-outside-"));
+  await symlink(outside, join(home, ancestor), "dir");
+
+  await expect(planIntegration(harness, {
+    home,
+    stateDirectory: join(home, "state")
+  })).rejects.toMatchObject({ code: "INTEGRATION_UNSAFE_PATH" });
+  await expect(access(join(outside, outsideTarget))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("rechecks a newly symlinked missing Copilot ancestor before apply", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-copilot-race-"));
+  const outside = await mkdtemp(join(tmpdir(), "steward-outside-race-"));
+  const options = { home, stateDirectory: join(home, "state") };
+  const plan = await planIntegration("github-copilot", options);
+  await symlink(outside, join(home, ".copilot"), "dir");
+
+  await expect(applyIntegrationPlan(plan, options)).rejects.toMatchObject({
+    code: "INTEGRATION_UNSAFE_PATH"
+  });
+  await expect(access(join(outside, "hooks", "skill-steward.json")))
+    .rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("creates normal missing Copilot ancestor directories", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-copilot-missing-"));
+  const options = { home, stateDirectory: join(home, "state") };
+  await applyIntegrationPlan(await planIntegration("github-copilot", options), options);
+  await expect(access(join(home, ".copilot", "hooks", "skill-steward.json")))
+    .resolves.toBeUndefined();
 });
 
 it("creates a strict ten-minute plan and refuses expired plans before writing", async () => {

@@ -32,10 +32,53 @@ export type IntegrationErrorCode =
   | "INTEGRATION_UNSAFE_PATH";
 
 export class IntegrationError extends Error {
-  constructor(public readonly code: IntegrationErrorCode, message: string) {
-    super(message);
+  constructor(
+    public readonly code: IntegrationErrorCode,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
     this.name = "IntegrationError";
   }
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error
+    && "code" in error
+    && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+export async function rethrowAfterIntegrationApplyFailure(input: {
+  error: unknown;
+  companionCreated: boolean;
+  removeCompanion: () => Promise<boolean>;
+}): Promise<never> {
+  if (
+    !input.companionCreated
+    || errorCode(input.error) === "INTEGRATION_ROLLBACK_FAILED"
+  ) throw input.error;
+
+  let removed = false;
+  try {
+    removed = await input.removeCompanion();
+  } catch (error) {
+    const original = input.error instanceof Error ? input.error.message : String(input.error);
+    const cleanupFailure = error instanceof Error ? error.message : String(error);
+    throw new IntegrationError(
+      "INTEGRATION_ROLLBACK_FAILED",
+      `Integration apply failed (${original}) and its newly created companion Skill could not be removed (${cleanupFailure}). Inspect integration status before retrying.`,
+      { cause: input.error }
+    );
+  }
+  if (removed) throw input.error;
+  const original = input.error instanceof Error ? input.error.message : String(input.error);
+  throw new IntegrationError(
+    "INTEGRATION_ROLLBACK_FAILED",
+    `Integration apply failed (${original}) and its newly created companion Skill could not be removed because it changed before cleanup. Inspect integration status before retrying.`,
+    { cause: input.error }
+  );
 }
 
 type JsonObject = Record<string, unknown>;
@@ -207,15 +250,37 @@ async function assertSafeTarget(targetPath: string, home: string): Promise<void>
   } catch (error) {
     if (!isMissing(error)) throw error;
   }
+  const physicalHome = await realpath(homePath);
+  const relativeParent = dirname(targetPath).slice(homePath.length + 1);
+  let current = homePath;
+  for (const component of relativeParent.split(sep).filter(Boolean)) {
+    current = join(current, component);
+    try {
+      const metadata = await lstat(current);
+      if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+        throw new IntegrationError(
+          "INTEGRATION_UNSAFE_PATH",
+          "Harness configuration ancestors must be physical directories"
+        );
+      }
+      const physicalCurrent = await realpath(current);
+      if (
+        physicalCurrent !== physicalHome
+        && !physicalCurrent.startsWith(`${physicalHome}${sep}`)
+      ) {
+        throw new IntegrationError(
+          "INTEGRATION_UNSAFE_PATH",
+          "Harness configuration ancestor resolves outside the requested home directory"
+        );
+      }
+    } catch (error) {
+      if (isMissing(error)) break;
+      throw error;
+    }
+  }
   try {
-    const [physicalHome, physicalParent] = await Promise.all([
-      realpath(homePath),
-      realpath(dirname(targetPath))
-    ]);
-    if (
-      physicalParent !== physicalHome &&
-      !physicalParent.startsWith(`${physicalHome}${sep}`)
-    ) {
+    const physicalParent = await realpath(dirname(targetPath));
+    if (physicalParent !== physicalHome && !physicalParent.startsWith(`${physicalHome}${sep}`)) {
       throw new IntegrationError(
         "INTEGRATION_UNSAFE_PATH",
         "Harness configuration parent resolves outside the requested home directory"
@@ -381,18 +446,22 @@ function backupPath(targetPath: string, now: Date, discriminator: string): strin
   return `${targetPath}.skill-steward-${stamp}-${safeDiscriminator}.bak`;
 }
 
-async function atomicWrite(path: string, source: string): Promise<void> {
+async function atomicWrite(path: string, source: string, home: string): Promise<void> {
+  await assertSafeTarget(path, home);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await assertSafeTarget(path, home);
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporary, source, { encoding: "utf8", mode: 0o600 });
   await rename(temporary, path);
 }
 
-async function writeBackup(path: string, source: string): Promise<void> {
+async function writeBackup(path: string, source: string, home: string): Promise<void> {
+  await assertSafeTarget(path, home);
   await writeFile(path, source, { encoding: "utf8", mode: 0o600, flag: "wx" });
 }
 
-async function restoreIntegrationTarget(plan: IntegrationPlan): Promise<void> {
+async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Promise<void> {
+  await assertSafeTarget(plan.targetPath, home);
   const current = await readConfig(plan.targetPath);
   if (!current.exists || current.fingerprint !== plan.afterFingerprint) {
     throw new IntegrationError(
@@ -419,7 +488,7 @@ async function restoreIntegrationTarget(plan: IntegrationPlan): Promise<void> {
         "Integration backup changed before rollback"
       );
     }
-    await atomicWrite(plan.targetPath, backupSource);
+    await atomicWrite(plan.targetPath, backupSource, home);
     await unlink(plan.backupPath);
     return;
   }
@@ -593,9 +662,9 @@ export async function applyIntegrationPlan(
     );
   }
   if (plan.backupPath && before.exists && plan.changes.length > 0) {
-    await writeBackup(plan.backupPath, before.source);
+    await writeBackup(plan.backupPath, before.source, options.home);
   }
-  if (plan.changes.length > 0) await atomicWrite(plan.targetPath, afterSource);
+  if (plan.changes.length > 0) await atomicWrite(plan.targetPath, afterSource, options.home);
   const record: IntegrationRecord = {
     schemaVersion: 1,
     id: plan.id,
@@ -614,7 +683,7 @@ export async function applyIntegrationPlan(
   } catch (error) {
     if (plan.changes.length > 0) {
       try {
-        await restoreIntegrationTarget(plan);
+        await restoreIntegrationTarget(plan, options.home);
       } catch (rollbackError) {
         throw new IntegrationError(
           "INTEGRATION_ROLLBACK_FAILED",
@@ -650,7 +719,7 @@ export async function rollbackIntegrationPlan(
     throw new IntegrationError("INTEGRATION_UNSAFE_PATH", "Integration plan target is invalid");
   }
   await assertSafeTarget(plan.targetPath, options.home);
-  await restoreIntegrationTarget(plan);
+  await restoreIntegrationTarget(plan, options.home);
   const now = options.now?.() ?? new Date();
   const record: IntegrationRecord = {
     schemaVersion: 1,
@@ -838,8 +907,8 @@ export async function removeIntegration(
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();
   const path = backupPath(targetPath, now, `${id}-remove`);
-  await writeBackup(path, before.source);
-  await atomicWrite(targetPath, afterSource);
+  await writeBackup(path, before.source, options.home);
+  await atomicWrite(targetPath, afterSource, options.home);
   const record: IntegrationRecord = {
     schemaVersion: 1,
     id,

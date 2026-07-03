@@ -58,6 +58,7 @@ it("wires fresh task preflight into the dashboard application", async () => {
     stdout: vi.fn(),
     stderr: vi.fn()
   };
+  await mkdir(cli.home, { recursive: true });
   const { app, mutationToken } = createDashboardApplication(cli);
 
   const response = await app.inject({

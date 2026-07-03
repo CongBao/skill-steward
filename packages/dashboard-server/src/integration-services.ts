@@ -7,6 +7,7 @@ import {
   planIntegration,
   removeIntegration,
   removeManagedCompanionSkill,
+  rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan,
   type IntegrationConfigOptions,
   type IntegrationHarness,
@@ -49,6 +50,18 @@ export interface IntegrationServiceOptions {
   id?: () => string;
 }
 
+export interface IntegrationServiceDependencies {
+  applyPlan: typeof applyIntegrationPlan;
+  rollbackPlan: typeof rollbackIntegrationPlan;
+  removeCompanion: typeof removeManagedCompanionSkill;
+}
+
+const integrationServiceDefaults: IntegrationServiceDependencies = {
+  applyPlan: applyIntegrationPlan,
+  rollbackPlan: rollbackIntegrationPlan,
+  removeCompanion: removeManagedCompanionSkill
+};
+
 function parseHarness(value: string): IntegrationHarness {
   const parsed = integrationHarnessSchema.safeParse(value);
   if (!parsed.success) {
@@ -61,8 +74,10 @@ function parseHarness(value: string): IntegrationHarness {
 }
 
 export function createIntegrationServices(
-  options: IntegrationServiceOptions
+  options: IntegrationServiceOptions,
+  dependencyOverrides: Partial<IntegrationServiceDependencies> = {}
 ): IntegrationServices {
+  const dependencies = { ...integrationServiceDefaults, ...dependencyOverrides };
   const plans = new Map<IntegrationHarness, IntegrationPlan>();
   const configOptions: IntegrationConfigOptions = {
     home: options.home,
@@ -99,7 +114,7 @@ export function createIntegrationServices(
       const installed = await installCompanionSkill(companionOptions);
       let applied = false;
       try {
-        await applyIntegrationPlan(plan, configOptions);
+        await dependencies.applyPlan(plan, configOptions);
         applied = true;
         try {
           await options.afterApply();
@@ -107,14 +122,14 @@ export function createIntegrationServices(
           const failures: string[] = [];
           if (plan.changes.length > 0) {
             try {
-              await rollbackIntegrationPlan(plan, configOptions);
+              await dependencies.rollbackPlan(plan, configOptions);
             } catch (error) {
               failures.push(error instanceof Error ? error.message : String(error));
             }
           }
           if (installed.created && failures.length === 0) {
             try {
-              if (!await removeManagedCompanionSkill(companionOptions)) {
+              if (!await dependencies.removeCompanion(companionOptions)) {
                 failures.push("Companion Skill changed before rollback");
               }
             } catch (error) {
@@ -133,10 +148,11 @@ export function createIntegrationServices(
           );
         }
       } catch (error) {
-        if (!applied && installed.created) {
-          await removeManagedCompanionSkill(companionOptions);
-        }
-        throw error;
+        return rethrowAfterIntegrationApplyFailure({
+          error,
+          companionCreated: !applied && installed.created,
+          removeCompanion: () => dependencies.removeCompanion(companionOptions)
+        });
       }
       return integrationStatus(harness, configOptions);
     },

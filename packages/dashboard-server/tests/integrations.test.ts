@@ -2,6 +2,11 @@ import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import {
+  applyIntegrationPlan,
+  IntegrationError,
+  removeManagedCompanionSkill
+} from "@skill-steward/integrations";
 import { readLatestReport, writeLatestReport } from "@skill-steward/store";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDashboardApp } from "../src/app.js";
@@ -23,6 +28,8 @@ async function fixture() {
   await writeFile(join(home, ".codex", "hooks.json"), '{"unrelated":true}\n');
   await writeFile(join(companionSkillDirectory, "SKILL.md"), "---\nname: skill-steward-preflight\ndescription: Preflight tasks\n---\nRun preflight.\n");
   let readinessFailure: (() => Promise<void>) | undefined;
+  let domainFailureAfterCommit: Error | undefined;
+  let companionCleanupFailure = false;
   let readinessCalls = 0;
   const integrationServices = createIntegrationServices({
     home,
@@ -36,6 +43,15 @@ async function fixture() {
     },
     now: () => new Date("2026-07-03T00:00:00.000Z"),
     id: () => "integration-record"
+  }, {
+    applyPlan: async (plan, options) => {
+      const record = await applyIntegrationPlan(plan, options);
+      if (domainFailureAfterCommit) throw domainFailureAfterCommit;
+      return record;
+    },
+    removeCompanion: async (options) => companionCleanupFailure
+      ? false
+      : removeManagedCompanionSkill(options)
   });
   const created = createDashboardApp({ mutationToken: "token", integrationServices });
   apps.push(created.app);
@@ -51,6 +67,12 @@ async function fixture() {
         await beforeThrow?.();
         throw error;
       };
+    },
+    failDomainAfterCommit(error: Error) {
+      domainFailureAfterCommit = error;
+    },
+    failCompanionCleanup() {
+      companionCleanupFailure = true;
     },
     readinessCalls: () => readinessCalls
   };
@@ -231,6 +253,77 @@ describe("Harness integration routes", () => {
     expect(failed.statusCode).toBe(409);
     expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     expect(await readFile(configPath, "utf8")).toContain('"external":true');
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .resolves.toBeUndefined();
+  });
+
+  it("removes a new companion when the domain restores a failed journal commit", async () => {
+    const { app, home, stateDirectory } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    const configPath = join(home, ".codex", "hooks.json");
+    const before = await readFile(configPath, "utf8");
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    })).statusCode).toBe(200);
+    await mkdir(join(stateDirectory, "integrations.json"), { recursive: true });
+
+    const failed = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/apply",
+      headers
+    });
+    expect(failed.statusCode).toBe(500);
+    expect(await readFile(configPath, "utf8")).toBe(before);
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves a new companion when domain rollback is incomplete", async () => {
+    const { app, home, failDomainAfterCommit } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    })).statusCode).toBe(200);
+    failDomainAfterCommit(new IntegrationError(
+      "INTEGRATION_ROLLBACK_FAILED",
+      "configuration may still be active"
+    ));
+
+    const failed = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/apply",
+      headers
+    });
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
+    expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
+      .toContain("skill-steward hook prompt --harness codex");
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .resolves.toBeUndefined();
+  });
+
+  it("reports typed rollback failure when post-domain companion cleanup fails", async () => {
+    const { app, home, stateDirectory, failCompanionCleanup } = await fixture();
+    const headers = { "x-skill-steward-token": "token" };
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    })).statusCode).toBe(200);
+    await mkdir(join(stateDirectory, "integrations.json"), { recursive: true });
+    failCompanionCleanup();
+
+    const failed = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/apply",
+      headers
+    });
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
       .resolves.toBeUndefined();
   });

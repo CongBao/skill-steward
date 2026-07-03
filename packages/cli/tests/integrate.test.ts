@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { readLatestReport } from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
+import { integrateApplyCommand } from "../src/commands/integrate.js";
 import { run } from "../src/main.js";
 
 async function exists(path: string): Promise<boolean> {
@@ -200,6 +201,37 @@ describe("integrate command", () => {
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(false);
+  });
+
+  it("removes a newly created companion after a journal failure without rereading it", async () => {
+    const plan = await preview("codex");
+    await mkdir(join(current.context.stateDir, "integrations.json"));
+
+    expect(await apply(plan.id)).toBe(1);
+    expect(current.stderr.splice(0).join("")).toContain("EISDIR");
+    expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
+    expect(await exists(join(
+      current.home, ".agents", "skills", "skill-steward-preflight"
+    ))).toBe(false);
+  });
+
+  it("reports typed incomplete rollback when companion cleanup cannot be proven", async () => {
+    const plan = await preview("codex");
+    await mkdir(join(current.context.stateDir, "integrations.json"));
+
+    expect(await integrateApplyCommand({
+      plan: plan.id,
+      confirm: true,
+      json: false
+    }, current.context, {
+      removeCompanion: async () => false
+    })).toBe(1);
+    const error = current.stderr.splice(0).join("");
+    expect(error).toContain("INTEGRATION_ROLLBACK_FAILED");
+    expect(error).toContain("EISDIR");
+    expect(await exists(join(
+      current.home, ".agents", "skills", "skill-steward-preflight"
+    ))).toBe(true);
   });
 
   it("preserves a pre-existing companion and integration during failed readiness", async () => {

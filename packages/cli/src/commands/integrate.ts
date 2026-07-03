@@ -12,6 +12,7 @@ import {
   planIntegration,
   removeManagedCompanionSkill,
   removeIntegration,
+  rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan,
   type IntegrationConfigOptions,
   type IntegrationHarness,
@@ -40,6 +41,14 @@ export interface IntegrateApplyOptions {
   confirm: boolean;
   json: boolean;
 }
+
+export interface IntegrateApplyDependencies {
+  removeCompanion: typeof removeManagedCompanionSkill;
+}
+
+const integrateApplyDefaults: IntegrateApplyDependencies = {
+  removeCompanion: removeManagedCompanionSkill
+};
 
 class IntegrateCommandError extends Error {
   constructor(public readonly code: string, message: string, options?: ErrorOptions) {
@@ -139,7 +148,8 @@ async function rollbackFailedReadiness(
   plan: IntegrationPlan,
   installed: { created: boolean; path: string },
   context: CliContext,
-  readinessError: unknown
+  readinessError: unknown,
+  dependencies: IntegrateApplyDependencies
 ): Promise<never> {
   const failures: string[] = [];
   if (plan.changes.length > 0) {
@@ -151,7 +161,7 @@ async function rollbackFailedReadiness(
   }
   if (installed.created && failures.length === 0) {
     try {
-      const removed = await removeManagedCompanionSkill({
+      const removed = await dependencies.removeCompanion({
         home: context.home,
         sourceDirectory: packagedSkillDirectory()
       });
@@ -203,7 +213,8 @@ export async function integratePlanCommand(
 
 export async function integrateApplyCommand(
   options: IntegrateApplyOptions,
-  context: CliContext
+  context: CliContext,
+  dependencies: IntegrateApplyDependencies = integrateApplyDefaults
 ): Promise<number> {
   try {
     if (options.plan === undefined) {
@@ -239,20 +250,18 @@ export async function integrateApplyCommand(
         try {
           await initialReadinessScan(context);
         } catch (error) {
-          return rollbackFailedReadiness(plan, installed, context, error);
+          return rollbackFailedReadiness(plan, installed, context, error, dependencies);
         }
         return { plan, record };
       } catch (error) {
-        if (!applied && installed.created) {
-          const status = await integrationStatus(plan.harness, configOptions(context));
-          if (status.status === "not-installed") {
-            await removeManagedCompanionSkill({
+        return rethrowAfterIntegrationApplyFailure({
+          error,
+          companionCreated: !applied && installed.created,
+          removeCompanion: () => dependencies.removeCompanion({
               home: context.home,
               sourceDirectory: packagedSkillDirectory()
-            });
-          }
-        }
-        throw error;
+          })
+        });
       }
     });
     context.stdout(options.json
