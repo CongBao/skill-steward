@@ -78,6 +78,9 @@ importers:
 
   packages/cli:
     devDependencies:
+      '@skill-steward/catalog':
+        specifier: workspace:*
+        version: link:../catalog
       '@skill-steward/dashboard':
         specifier: workspace:*
         version: link:../../apps/dashboard

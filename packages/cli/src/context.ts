@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { RefreshCatalogInput } from "@skill-steward/catalog";
 
 export interface CliContext {
   cwd: string;
@@ -7,6 +8,8 @@ export interface CliContext {
   stdout: (value: string) => void;
   stderr: (value: string) => void;
   stdin?: () => Promise<string>;
+  catalogInspect?: RefreshCatalogInput["inspect"];
+  now?: () => Date;
 }
 
 export function defaultContext(): CliContext {

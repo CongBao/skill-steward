@@ -9,6 +9,8 @@ import {
 } from "@skill-steward/preflight";
 import {
   appendPreflightEvidence,
+  readCatalogSnapshot,
+  readCatalogSources,
   writeLatestReport
 } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
@@ -19,6 +21,8 @@ export interface PreflightCommandOptions {
   stdin: boolean;
   maxSkills: number;
   json: boolean;
+  harness?: string;
+  includeAvailable: boolean;
 }
 
 async function resolveTask(
@@ -49,14 +53,13 @@ function percentage(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function renderHuman(result: PreflightResult): string {
-  const selected = result.candidates.filter(
-    ({ decision }) => decision === "selected"
-  );
+export function renderPreflightHuman(result: PreflightResult): string {
+  const selected = result.candidates.filter(({ decision }) => decision === "use");
+  const install = result.candidates.filter(({ decision }) => decision === "install");
   const excluded = result.candidates.filter(
     ({ decision }) => decision === "excluded"
   );
-  const lines = ["Task Preflight", "", "Selected Skills:"];
+  const lines = ["Task Preflight", "", "Use now:"];
   if (selected.length === 0) {
     lines.push("- none matched the deterministic relevance threshold");
   } else {
@@ -70,6 +73,33 @@ function renderHuman(result: PreflightResult): string {
       }
     }
   }
+
+  lines.push("", "Consider installing:");
+  if (install.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const candidate of install) {
+      lines.push(
+        `- ${candidate.name} — relevance ${percentage(candidate.relevance)}, ` +
+        `${candidate.contextTokens} estimated tokens`
+      );
+      if (candidate.source) {
+        lines.push(
+          `  source ${candidate.source.sourceId} [${candidate.source.trust}], ` +
+          `revision ${candidate.source.revision.slice(0, 12)}, ${candidate.compatibility}`
+        );
+      }
+      if (candidate.highestSeverity) {
+        lines.push(`  highest finding ${candidate.highestSeverity}`);
+      }
+      for (const reason of candidate.reasons) lines.push(`  ${reason.code}: ${reason.detail}`);
+    }
+  }
+
+  lines.push("", "Capability gaps:");
+  lines.push(result.capabilityGaps.length
+    ? `- ${result.capabilityGaps.join(", ")}`
+    : "- none");
 
   lines.push("", "Conflicts:");
   if (result.conflicts.length === 0) {
@@ -93,6 +123,8 @@ function renderHuman(result: PreflightResult): string {
   lines.push(
     "",
     `Selected context: ${result.selectedContextTokens} estimated tokens`,
+    `Installed coverage: ${percentage(result.installedCoverage)}`,
+    `Projected coverage: ${percentage(result.projectedCoverage)}`,
     `Estimated context saved: ${result.estimatedContextSaved} tokens`,
     ""
   );
@@ -114,21 +146,30 @@ export async function preflightCommand(
     const task = await resolveTask(options, context);
     const request = preflightRequestSchema.parse({
       task,
-      maxSkills: options.maxSkills
+      maxSkills: options.maxSkills,
+      ...(options.harness ? { harness: options.harness } : {}),
+      includeAvailable: options.includeAvailable
     });
-    const report = await scanPortfolio(
-      standardRoots({ home: context.home, cwd: context.cwd })
-    );
+    const [report, catalogSources, catalogSnapshot] = await Promise.all([
+      scanPortfolio(standardRoots({ home: context.home, cwd: context.cwd })),
+      readCatalogSources(context.stateDir),
+      readCatalogSnapshot(context.stateDir)
+    ]);
     await writeLatestReport(context.stateDir, report);
     const result = analyzePreflight({
-      ...request,
+      task: request.task,
+      maxSkills: request.maxSkills,
+      includeAvailable: request.includeAvailable,
+      ...(request.harness ? { harness: request.harness } : {}),
       report,
+      catalogSkills: catalogSnapshot?.skills ?? [],
+      catalogSources,
       id: randomUUID(),
       now: new Date()
     });
     await appendPreflightEvidence(context.stateDir, result);
     context.stdout(
-      options.json ? `${JSON.stringify(result, null, 2)}\n` : renderHuman(result)
+      options.json ? `${JSON.stringify(result, null, 2)}\n` : renderPreflightHuman(result)
     );
     return 0;
   } catch (error) {

@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 import packageMetadata from "../package.json" with { type: "json" };
 import { defaultContext, type CliContext } from "./context.js";
 import {
+  catalogAddCommand,
+  catalogEnableCommand,
+  catalogListCommand,
+  catalogRefreshCommand,
+  catalogRemoveCommand
+} from "./commands/catalog.js";
+import {
   dashboardCommand,
   dashboardPort
 } from "./commands/dashboard.js";
@@ -35,6 +42,60 @@ export async function run(
     .description("Inspect and improve local Agent Skills portfolios")
     .version(packageMetadata.version)
     .exitOverride();
+
+  const catalog = program
+    .command("catalog")
+    .description("Manage local metadata indexes for public Skill sources");
+
+  catalog
+    .command("list")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await catalogListCommand(options.json, context);
+    });
+
+  catalog
+    .command("add")
+    .requiredOption("--id <id>")
+    .requiredOption("--name <name>")
+    .requiredOption("--url <url>")
+    .option("--ref <ref>")
+    .option("--subdirectory <path>")
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      id: string;
+      name: string;
+      url: string;
+      ref?: string;
+      subdirectory?: string;
+      json: boolean;
+    }) => {
+      exitCode = await catalogAddCommand(options, context);
+    });
+
+  for (const [name, enabled] of [["enable", true], ["disable", false]] as const) {
+    catalog.command(name)
+      .argument("<id>")
+      .option("--json", "JSON output", false)
+      .action(async (id: string, options: { json: boolean }) => {
+        exitCode = await catalogEnableCommand(id, enabled, options.json, context);
+      });
+  }
+
+  catalog
+    .command("remove")
+    .argument("<id>")
+    .option("--confirm", "confirm source removal", false)
+    .action(async (id: string, options: { confirm: boolean }) => {
+      exitCode = await catalogRemoveCommand(id, options.confirm, context);
+    });
+
+  catalog
+    .command("refresh")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await catalogRefreshCommand(options.json, context);
+    });
 
   program
     .command("dashboard")
@@ -146,6 +207,9 @@ export async function run(
     .option("--task-file <path>", "read task text from a UTF-8 file")
     .option("--stdin", "read task text from stdin", false)
     .option("--max-skills <number>", "maximum recommended Skills", "5")
+    .option("--harness <id>", "target Harness ID")
+    .option("--include-available", "include locally indexed catalog candidates", true)
+    .option("--installed-only", "exclude not-yet-installed candidates", false)
     .option("--json", "JSON output", false)
     .action(
       async (options: {
@@ -153,6 +217,9 @@ export async function run(
         taskFile?: string;
         stdin: boolean;
         maxSkills: string;
+        harness?: string;
+        includeAvailable: boolean;
+        installedOnly: boolean;
         json: boolean;
       }) => {
         exitCode = await preflightCommand(
@@ -161,6 +228,8 @@ export async function run(
             ...(options.taskFile ? { taskFile: options.taskFile } : {}),
             stdin: options.stdin,
             maxSkills: Number(options.maxSkills),
+            ...(options.harness ? { harness: options.harness } : {}),
+            includeAvailable: options.installedOnly ? false : options.includeAvailable,
             json: options.json
           },
           context

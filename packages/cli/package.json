@@ -29,6 +29,7 @@
     "prepack": "pnpm build"
   },
   "devDependencies": {
+    "@skill-steward/catalog": "workspace:*",
     "@skill-steward/dashboard": "workspace:*",
     "@skill-steward/dashboard-server": "workspace:*",
     "@skill-steward/engine": "workspace:*",

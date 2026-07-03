@@ -69,7 +69,10 @@ it("wires fresh task preflight into the dashboard application", async () => {
 
   expect(response.statusCode).toBe(200);
   expect(response.json()).toMatchObject({
-    data: { selectedSkillIds: expect.arrayContaining([expect.any(String)]) }
+    data: {
+      schemaVersion: 2,
+      useCandidateIds: expect.arrayContaining([expect.any(String)])
+    }
   });
   await app.close();
 });
