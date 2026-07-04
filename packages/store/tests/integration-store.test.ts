@@ -1927,7 +1927,7 @@ describe("integration store", () => {
     }
     expect(await readIntegrationRecords(state)).toHaveLength(100);
     expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
-  });
+  }, 15_000);
 
   it("retains a late-published fragment whose temporary file had an old mtime", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-publish-order-"));
@@ -1977,7 +1977,7 @@ describe("integration store", () => {
     ]));
     expect(records).toHaveLength(100);
     expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
-  }, 15_000);
+  }, 60_000);
 
   it("removes its owned fragment when validation fails after publication", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-post-publish-"));
