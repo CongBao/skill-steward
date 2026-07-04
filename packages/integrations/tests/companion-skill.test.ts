@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendIntegrationRecord, readIntegrationRecords } from "@skill-steward/store";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { planIntegration } from "../src/config.js";
+import { applyIntegrationPlan, integrationStatus, planIntegration } from "../src/config.js";
 import {
   companionSkillDirectory,
   inspectCompanionSkill,
@@ -84,6 +84,13 @@ describe("packaged preflight companion Skill", () => {
     expect(source).toContain("codex");
     expect(source).toContain("claude");
     expect(source).toContain("github-copilot");
+    expect(source).toContain("continuation shorthand");
+    expect(source).toContain("active task and latest direction");
+    expect(source).toContain("self-contained description");
+    expect(source).toContain("Preserve the user's wording");
+    expect(source).toContain("without inventing requirements");
+    expect(source).toContain("Do not forward the conversation transcript");
+    expect(source).not.toContain("with the exact user task on standard input");
     expect(source).toMatch(/`use` array/u);
     expect(source).toMatch(/`install` array/u);
     expect(source).not.toMatch(/candidate whose decision|decision is `use`|decision is `install`/u);
@@ -270,6 +277,23 @@ describe("inspectCompanionSkill", () => {
       status: "upgrade-available",
       reason: "COMPANION_UPGRADE_AVAILABLE",
       subplan: {
+        action: "upgrade",
+        proof: {
+          kind: "legacy-alpha",
+          allowlistId: "skill-steward-preflight@0.3.0-alpha.1",
+          installedHookRecordId: "legacy-hook-record"
+        }
+      }
+    });
+
+    await expect(planIntegration("codex", {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      id: () => "reviewed-legacy-upgrade",
+      now: () => new Date("2026-07-04T00:05:00.000Z")
+    })).resolves.toMatchObject({
+      companion: {
         action: "upgrade",
         proof: {
           kind: "legacy-alpha",
@@ -666,6 +690,245 @@ describe("inspectCompanionSkill", () => {
     });
   });
 
+  it("returns unknown when the companion is missing but lifecycle evidence is malformed", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    await appendIntegrationRecord(stateDirectory, {
+      schemaVersion: 1,
+      id: "missing-malformed-record",
+      harness: "codex",
+      action: "apply",
+      status: "installed",
+      targetPath: join(fixture.home, ".codex", "hooks.json"),
+      beforeFingerprint: `sha256:${"a".repeat(64)}`,
+      afterFingerprint: `sha256:${"b".repeat(64)}`,
+      installedEntryFingerprint: `sha256:${"c".repeat(64)}`,
+      createdAt: "2026-07-04T00:00:00.000Z"
+    });
+    const [fragment] = await readdir(join(stateDirectory, "integration-records"));
+    await writeFile(
+      join(stateDirectory, "integration-records", fragment!),
+      "not-json\n",
+      "utf8"
+    );
+
+    await expect(inspectCompanionSkillWithProof({
+      ...fixture,
+      stateDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "unknown",
+      reason: "COMPANION_LIFECYCLE_RECORD_UNAVAILABLE",
+      subplan: { action: "conflict", proof: { kind: "unknown" } }
+    });
+  });
+
+  it("reports conflict when lifecycle evidence exists but the companion tree is missing", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+    await rm(fixture.destination, { recursive: true, force: true });
+
+    await expect(inspectCompanionSkillWithProof({
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      sourceDirectory: fixture.sourceDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "conflict",
+      reason: "COMPANION_LIFECYCLE_EVIDENCE_WITH_MISSING_TREE",
+      subplan: { action: "conflict", proof: { kind: "conflict" } }
+    });
+  });
+
+  it("allows create with v1-only history because v1 never owns the companion", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    await appendIntegrationRecord(stateDirectory, {
+      schemaVersion: 1,
+      id: "v1-hook-only",
+      harness: "codex",
+      action: "apply",
+      status: "installed",
+      targetPath: join(fixture.home, ".codex", "hooks.json"),
+      beforeFingerprint: `sha256:${"a".repeat(64)}`,
+      afterFingerprint: `sha256:${"b".repeat(64)}`,
+      installedEntryFingerprint: `sha256:${"c".repeat(64)}`,
+      createdAt: "2026-07-04T00:00:00.000Z"
+    });
+
+    await expect(inspectCompanionSkillWithProof({
+      ...fixture,
+      stateDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "missing",
+      subplan: { action: "create", proof: { kind: "new" } }
+    });
+  });
+
+  it("binds a final v2 removal head when planning a safe recreate", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    const fingerprint = `sha256:${"d".repeat(64)}`;
+    await appendIntegrationRecord(stateDirectory, {
+      schemaVersion: 2,
+      id: "final-remove-head",
+      harness: "codex",
+      action: "remove",
+      status: "removed",
+      targetPath: join(fixture.home, ".codex", "hooks.json"),
+      beforeFingerprint: `sha256:${"a".repeat(64)}`,
+      afterFingerprint: `sha256:${"b".repeat(64)}`,
+      installedEntryFingerprint: `sha256:${"c".repeat(64)}`,
+      companion: {
+        action: "remove",
+        path: fixture.destination,
+        before: { state: "exact", fingerprint },
+        after: { state: "absent" },
+        source: { fingerprint },
+        proof: { category: "recorded" },
+        installedFingerprint: fingerprint,
+        consumers: []
+      },
+      trigger: {
+        planId: "final-remove-plan",
+        harness: "codex",
+        createdAt: "2026-07-04T00:00:00.000Z"
+      },
+      createdAt: "2026-07-04T00:00:00.000Z"
+    });
+
+    await expect(inspectCompanionSkillWithProof({
+      ...fixture,
+      stateDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "missing",
+      subplan: {
+        action: "create",
+        proof: { kind: "new", lifecycleRecordId: "final-remove-head" }
+      }
+    });
+  });
+
+  it("rejects a final removal head for a different companion path", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    const fingerprint = `sha256:${"d".repeat(64)}`;
+    await appendIntegrationRecord(stateDirectory, {
+      schemaVersion: 2,
+      id: "wrong-path-final-remove",
+      harness: "codex",
+      action: "remove",
+      status: "removed",
+      targetPath: join(fixture.home, ".codex", "hooks.json"),
+      beforeFingerprint: `sha256:${"a".repeat(64)}`,
+      afterFingerprint: `sha256:${"b".repeat(64)}`,
+      installedEntryFingerprint: `sha256:${"c".repeat(64)}`,
+      companion: {
+        action: "remove",
+        path: join(fixture.home, ".agents", "skills", "different-companion"),
+        before: { state: "exact", fingerprint },
+        after: { state: "absent" },
+        source: { fingerprint },
+        proof: { category: "recorded" },
+        installedFingerprint: fingerprint,
+        consumers: []
+      },
+      trigger: {
+        planId: "wrong-path-remove-plan",
+        harness: "codex",
+        createdAt: "2026-07-04T00:00:00.000Z"
+      },
+      createdAt: "2026-07-04T00:00:00.000Z"
+    });
+
+    await expect(inspectCompanionSkillWithProof({
+      ...fixture,
+      stateDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "conflict",
+      reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY",
+      subplan: { action: "conflict", proof: { kind: "conflict" } }
+    });
+  });
+
+  it("returns unknown when newer v1 evidence shadows an active v2 missing tree", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+    await rm(fixture.destination, { recursive: true, force: true });
+    await appendIntegrationRecord(fixture.stateDirectory, {
+      schemaVersion: 1,
+      id: "newer-v1-shadow",
+      harness: "codex",
+      action: "apply",
+      status: "installed",
+      targetPath: fixture.plan.targetPath,
+      beforeFingerprint: fixture.plan.expectedBeforeFingerprint,
+      afterFingerprint: fixture.plan.afterFingerprint,
+      installedEntryFingerprint: fixture.plan.installedEntryFingerprint,
+      createdAt: "2026-07-04T01:01:00.000Z"
+    });
+
+    await expect(inspectCompanionSkillWithProof({
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      sourceDirectory: fixture.sourceDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "unknown",
+      reason: "COMPANION_LIFECYCLE_RECORD_UNPROVABLE",
+      subplan: { action: "conflict", proof: { kind: "unknown" } }
+    });
+  });
+
+  it("invalidates a create plan when a consumer record appears before apply", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    const options = {
+      home: fixture.home,
+      stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      now: () => new Date("2026-07-04T00:00:00.000Z")
+    };
+    const plan = await planIntegration("codex", options);
+    if (!("fingerprint" in plan.companion.after)) {
+      throw new Error("expected exact packaged companion manifest");
+    }
+    const fingerprint = plan.companion.after.fingerprint;
+    await appendIntegrationRecord(stateDirectory, {
+      schemaVersion: 2,
+      id: "consumer-arrived",
+      harness: "codex",
+      action: "apply",
+      status: "installed",
+      targetPath: plan.targetPath,
+      beforeFingerprint: plan.expectedBeforeFingerprint,
+      afterFingerprint: plan.afterFingerprint,
+      installedEntryFingerprint: plan.installedEntryFingerprint,
+      companion: {
+        action: "create",
+        path: fixture.destination,
+        before: { state: "absent" },
+        after: { state: "exact", fingerprint },
+        source: { fingerprint },
+        proof: { category: "new" },
+        installedFingerprint: fingerprint,
+        consumers: ["codex"]
+      },
+      trigger: {
+        planId: plan.id,
+        harness: "codex",
+        createdAt: "2026-07-04T00:00:00.000Z"
+      },
+      createdAt: "2026-07-04T00:00:00.000Z"
+    });
+
+    await expect(applyIntegrationPlan(plan, {
+      ...options,
+      now: () => new Date("2026-07-04T00:01:00.000Z")
+    })).rejects.toMatchObject({ code: "INTEGRATION_DRIFTED" });
+  });
+
   it("does not infer ownership from exact package equality", async () => {
     const fixture = await companionFixture();
     await mkdir(dirname(fixture.destination), { recursive: true });
@@ -691,6 +954,123 @@ describe("inspectCompanionSkill", () => {
       status: "current",
       reason: "COMPANION_CURRENT",
       subplan: { action: "none", proof: { kind: "recorded" } }
+    });
+  });
+
+  it("binds exact private recorded ownership proof into the reviewed plan", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+
+    const plan = await planIntegration("codex", {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      id: () => "reviewed-current-plan",
+      now: () => new Date("2026-07-04T01:05:00.000Z")
+    });
+
+    expect(plan.companion).toMatchObject({
+      action: "none",
+      expectedBefore: { state: "exact" },
+      proof: {
+        kind: "recorded",
+        recordId: "recorded-current"
+      }
+    });
+
+    await expect(applyIntegrationPlan(plan, {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      now: () => new Date("2026-07-04T01:06:00.000Z")
+    })).rejects.toMatchObject({
+      code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+    });
+  });
+
+  it("rejects a reviewed plan when the record head and consumer set change", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+    const plan = await planIntegration("codex", {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      id: () => "reviewed-before-consumer-change",
+      now: () => new Date("2026-07-04T01:05:00.000Z")
+    });
+    const [record] = await readIntegrationRecords(fixture.stateDirectory);
+    if (record?.schemaVersion !== 2) throw new Error("expected v2 companion record");
+    await appendIntegrationRecord(fixture.stateDirectory, {
+      ...record,
+      id: "recorded-consumer-change",
+      companion: {
+        ...record.companion,
+        consumers: ["claude-code", "codex"]
+      },
+      trigger: {
+        planId: "consumer-change",
+        harness: "codex",
+        createdAt: "2026-07-04T01:06:00.000Z"
+      },
+      createdAt: "2026-07-04T01:06:00.000Z"
+    });
+
+    await expect(applyIntegrationPlan(plan, {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      now: () => new Date("2026-07-04T01:07:00.000Z")
+    })).rejects.toMatchObject({ code: "INTEGRATION_DRIFTED" });
+  });
+
+  it("reports current and upgrade companion states separately from the Hook", async () => {
+    for (const [state, expected] of [
+      ["current", "current"],
+      ["old", "upgrade-available"]
+    ] as const) {
+      const fixture = await recordedEvidenceFixture(state);
+
+      await expect(integrationStatus("codex", {
+        home: fixture.home,
+        stateDirectory: fixture.stateDirectory,
+        companionSourceDirectory: fixture.sourceDirectory
+      })).resolves.toMatchObject({
+        status: "needs-trust",
+        companion: {
+          status: expected,
+          path: fixture.destination
+        }
+      });
+    }
+  });
+
+  it("keeps a live Hook visible when companion state is conflict or unknown", async () => {
+    const conflict = await recordedEvidenceFixture("current");
+    await writeFile(join(conflict.destination, "EXTRA.md"), "external\n", "utf8");
+    await expect(integrationStatus("codex", {
+      home: conflict.home,
+      stateDirectory: conflict.stateDirectory,
+      companionSourceDirectory: conflict.sourceDirectory
+    })).resolves.toMatchObject({
+      status: "needs-trust",
+      companion: { status: "conflict" }
+    });
+
+    const unknown = await recordedEvidenceFixture("current");
+    const [fragment] = await readdir(join(unknown.stateDirectory, "integration-records"));
+    await writeFile(
+      join(unknown.stateDirectory, "integration-records", fragment!),
+      "not-json\n",
+      "utf8"
+    );
+    await expect(integrationStatus("codex", {
+      home: unknown.home,
+      stateDirectory: unknown.stateDirectory,
+      companionSourceDirectory: unknown.sourceDirectory
+    })).resolves.toMatchObject({
+      status: "needs-trust",
+      companion: {
+        status: "unknown",
+        reason: "COMPANION_LIFECYCLE_RECORD_UNAVAILABLE"
+      }
     });
   });
 
@@ -745,6 +1125,19 @@ describe("inspectCompanionSkill", () => {
       status: "upgrade-available",
       reason: "COMPANION_UPGRADE_AVAILABLE",
       subplan: { action: "upgrade", proof: { kind: "recorded", recordId: "recorded-old" } }
+    });
+
+    await expect(planIntegration("codex", {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory,
+      id: () => "reviewed-recorded-upgrade",
+      now: () => new Date("2026-07-04T01:05:00.000Z")
+    })).resolves.toMatchObject({
+      companion: {
+        action: "upgrade",
+        proof: { kind: "recorded", recordId: "recorded-old" }
+      }
     });
   });
 

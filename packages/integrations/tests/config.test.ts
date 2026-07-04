@@ -182,6 +182,23 @@ function replaceFirstBytes(
 }
 
 describe("companion reviewed subplan", () => {
+  it("reports Hook and missing companion state independently", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-status-missing-"));
+
+    await expect(integrationStatus("codex", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    })).resolves.toMatchObject({
+      status: "not-installed",
+      companion: {
+        status: "missing",
+        reason: "COMPANION_MISSING",
+        path: companionSkillDirectory(home)
+      }
+    });
+  });
+
   it("plans absent as create with all required bound fields", async () => {
     const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-create-"));
     const plan = await planIntegrationDomain("codex", {
@@ -215,7 +232,7 @@ describe("companion reviewed subplan", () => {
     expect(plan.companion).toMatchObject({
       action: "conflict",
       expectedBefore: { state: "exact" },
-      proof: { kind: "conflict", reason: "COMPANION_UNMANAGED_TREE" }
+      proof: { kind: "conflict", reason: "COMPANION_LEGACY_TREE_NOT_ALLOWLISTED" }
     });
   });
 
@@ -264,7 +281,7 @@ describe("companion reviewed subplan", () => {
     expect(plan.companion).toMatchObject({
       action: "conflict",
       expectedBefore: { state: "exact" },
-      proof: { kind: "conflict", reason: "COMPANION_UNMANAGED_TREE" }
+      proof: { kind: "conflict", reason: "COMPANION_LEGACY_TREE_NOT_ALLOWLISTED" }
     });
   });
 
@@ -296,6 +313,66 @@ describe("companion reviewed subplan", () => {
     });
     await expect(access(companionSkillDirectory(home))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects packaged companion drift against the reviewed subplan before writing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-source-drift-"));
+    const source = join(home, "package", "skill-steward-preflight");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "reviewed\n", "utf8");
+    const options = {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: source
+    };
+    const plan = await planIntegrationDomain("codex", options);
+
+    await writeFile(join(source, "SKILL.md"), "changed after review\n", "utf8");
+
+    await expect(applyIntegrationPlanPublic(plan, options)).rejects.toMatchObject({
+      code: "INTEGRATION_DRIFTED"
+    });
+    await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(companionSkillDirectory(home))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects companion destination drift against the reviewed subplan before writing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-destination-drift-"));
+    const options = {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const plan = await planIntegrationDomain("codex", options);
+    const destination = companionSkillDirectory(home);
+    await mkdir(destination, { recursive: true });
+    await writeFile(join(destination, "SKILL.md"), "arrived after review\n", "utf8");
+
+    await expect(applyIntegrationPlanPublic(plan, options)).rejects.toMatchObject({
+      code: "INTEGRATION_DRIFTED"
+    });
+    expect(await readFile(join(destination, "SKILL.md"), "utf8"))
+      .toBe("arrived after review\n");
+    await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects Harness configuration drift during Phase 3 revalidation", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-config-drift-"));
+    const options = {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const plan = await planIntegrationDomain("codex", options);
+    const config = target(home, "codex");
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, '{"external":true}\n', "utf8");
+
+    await expect(applyIntegrationPlanPublic(plan, options)).rejects.toMatchObject({
+      code: "INTEGRATION_DRIFTED"
+    });
+    expect(await readFile(config, "utf8")).toBe('{"external":true}\n');
+    await expect(access(companionSkillDirectory(home))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses upgrade and conflict subplans before writing", async () => {
@@ -332,13 +409,11 @@ describe("companion reviewed subplan", () => {
     };
     const conflictPlan = await planIntegrationDomain("codex", conflictOptions);
 
-    for (const [plan, options] of [
-      [upgradePlan, upgradeOptions],
-      [conflictPlan, conflictOptions]
-    ] as const) {
-      await expect(applyIntegrationPlanPublic(plan, options)).rejects.toMatchObject({
-        code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
-      });
+    await expect(applyIntegrationPlanPublic(upgradePlan, upgradeOptions))
+      .rejects.toMatchObject({ code: "INTEGRATION_DRIFTED" });
+    await expect(applyIntegrationPlanPublic(conflictPlan, conflictOptions))
+      .rejects.toMatchObject({ code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE" });
+    for (const options of [upgradeOptions, conflictOptions]) {
       await expect(access(target(options.home, "codex")))
         .rejects.toMatchObject({ code: "ENOENT" });
     }
@@ -370,7 +445,7 @@ describe("companion reviewed subplan", () => {
     })));
 
     await expect(applyIntegrationPlanPublic(storedPlan, options)).rejects.toMatchObject({
-      code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+      code: "INTEGRATION_DRIFTED"
     });
     await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -439,7 +514,7 @@ it("keeps product lifecycle writes on v1 until the finalized companion transacti
   expect(source).not.toContain("appendIntegrationRecordV2");
 });
 
-it("keeps the companion tree when the Phase 2 product path removes a Harness", async () => {
+it("keeps the companion tree before consumer-aware removal is enabled", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-phase2-remove-retains-companion-"));
   const options = {
     home,

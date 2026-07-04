@@ -122,7 +122,7 @@ describe("built CLI", () => {
     });
   });
 
-  it("runs cached Hooks and fails closed on Phase 1 integration apply for all adapters", async () => {
+  it("runs cached Hooks and fails closed before companion transactions for all adapters", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-vertical-slice-"));
     const home = join(base, "home");
     const workspace = join(base, "workspace");

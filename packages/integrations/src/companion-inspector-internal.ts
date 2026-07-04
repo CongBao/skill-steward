@@ -16,6 +16,7 @@ import {
 import type { IntegrationHarness } from "./domain.js";
 import {
   resolveCompanionManagedProof,
+  resolveMissingCompanionLifecycle,
   type CompanionConfigProofOptions
 } from "./companion-legacy.js";
 
@@ -143,6 +144,27 @@ export async function inspectCompanionSkillWithProof(
     });
   } catch (error) {
     if (error instanceof CompanionManifestError && error.code === "COMPANION_TREE_MISSING") {
+      let lifecycleRecordId: string | undefined;
+      if (input.stateDirectory !== undefined && input.harness !== undefined) {
+        const lifecycle = await resolveMissingCompanionLifecycle(input.stateDirectory, path);
+        if (lifecycle.state !== "clear") {
+          const proofKind = lifecycle.state === "unknown" ? "unknown" : "conflict";
+          return {
+            status: lifecycle.state,
+            reason: lifecycle.reason,
+            path,
+            subplan: companionSubplanSchema.parse({
+              action: "conflict",
+              path,
+              expectedBefore: { state: "unknown", reason: lifecycle.reason },
+              after,
+              source,
+              proof: { kind: proofKind, reason: lifecycle.reason }
+            })
+          };
+        }
+        lifecycleRecordId = lifecycle.lifecycleRecordId;
+      }
       return {
         status: "missing",
         reason: "COMPANION_MISSING",
@@ -153,7 +175,12 @@ export async function inspectCompanionSkillWithProof(
           expectedBefore: { state: "absent" },
           after,
           source,
-          proof: { kind: "new" }
+          proof: {
+            kind: "new",
+            ...(lifecycleRecordId
+              ? { lifecycleRecordId }
+              : {})
+          }
         })
       };
     }

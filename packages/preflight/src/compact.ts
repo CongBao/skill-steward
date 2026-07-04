@@ -8,7 +8,7 @@ import {
   type PreflightResult
 } from "./domain.js";
 
-export const COMPACT_PREFLIGHT_SCHEMA_VERSION = 2 as const;
+export const COMPACT_PREFLIGHT_SCHEMA_VERSION = 3 as const;
 export const COMPACT_PREFLIGHT_MAX_BYTES = 4_096 as const;
 
 const STABLE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u;
@@ -40,11 +40,23 @@ export const compactPreflightResultSchema = z.object({
   installedCoverage: z.number().min(0).max(1),
   projectedCoverage: z.number().min(0).max(1),
   selectedContextTokens: z.number().int().nonnegative(),
-  feedbackCommand: utf8String(256)
+  feedbackCommand: utf8String(256).nullable()
 }).strict().superRefine((result, context) => {
   const expectedFeedbackCommand =
     `skill-steward evidence feedback --preflight ${result.preflightId} --label useful`;
-  if (result.feedbackCommand !== expectedFeedbackCommand) {
+  if (
+    result.feedbackCommand === null
+    && !result.conflictWarningCodes.includes("PREFLIGHT_PERSISTENCE_UNAVAILABLE")
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["feedbackCommand"],
+      message: "Unavailable feedback requires the persistence warning"
+    });
+  } else if (
+    result.feedbackCommand !== null
+    && result.feedbackCommand !== expectedFeedbackCommand
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["feedbackCommand"],
@@ -124,9 +136,21 @@ function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export function toCompactPreflight(input: PreflightResult): CompactPreflightResult {
+export function toCompactPreflight(
+  input: PreflightResult,
+  options: {
+    additionalConflictWarningCodes?: string[];
+    feedbackAvailable?: boolean;
+  } = {}
+): CompactPreflightResult {
   const result = preflightResultSchema.parse(input);
   const preflightId = compactIdentifier(result.id);
+  const requiredConflictCodes = unique(
+    (options.additionalConflictWarningCodes ?? []).map(compactCode)
+  ).sort(compareCodeUnits);
+  const observedConflictCodes = unique(result.conflicts.map(({ code }) =>
+    compactCode(code)
+  )).filter((code) => !requiredConflictCodes.includes(code)).sort(compareCodeUnits);
   const compact = {
     schemaVersion: COMPACT_PREFLIGHT_SCHEMA_VERSION,
     preflightId,
@@ -136,16 +160,19 @@ export function toCompactPreflight(input: PreflightResult): CompactPreflightResu
     inventoryWarningCodes: unique(result.inventoryWarnings.map(({ code }) =>
       compactCode(code)
     )).sort(compareCodeUnits).slice(0, 3),
-    conflictWarningCodes: unique(result.conflicts.map(({ code }) =>
-      compactCode(code)
-    )).sort(compareCodeUnits).slice(0, 4),
+    conflictWarningCodes: [
+      ...requiredConflictCodes,
+      ...observedConflictCodes
+    ].slice(0, 4).sort(compareCodeUnits),
     capabilityGaps: unique(result.capabilityGaps.map((gap) =>
       compactText(gap, 32, "unknown")
     )).slice(0, 6),
     installedCoverage: result.installedCoverage,
     projectedCoverage: result.projectedCoverage,
     selectedContextTokens: result.selectedContextTokens,
-    feedbackCommand: `skill-steward evidence feedback --preflight ${preflightId} --label useful`
+    feedbackCommand: options.feedbackAvailable === false
+      ? null
+      : `skill-steward evidence feedback --preflight ${preflightId} --label useful`
   } satisfies CompactPreflightResult;
   return compactPreflightResultSchema.parse(compact);
 }

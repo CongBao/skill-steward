@@ -5,7 +5,7 @@ description: Use when a task may benefit from installed or not-yet-installed Age
 
 # Skill Steward Preflight
 
-Run `skill-steward preflight --stdin --compact-json` with the exact user task on standard input. When the current Harness is known, pass its ID with `--harness` (`codex`, `claude`, or `github-copilot`).
+Run `skill-steward preflight --stdin --compact-json` with a self-contained description of the user's current task on standard input. Preserve the user's wording for a complete request. If the latest message is continuation shorthand such as “continue” or “go on,” describe the active task and latest direction without inventing requirements. Do not forward the conversation transcript. When the current Harness is known, pass its ID with `--harness` (`codex`, `claude`, or `github-copilot`).
 
 1. Use the recommendations in the `use` array for the current task.
 2. Present recommendations in the `install` array as approval-required options; never install them automatically.

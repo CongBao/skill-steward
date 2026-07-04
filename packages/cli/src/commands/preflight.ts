@@ -30,6 +30,16 @@ export interface PreflightCommandOptions {
   includeAvailable: boolean;
 }
 
+export interface PreflightCommandDependencies {
+  writeReport: typeof writeLatestReport;
+  appendEvidence: typeof appendPreflightEvidence;
+}
+
+const preflightCommandDefaults: PreflightCommandDependencies = {
+  writeReport: writeLatestReport,
+  appendEvidence: appendPreflightEvidence
+};
+
 async function resolveTask(
   options: PreflightCommandOptions,
   context: CliContext
@@ -103,7 +113,10 @@ function exclusionReason(
   return candidate.reasons.at(-1)?.detail ?? "lower marginal value";
 }
 
-export function renderPreflightHuman(result: PreflightResult): string {
+export function renderPreflightHuman(
+  result: PreflightResult,
+  options: { feedbackAvailable?: boolean } = {}
+): string {
   const selected = result.candidates.filter(({ decision }) => decision === "use");
   const install = result.candidates.filter(({ decision }) => decision === "install");
   const excluded = result.candidates.filter(
@@ -192,19 +205,31 @@ export function renderPreflightHuman(result: PreflightResult): string {
     `Selected context: ${result.selectedContextTokens} estimated tokens`,
     `Installed coverage: ${percentage(result.installedCoverage)}`,
     `Projected coverage: ${percentage(result.projectedCoverage)}`,
-    `Estimated context saved: ${result.estimatedContextSaved} tokens`,
-    "",
-    "Record feedback:",
-    `skill-steward evidence feedback --preflight ${result.id} --label useful`,
-    ""
+    `Estimated context saved: ${result.estimatedContextSaved} tokens`
   );
+  if (options.feedbackAvailable === false) {
+    lines.push(
+      "",
+      "Feedback unavailable: this run could not be saved to the private state directory.",
+      ""
+    );
+  } else {
+    lines.push(
+      "",
+      "Record feedback:",
+      `skill-steward evidence feedback --preflight ${result.id} --label useful`,
+      ""
+    );
+  }
   return lines.join("\n");
 }
 
 export async function preflightCommand(
   options: PreflightCommandOptions,
-  context: CliContext
+  context: CliContext,
+  dependencyOverrides: Partial<PreflightCommandDependencies> = {}
 ): Promise<number> {
+  const dependencies = { ...preflightCommandDefaults, ...dependencyOverrides };
   try {
     if (
       !Number.isInteger(options.maxSkills) ||
@@ -225,7 +250,6 @@ export async function preflightCommand(
       readCatalogSources(context.stateDir),
       readCatalogSnapshot(context.stateDir)
     ]);
-    await writeLatestReport(context.stateDir, report);
     const result = analyzePreflight({
       task: request.task,
       maxSkills: request.maxSkills,
@@ -238,15 +262,43 @@ export async function preflightCommand(
       now: new Date()
     });
     const harness = normalizeEvidenceHarness(request.harness);
-    await appendPreflightEvidence(context.stateDir, result, {
-      delivery: "cli",
-      ...(harness ? { harness } : {})
-    });
+    const persistence = await Promise.allSettled([
+      dependencies.writeReport(context.stateDir, report),
+      dependencies.appendEvidence(context.stateDir, result, {
+        delivery: "cli",
+        ...(harness ? { harness } : {})
+      })
+    ]);
+    const persistenceAvailable = persistence.every(({ status }) => status === "fulfilled");
+    const evidenceAvailable = persistence[1]?.status === "fulfilled";
+    if (!persistenceAvailable) {
+      const unavailable = [
+        ...(persistence[0]?.status === "rejected" ? ["portfolio cache"] : []),
+        ...(persistence[1]?.status === "rejected" ? ["evidence"] : [])
+      ];
+      const subject = unavailable.length === 2
+        ? "portfolio cache and evidence were"
+        : `${unavailable[0]} was`;
+      context.stderr(
+        `PREFLIGHT_PERSISTENCE_UNAVAILABLE: ${subject} not saved; ` +
+        (evidenceAvailable
+          ? "recommendations remain valid for this run, and evidence feedback remains available.\n"
+          : "recommendations remain valid for this run, but feedback cannot be recorded.\n")
+      );
+    }
+    const compact = options.compactJson
+      ? toCompactPreflight(result, !persistenceAvailable
+          ? {
+              additionalConflictWarningCodes: ["PREFLIGHT_PERSISTENCE_UNAVAILABLE"],
+              feedbackAvailable: evidenceAvailable
+            }
+          : { feedbackAvailable: true })
+      : undefined;
     context.stdout(options.compactJson
-      ? `${JSON.stringify(toCompactPreflight(result))}\n`
+      ? `${JSON.stringify(compact)}\n`
       : options.json
         ? `${JSON.stringify(result, null, 2)}\n`
-        : renderPreflightHuman(result)
+        : renderPreflightHuman(result, { feedbackAvailable: evidenceAvailable })
     );
     return 0;
   } catch (error) {
