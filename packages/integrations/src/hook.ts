@@ -1,5 +1,5 @@
 import {
-  preflightResultSchema,
+  toCompactPreflight,
   type PreflightResult
 } from "@skill-steward/preflight";
 import {
@@ -57,15 +57,18 @@ function outputFor(context: string): PromptHookOutput {
 
 export function renderPromptHook(input: RenderPromptHookInput): PromptHookOutput {
   promptInjectionHarnessSchema.parse(input.harness);
-  const result = preflightResultSchema.parse(input.result);
+  const result = toCompactPreflight(input.result);
   const maxBytes = input.maxBytes ?? 2_048;
   if (!Number.isInteger(maxBytes) || maxBytes < 1) return {};
 
   const lists = {
-    id: result.id,
-    use: unique(result.candidates.filter(({ decision }) => decision === "use").map(({ name }) => name)),
-    install: unique(result.candidates.filter(({ decision }) => decision === "install").map(({ name }) => name)),
-    warnings: unique(result.conflicts.map(({ code }) => code)),
+    id: result.preflightId,
+    use: unique(result.use.map(({ name }) => name)),
+    install: unique(result.install.map(({ name }) => name)),
+    warnings: unique([
+      ...result.inventoryWarningCodes,
+      ...result.conflictWarningCodes
+    ]),
     gaps: unique(result.capabilityGaps)
   };
   let output = outputFor(renderContext(lists));

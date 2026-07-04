@@ -13,7 +13,11 @@ import {
   type DashboardApp,
   startDashboardServer
 } from "@skill-steward/dashboard-server";
-import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import {
+  activeMutableRoots,
+  buildInventoryPlan,
+  scanInventory
+} from "@skill-steward/engine";
 import { writeLatestReport } from "@skill-steward/store";
 import type { CliContext } from "../context.js";
 
@@ -80,9 +84,10 @@ export function createDashboardApplication(
   const preflightServices = createPreflightServices({
     stateDirectory: context.stateDir,
     currentPortfolio: async () => {
-      const report = await scanPortfolio(
-        standardRoots({ home: context.home, cwd: context.cwd })
-      );
+      const report = await scanInventory({
+        home: context.home,
+        cwd: context.cwd
+      });
       await writeLatestReport(context.stateDir, report);
       return report;
     },
@@ -103,7 +108,10 @@ export function createDashboardApplication(
   });
   const governanceServices = createGovernanceServices({
     stateDirectory: context.stateDir,
-    activeRoots: () => standardRoots({ home: context.home, cwd: context.cwd }),
+    activeRoots: async () => activeMutableRoots(await buildInventoryPlan({
+      home: context.home,
+      cwd: context.cwd
+    })),
     afterCommit: async () => {
       await dashboardServices.scan([]);
     },

@@ -139,9 +139,13 @@ describe("catalog routes", () => {
     const preflightServices = createPreflightServices({
       stateDirectory,
       currentPortfolio: async () => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         generatedAt: "2026-07-03T00:00:00.000Z",
         portfolioFingerprint: `sha256:${"c".repeat(64)}`,
+        workspace: {
+          path: "/workspace",
+          identity: `sha256:${"f".repeat(64)}`
+        },
         skills: [{
           id: "security-installed",
           name: "security-review",
@@ -152,9 +156,37 @@ describe("catalog routes", () => {
           visibleTo: ["codex"],
           fingerprint: `sha256:${"d".repeat(64)}`,
           files: [],
-          estimatedTokens: 200
+          estimatedTokens: 200,
+          ownership: "direct",
+          sourceIds: ["codex:fixture"],
+          exposures: [{
+            harness: "codex",
+            effectiveName: "security-review",
+            state: "effective",
+            sourceId: "codex:fixture",
+            reason: "TEST_EFFECTIVE"
+          }]
         }],
-        findings: []
+        findings: [],
+        inventory: {
+          sources: [{
+            id: "codex:fixture",
+            harness: "codex",
+            scope: "global",
+            kind: "direct-root",
+            path: "/skills",
+            status: "scanned",
+            skillCount: 1,
+            effectiveSkillCount: 1
+          }],
+          harnesses: [{
+            harness: "codex",
+            status: "verified",
+            sourceIds: ["codex:fixture"],
+            skillCount: 1,
+            effectiveSkillCount: 1
+          }]
+        }
       }),
       catalogState: async () => ({
         sources: [source],
@@ -202,7 +234,7 @@ describe("catalog routes", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       useCandidateIds: ["security-installed"],
       installCandidateIds: ["testing-available"]
     });

@@ -1,4 +1,12 @@
-import type { Finding, PortfolioReport, SkillRecord } from "@skill-steward/engine";
+import {
+  isVisibilityReport,
+  type Finding,
+  type InventorySource,
+  type HarnessCoverage,
+  type PortfolioReport,
+  type SkillRecord,
+  type SkillRecordV2
+} from "@skill-steward/engine";
 import {
   buildKpis,
   type HistorySummary,
@@ -22,10 +30,14 @@ export interface DashboardSnapshot {
     findingCount: number;
   };
   kpis: KpiResult[];
-  skills: SkillRecord[];
+  skills: Array<SkillRecord | SkillRecordV2>;
   priorityFindings: Finding[];
   history: HistorySummary[];
   roots: RootStatus[];
+  inventory: null | {
+    sources: InventorySource[];
+    harnesses: HarnessCoverage[];
+  };
 }
 
 const severityRank: Record<Finding["severity"], number> = {
@@ -49,7 +61,8 @@ export function buildDashboardSnapshot({
       skills: [],
       priorityFindings: [],
       history,
-      roots
+      roots,
+      inventory: null
     };
   }
 
@@ -72,6 +85,7 @@ export function buildDashboardSnapshot({
       .sort((left, right) => severityRank[right.severity] - severityRank[left.severity])
       .slice(0, 5),
     history,
-    roots
+    roots,
+    inventory: isVisibilityReport(latest) ? latest.inventory : null
   };
 }

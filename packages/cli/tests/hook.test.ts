@@ -10,7 +10,7 @@ import {
   writeCatalogSources,
   writeLatestReport
 } from "@skill-steward/store";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliContext } from "../src/context.js";
 import { run } from "../src/main.js";
 
@@ -45,9 +45,13 @@ async function enableLearning(stateDir: string): Promise<void> {
 
 async function seedState(stateDir: string): Promise<void> {
   await writeLatestReport(stateDir, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+    workspace: {
+      path: "/fixture/workspace",
+      identity: `sha256:${"e".repeat(64)}`
+    },
     skills: [{
       id: "security",
       name: "security-review",
@@ -58,9 +62,46 @@ async function seedState(stateDir: string): Promise<void> {
       visibleTo: ["codex", "claude"],
       fingerprint: `sha256:${"b".repeat(64)}`,
       files: [],
-      estimatedTokens: 200
+      estimatedTokens: 200,
+      ownership: "direct",
+      sourceIds: ["codex:fixture", "claude:fixture"],
+      exposures: [
+        {
+          harness: "codex",
+          effectiveName: "security-review",
+          state: "effective",
+          sourceId: "codex:fixture",
+          reason: "TEST_EFFECTIVE"
+        },
+        {
+          harness: "claude",
+          effectiveName: "security-review",
+          state: "effective",
+          sourceId: "claude:fixture",
+          reason: "TEST_EFFECTIVE"
+        }
+      ]
     }],
-    findings: []
+    findings: [],
+    inventory: {
+      sources: ["codex", "claude"].map((harness) => ({
+        id: `${harness}:fixture`,
+        harness: harness as "codex" | "claude",
+        scope: "global" as const,
+        kind: "direct-root" as const,
+        path: `/fixture/${harness}/skills`,
+        status: "scanned" as const,
+        skillCount: 1,
+        effectiveSkillCount: 1
+      })),
+      harnesses: ["codex", "claude"].map((harness) => ({
+        harness: harness as "codex" | "claude",
+        status: "verified" as const,
+        sourceIds: [`${harness}:fixture`],
+        skillCount: 1,
+        effectiveSkillCount: 1
+      }))
+    }
   });
   const source = {
     id: "fixture-catalog",
@@ -91,6 +132,27 @@ async function seedState(stateDir: string): Promise<void> {
       compatibleHarnesses: ["codex", "claude"],
       compatibility: "declared"
     }]
+  });
+}
+
+async function seedLegacyState(stateDir: string): Promise<void> {
+  await writeLatestReport(stateDir, {
+    schemaVersion: 1,
+    generatedAt: "2026-07-03T00:00:00.000Z",
+    portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+    skills: [{
+      id: "legacy-security",
+      name: "legacy-security",
+      description: "Review security risks",
+      path: "/private/legacy/native/cache/security",
+      root: "security",
+      scope: "global",
+      visibleTo: ["codex"],
+      fingerprint: `sha256:${"b".repeat(64)}`,
+      files: [],
+      estimatedTokens: 200
+    }],
+    findings: []
   });
 }
 
@@ -138,6 +200,20 @@ describe("hook command", () => {
       "hook", "prompt", "--harness", "claude-code"
     ], current.context)).toBe(0);
     expect(current.stdout).toEqual(["{}\n"]);
+  });
+
+  it("fails open for legacy inventory and reports only a compact debug status", async () => {
+    await seedLegacyState(current.stateDir);
+    vi.stubEnv("SKILL_STEWARD_DEBUG", "1");
+    try {
+      expect(await run(["hook", "prompt", "--harness", "codex"], current.context)).toBe(0);
+      expect(current.stdout).toEqual(["{}\n"]);
+      expect(current.stderr).toEqual(["INVENTORY_RESCAN_REQUIRED\n"]);
+      expect(current.stderr.join("")).not.toMatch(/private|legacy|cache|security/iu);
+      expect(await readPreflightEvidence(current.stateDir)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("records learning-mode prompt, turn, and Copilot session evidence without content", async () => {

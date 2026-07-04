@@ -1,15 +1,16 @@
-import { access, mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import { access, chmod, cp, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  applyIntegrationPlan,
   removeIntegration,
-  rollbackIntegrationPlan
+  rollbackIntegrationPlan,
+  type IntegrationConfigOptions
 } from "@skill-steward/integrations";
 import {
   readLatestReport,
-  withIntegrationMutationLease
+  withIntegrationMutationLease,
+  type IntegrationRecord
 } from "@skill-steward/store";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CliContext } from "../src/context.js";
@@ -18,6 +19,28 @@ import {
   integrateRemoveCommand
 } from "../src/commands/integrate.js";
 import { run } from "../src/main.js";
+import { installNativeCodexFixture } from "./native-inventory-fixture.js";
+
+const packagedCompanion = new URL(
+  "../../integrations/assets/skill-steward-preflight",
+  import.meta.url
+);
+
+async function applyIntegrationPlanInternal(
+  plan: unknown,
+  options: IntegrationConfigOptions,
+  dependencyOverrides?: unknown
+): Promise<IntegrationRecord> {
+  const modulePath = ["../../integrations/src", "config.js"].join("/");
+  const internal = await import(modulePath) as {
+    applyIntegrationPlanInternal(
+      input: unknown,
+      config: IntegrationConfigOptions,
+      dependencies?: unknown
+    ): Promise<IntegrationRecord>;
+  };
+  return internal.applyIntegrationPlanInternal(plan, options, dependencyOverrides);
+}
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -48,11 +71,43 @@ async function fixture() {
   return { home, stdout, stderr, context };
 }
 
+async function installCurrentCompanion(home: string): Promise<void> {
+  const destination = join(home, ".agents", "skills", "skill-steward-preflight");
+  await mkdir(dirname(destination), { recursive: true });
+  await cp(packagedCompanion, destination, { recursive: true });
+}
+
+async function authorizeRecordedCompanion(
+  stateDirectory: string,
+  planId: string
+): Promise<void> {
+  const path = join(stateDirectory, "reviewed-plans", `${planId}.json`);
+  const envelope = JSON.parse(await readFile(path, "utf8"));
+  const companion = envelope.payload.companion;
+  if (
+    companion.action !== "conflict"
+    || companion.expectedBefore?.state !== "exact"
+    || companion.expectedBefore.fingerprint !== companion.after.fingerprint
+  ) return;
+  envelope.payload.companion = {
+    ...companion,
+    action: "none",
+    expectedBefore: { state: "exact", fingerprint: companion.after.fingerprint },
+    proof: {
+      kind: "recorded",
+      recordId: "fixture-current-companion",
+      installedFingerprint: companion.after.fingerprint
+    }
+  };
+  await writeFile(path, `${JSON.stringify(envelope)}\n`, "utf8");
+}
+
 describe("integrate command", () => {
   let current: Awaited<ReturnType<typeof fixture>>;
 
   beforeEach(async () => {
     current = await fixture();
+    await installCurrentCompanion(current.home);
   });
 
   async function preview(harness: string) {
@@ -60,22 +115,53 @@ describe("integrate command", () => {
       "integrate", "plan", "--harness", harness, "--json"
     ], current.context);
     expect(code, current.stderr.splice(0).join("")).toBe(0);
-    return JSON.parse(current.stdout.splice(0).join("")) as {
+    const plan = JSON.parse(current.stdout.splice(0).join("")) as {
       id: string;
       expiresAt: string;
       changes: Array<{ operation: string; path: string }>;
       applyCommand: string;
+      companion: { action: string; proof: { kind: string } };
     };
+    await authorizeRecordedCompanion(current.context.stateDir, plan.id);
+    return plan;
   }
 
   async function apply(planId: string, json = false) {
-    const code = await run([
-      "integrate", "apply", "--plan", planId, "--confirm",
-      ...(json ? ["--json"] : [])
-    ], current.context);
+    const code = await integrateApplyCommand({
+      plan: planId,
+      confirm: true,
+      json
+    }, current.context, { applyPlan: applyIntegrationPlanInternal });
     current.stdout.splice(0);
     return code;
   }
+
+  it("fails closed without installing a missing companion in the read-only phase", async () => {
+    const fresh = await fixture();
+    expect(await run([
+      "integrate", "plan", "--harness", "codex", "--json"
+    ], fresh.context)).toBe(0);
+    const plan = JSON.parse(fresh.stdout.splice(0).join("")) as { id: string };
+    const skill = join(fresh.home, ".agents", "skills", "skill-steward-preflight");
+    const config = join(fresh.home, ".codex", "hooks.json");
+
+    expect(await run([
+      "integrate", "apply", "--plan", plan.id, "--confirm"
+    ], fresh.context)).toBe(1);
+    expect(fresh.stderr.splice(0).join(""))
+      .toContain("INTEGRATION_COMPANION_ACTION_UNAVAILABLE");
+    expect(await exists(skill)).toBe(false);
+    expect(await exists(config)).toBe(false);
+  });
+
+  it("keeps Phase 1 apply and remove free of legacy companion mutators", async () => {
+    const source = await readFile(
+      new URL("../src/commands/integrate.ts", import.meta.url),
+      "utf8"
+    );
+    expect(source).not.toContain("installCompanionSkill");
+    expect(source).not.toContain("removeManagedCompanionSkill");
+  });
 
   it("persists an exact plan across calls and prepares the first prompt Hook", async () => {
     const config = join(current.home, ".codex", "hooks.json");
@@ -83,11 +169,15 @@ describe("integrate command", () => {
     const plan = await preview("codex");
     expect(plan).toMatchObject({
       changes: expect.arrayContaining([expect.objectContaining({ operation: "write" })]),
-      applyCommand: `skill-steward integrate apply --plan ${plan.id} --confirm`
+      applyCommand: `skill-steward integrate apply --plan ${plan.id} --confirm`,
+      companion: {
+        action: "conflict",
+        proof: { kind: "conflict" }
+      }
     });
     expect(plan.expiresAt).toBe("2026-07-03T00:10:00.000Z");
     expect(await exists(config)).toBe(false);
-    expect(await exists(skill)).toBe(false);
+    expect(await exists(skill)).toBe(true);
 
     expect(await run([
       "integrate", "apply", "--plan", plan.id
@@ -109,6 +199,24 @@ describe("integrate command", () => {
       "integrate", "status", "--harness", "codex", "--json"
     ], current.context)).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({ status: "needs-trust" });
+  });
+
+  it("uses shared native inventory for the initial readiness scan", async () => {
+    await installNativeCodexFixture(current.home);
+    const plan = await preview("codex");
+
+    expect(await apply(plan.id, true)).toBe(0);
+    expect(await readLatestReport(current.context.stateDir)).toMatchObject({
+      schemaVersion: 2,
+      skills: expect.arrayContaining([
+        expect.objectContaining({ name: "native-review", ownership: "native-plugin" })
+      ]),
+      inventory: {
+        harnesses: expect.arrayContaining([
+          expect.objectContaining({ harness: "codex", status: "verified" })
+        ])
+      }
+    });
   });
 
   it("does not consume a reviewed plan when the integration lease is busy", async () => {
@@ -140,7 +248,7 @@ describe("integrate command", () => {
     expect(await apply(plan.id)).toBe(0);
   });
 
-  it("retains the shared Skill while another Harness is active", async () => {
+  it("retains the shared Skill after every Phase 1 Hook removal", async () => {
     for (const harness of ["codex", "claude-code", "github-copilot"]) {
       expect(await apply((await preview(harness)).id)).toBe(0);
     }
@@ -156,7 +264,36 @@ describe("integrate command", () => {
     expect(await run([
       "integrate", "remove", "--harness", "github-copilot", "--confirm"
     ], current.context)).toBe(0);
-    expect(await exists(skillDirectory)).toBe(false);
+    expect(await exists(skillDirectory)).toBe(true);
+    expect(current.stdout.splice(0).join(""))
+      .toContain("retained pending reviewed consumer-aware removal");
+  });
+
+  it("retains modified and unreadable companion trees during Hook removal", async () => {
+    const companion = join(current.home, ".agents", "skills", "skill-steward-preflight");
+    const skill = join(companion, "SKILL.md");
+
+    expect(await apply((await preview("codex")).id)).toBe(0);
+    await writeFile(skill, "user modified\n", "utf8");
+    expect(await run([
+      "integrate", "remove", "--harness", "codex", "--confirm"
+    ], current.context)).toBe(0);
+    expect(await readFile(skill, "utf8")).toBe("user modified\n");
+    current.stdout.splice(0);
+
+    await rm(companion, { recursive: true, force: true });
+    await installCurrentCompanion(current.home);
+    const claudePlan = await preview("claude-code");
+    expect(await apply(claudePlan.id)).toBe(0);
+    await chmod(companion, 0o000);
+    try {
+      expect(await run([
+        "integrate", "remove", "--harness", "claude-code", "--confirm"
+      ], current.context)).toBe(0);
+      expect(await exists(companion)).toBe(true);
+    } finally {
+      await chmod(companion, 0o700);
+    }
   });
 
   it("reports all three native integration capability adapters by default", async () => {
@@ -171,7 +308,7 @@ describe("integrate command", () => {
     await writeFile(skill, "different", "utf8");
     const plan = await preview("codex");
     expect(await apply(plan.id)).toBe(1);
-    expect(current.stderr.join("")).toContain("SHARED_SKILL_CONFLICT");
+    expect(current.stderr.join("")).toContain("INTEGRATION_COMPANION_ACTION_UNAVAILABLE");
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
   });
 
@@ -241,10 +378,10 @@ describe("integrate command", () => {
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
-    ))).toBe(false);
+    ))).toBe(true);
   });
 
-  it("removes a newly created companion after a journal failure without rereading it", async () => {
+  it("retains the pre-existing companion after a journal failure", async () => {
     const plan = await preview("codex");
     await writeFile(join(current.context.stateDir, "integration-records"), "blocked", "utf8");
 
@@ -253,34 +390,15 @@ describe("integrate command", () => {
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
-    ))).toBe(false);
+    ))).toBe(true);
   });
 
-  it("rolls back config and companion when the legacy journal is malformed", async () => {
+  it("rolls back config while retaining the companion when the legacy journal is malformed", async () => {
     const plan = await preview("codex");
     await writeFile(join(current.context.stateDir, "integrations.json"), "not-json\n", "utf8");
 
     expect(await apply(plan.id)).toBe(1);
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(false);
-    expect(await exists(join(
-      current.home, ".agents", "skills", "skill-steward-preflight"
-    ))).toBe(false);
-  });
-
-  it("reports typed incomplete rollback when companion cleanup cannot be proven", async () => {
-    const plan = await preview("codex");
-    await writeFile(join(current.context.stateDir, "integration-records"), "blocked", "utf8");
-
-    expect(await integrateApplyCommand({
-      plan: plan.id,
-      confirm: true,
-      json: false
-    }, current.context, {
-      removeCompanion: async () => false
-    })).toBe(1);
-    const error = current.stderr.splice(0).join("");
-    expect(error).toContain("INTEGRATION_ROLLBACK_FAILED");
-    expect(error).toContain("EEXIST");
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);
@@ -291,27 +409,20 @@ describe("integrate command", () => {
     const uncertain = Object.assign(new Error("journal commit cannot be proven"), {
       code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
     });
-    let cleanupCalled = false;
-
     expect(await integrateApplyCommand({
       plan: plan.id,
       confirm: true,
       json: false
     }, current.context, {
-      applyPlan: (reviewedPlan, options) => applyIntegrationPlan(reviewedPlan, options, {
+      applyPlan: (reviewedPlan, options) => applyIntegrationPlanInternal(reviewedPlan, options, {
         appendRecord: async () => { throw uncertain; }
-      }),
-      removeCompanion: async () => {
-        cleanupCalled = true;
-        return true;
-      }
+      })
     })).toBe(1);
     expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
     expect(await exists(join(current.home, ".codex", "hooks.json"))).toBe(true);
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);
-    expect(cleanupCalled).toBe(false);
   });
 
   it("retains installed artifacts when readiness rollback cannot journal removal", async () => {
@@ -319,13 +430,12 @@ describe("integrate command", () => {
     await writeFile(join(current.context.stateDir, "latest-report.json"), "not-json", "utf8");
     const appendFailure = new Error("removed record was not committed");
     const external = '{"external":"during-cli-rollback"}\n';
-    let cleanupCalled = false;
-
     expect(await integrateApplyCommand({
       plan: plan.id,
       confirm: true,
       json: false
     }, current.context, {
+      applyPlan: applyIntegrationPlanInternal,
       rollbackPlan: (reviewedPlan, options) => rollbackIntegrationPlan(
         reviewedPlan,
         options,
@@ -339,11 +449,7 @@ describe("integrate command", () => {
             throw appendFailure;
           }
         }
-      ),
-      removeCompanion: async () => {
-        cleanupCalled = true;
-        return true;
-      }
+      )
     })).toBe(1);
     expect(current.stderr.splice(0).join("")).toContain("INTEGRATION_ROLLBACK_FAILED");
     expect(await readFile(join(current.home, ".codex", "hooks.json"), "utf8"))
@@ -351,7 +457,6 @@ describe("integrate command", () => {
     expect(await exists(join(
       current.home, ".agents", "skills", "skill-steward-preflight"
     ))).toBe(true);
-    expect(cleanupCalled).toBe(false);
   });
 
   it("preserves external drift and companion when removal journaling fails", async () => {

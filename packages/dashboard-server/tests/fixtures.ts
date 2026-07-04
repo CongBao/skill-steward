@@ -2,9 +2,13 @@ import type { PortfolioReport } from "@skill-steward/engine";
 import type { DashboardSnapshot } from "@skill-steward/insights";
 
 export const report: PortfolioReport = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: "2026-07-02T10:00:00.000Z",
   portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+  workspace: {
+    path: "/workspace",
+    identity: `sha256:${"c".repeat(64)}`
+  },
   skills: [
     {
       id: "skill-1",
@@ -16,7 +20,16 @@ export const report: PortfolioReport = {
       visibleTo: ["claude"],
       fingerprint: `sha256:${"b".repeat(64)}`,
       files: [],
-      estimatedTokens: 100
+      estimatedTokens: 100,
+      ownership: "direct",
+      sourceIds: ["claude:fixture"],
+      exposures: [{
+        harness: "claude",
+        effectiveName: "review",
+        state: "effective",
+        sourceId: "claude:fixture",
+        reason: "TEST_EFFECTIVE"
+      }]
     }
   ],
   findings: [
@@ -30,7 +43,26 @@ export const report: PortfolioReport = {
       recommendation: "Repair it",
       confidence: 1
     }
-  ]
+  ],
+  inventory: {
+    sources: [{
+      id: "claude:fixture",
+      harness: "claude",
+      scope: "global",
+      kind: "direct-root",
+      path: "/skills",
+      status: "scanned",
+      skillCount: 1,
+      effectiveSkillCount: 1
+    }],
+    harnesses: [{
+      harness: "claude",
+      status: "verified",
+      sourceIds: ["claude:fixture"],
+      skillCount: 1,
+      effectiveSkillCount: 1
+    }]
+  }
 };
 
 export const snapshot: DashboardSnapshot = {
@@ -45,5 +77,6 @@ export const snapshot: DashboardSnapshot = {
   skills: report.skills,
   priorityFindings: report.findings,
   history: [],
-  roots: []
+  roots: [],
+  inventory: report.inventory
 };

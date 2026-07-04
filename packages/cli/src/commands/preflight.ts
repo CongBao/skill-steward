@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import { scanInventory } from "@skill-steward/engine";
 import { normalizeEvidenceHarness } from "@skill-steward/evidence";
 import {
   analyzePreflight,
   preflightRequestSchema,
+  toCompactPreflight,
   type PreflightReasonCode,
   type PreflightResult
 } from "@skill-steward/preflight";
@@ -24,6 +25,7 @@ export interface PreflightCommandOptions {
   stdin: boolean;
   maxSkills: number;
   json: boolean;
+  compactJson: boolean;
   harness?: string;
   includeAvailable: boolean;
 }
@@ -67,6 +69,10 @@ const reasonLabels: Record<PreflightReasonCode, string> = {
   INSTALL_REQUIRED: "Install required",
   CRITICAL_RISK: "Critical risk",
   HARNESS_INCOMPATIBLE: "Harness mismatch",
+  HARNESS_SHADOWED: "Harness shadowed",
+  HARNESS_INACTIVE: "Harness inactive",
+  HARNESS_AMBIGUOUS: "Harness ambiguous",
+  INVENTORY_RESCAN_REQUIRED: "Inventory rescan required",
   NEGATIVE_TRIGGER: "Explicit exclusion"
 };
 
@@ -75,6 +81,10 @@ function renderReason(code: PreflightReasonCode, detail: string): string {
 }
 
 const exclusionReasonPriority: readonly PreflightReasonCode[] = [
+  "INVENTORY_RESCAN_REQUIRED",
+  "HARNESS_SHADOWED",
+  "HARNESS_INACTIVE",
+  "HARNESS_AMBIGUOUS",
   "NEGATIVE_TRIGGER",
   "CRITICAL_RISK",
   "HARNESS_INCOMPATIBLE",
@@ -134,6 +144,15 @@ export function renderPreflightHuman(result: PreflightResult): string {
       for (const reason of candidate.reasons) {
         lines.push(renderReason(reason.code, reason.detail));
       }
+    }
+  }
+
+  lines.push("", "Inventory warnings:");
+  if (result.inventoryWarnings.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const warning of result.inventoryWarnings) {
+      lines.push(`- Inventory warning: ${terminalSafeText(warning.detail)}`);
     }
   }
 
@@ -201,7 +220,7 @@ export async function preflightCommand(
       includeAvailable: options.includeAvailable
     });
     const [report, catalogSources, catalogSnapshot] = await Promise.all([
-      scanPortfolio(standardRoots({ home: context.home, cwd: context.cwd })),
+      scanInventory({ home: context.home, cwd: context.cwd }),
       readCatalogSources(context.stateDir),
       readCatalogSnapshot(context.stateDir)
     ]);
@@ -222,8 +241,11 @@ export async function preflightCommand(
       delivery: "cli",
       ...(harness ? { harness } : {})
     });
-    context.stdout(
-      options.json ? `${JSON.stringify(result, null, 2)}\n` : renderPreflightHuman(result)
+    context.stdout(options.compactJson
+      ? `${JSON.stringify(toCompactPreflight(result))}\n`
+      : options.json
+        ? `${JSON.stringify(result, null, 2)}\n`
+        : renderPreflightHuman(result)
     );
     return 0;
   } catch (error) {

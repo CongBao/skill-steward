@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "description": "Generated full runtime bundle audit; update only with the explicit maintainer command.",
-  "noticesSha256": "56aa0b1eb68f5b4377c7bbf1982bc91c650a3ad1c5b59124d2de1780dc7183df",
+  "noticesSha256": "3331699d6de11768e55b82b42aa08e12d1da9f27f7252467a3881218d5d54158",
   "packages": [
     {
       "name": "@fastify/ajv-compiler",
@@ -580,6 +580,24 @@
           "source": "LICENSE",
           "reason": null,
           "textSha256": "aa407ee69b3f646286f5162d0679256a0fe5b7fcc51f104ffb647efe167715ea"
+        }
+      ]
+    },
+    {
+      "name": "jsonc-parser",
+      "version": "3.3.1",
+      "license": "MIT",
+      "source": "https://github.com/microsoft/node-jsonc-parser",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE.md",
+          "reason": null,
+          "textSha256": "59d4ecf670e758dc63133945108bb5d74f875e7dc1cab5a2b4dcb901e3fa3e36"
         }
       ]
     },
@@ -1164,6 +1182,24 @@
           "source": "LICENSE.txt",
           "reason": null,
           "textSha256": "e989f62f4fdcda4199c3d1d6049e9a52aad32539c02d2a5e8c92583ed0960e2b"
+        }
+      ]
+    },
+    {
+      "name": "smol-toml",
+      "version": "1.7.0",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/squirrelchat/smol-toml",
+      "surfaces": [
+        "cli-bundle"
+      ],
+      "rationale": null,
+      "attributions": [
+        {
+          "kind": "file",
+          "source": "LICENSE",
+          "reason": null,
+          "textSha256": "036546fdfb340233d3ec541d2a6defd6a7457b9e7db6a1618984c9e77af8a221"
         }
       ]
     },

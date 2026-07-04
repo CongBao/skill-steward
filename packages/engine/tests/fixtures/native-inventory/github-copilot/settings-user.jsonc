@@ -1,0 +1,7 @@
+{
+  // Copilot CLI settings are JSONC.
+  "enabledPlugins": {
+    "review-tools@team": true,
+  },
+  "disabledSkills": ["legacy-review"],
+}

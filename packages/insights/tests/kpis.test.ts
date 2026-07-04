@@ -62,13 +62,14 @@ const latest: PortfolioReport = {
 };
 
 describe("buildKpis", () => {
-  it("exposes sixteen stable KPI IDs and five recommended defaults", () => {
+  it("exposes the complete KPI catalog and recommends truthful inventory coverage", () => {
     expect(buildKpis({ latest, history: [], roots: [] }).map(({ id }) => id)).toEqual([
       "health-score",
       "open-findings",
       "installed-skills",
       "estimated-context",
       "harness-coverage",
+      "inventory-coverage",
       "bundle-size",
       "tracked-files",
       "broken-references",
@@ -86,8 +87,46 @@ describe("buildKpis", () => {
       "open-findings",
       "installed-skills",
       "estimated-context",
-      "harness-coverage"
+      "harness-coverage",
+      "inventory-coverage"
     ]);
+  });
+
+  it("counts only verified core native adapters over the fixed three-adapter denominator", () => {
+    const visibilityLatest: PortfolioReport = {
+      ...latest,
+      schemaVersion: 2,
+      workspace: {
+        path: "/workspace",
+        identity: `sha256:${"9".repeat(64)}`
+      },
+      skills: [],
+      inventory: {
+        sources: [
+          { id: "codex", harness: "codex", scope: "global", kind: "direct-root", path: "/codex", status: "scanned", skillCount: 0, effectiveSkillCount: 0 },
+          { id: "claude", harness: "claude", scope: "global", kind: "direct-root", path: "/claude", status: "truncated", skillCount: 0, effectiveSkillCount: 0 },
+          { id: "copilot", harness: "github-copilot", scope: "global", kind: "direct-root", path: "/copilot", status: "scanned", skillCount: 0, effectiveSkillCount: 0 },
+          { id: "agents", harness: "agents", scope: "global", kind: "convention-root", path: "/agents", status: "scanned", skillCount: 0, effectiveSkillCount: 0 }
+        ],
+        harnesses: [
+          { harness: "codex", status: "verified", sourceIds: ["codex"], skillCount: 0, effectiveSkillCount: 0 },
+          { harness: "claude", status: "partial", sourceIds: ["claude"], skillCount: 0, effectiveSkillCount: 0 },
+          { harness: "github-copilot", status: "verified", sourceIds: ["copilot"], skillCount: 0, effectiveSkillCount: 0 },
+          { harness: "agents", status: "convention-only", sourceIds: ["agents"], skillCount: 0, effectiveSkillCount: 0 }
+        ]
+      }
+    };
+
+    const values = Object.fromEntries(
+      buildKpis({ latest: visibilityLatest, history: [], roots: [] })
+        .map((kpi) => [kpi.id, kpi])
+    );
+
+    expect(values["inventory-coverage"]?.value).toEqual({ verified: 2, total: 3 });
+    expect(values["harness-coverage"]?.value).toBe(0);
+    expect(Object.fromEntries(
+      buildKpis({ latest, history: [], roots: [] }).map((kpi) => [kpi.id, kpi])
+    )["inventory-coverage"]?.value).toEqual({ verified: 0, total: 3 });
   });
 
   it("calculates portfolio values without localized text", () => {
@@ -97,8 +136,8 @@ describe("buildKpis", () => {
         previous: { ...latest, skills: latest.skills.slice(0, 1) },
         history: [{ generatedAt: latest.generatedAt, healthScore: 83, skillCount: 2, findingCount: 2, estimatedTokens: 1500 }],
         roots: [
-          { harness: "claude", scope: "global", path: "/home/.claude/skills", available: true, readable: true, skillCount: 1 },
-          { harness: "codex", scope: "global", path: "/home/.codex/skills", available: false, readable: false, skillCount: 0 }
+          { harness: "claude", visibleTo: ["claude"], scope: "global", path: "/home/.claude/skills", available: true, readable: true, skillCount: 1 },
+          { harness: "codex", visibleTo: ["codex"], scope: "global", path: "/home/.codex/skills", available: false, readable: false, skillCount: 0 }
         ]
       }).map((kpi) => [kpi.id, kpi])
     );

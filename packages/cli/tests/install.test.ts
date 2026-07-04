@@ -28,6 +28,7 @@ import {
 } from "@skill-steward/store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliContext } from "../src/context.js";
+import { installNativeCodexFixture } from "./native-inventory-fixture.js";
 
 async function run(argv: string[], context: CliContext): Promise<number> {
   vi.resetModules();
@@ -191,6 +192,33 @@ describe("catalog install command", () => {
 
   beforeEach(async () => {
     current = await fixture();
+  });
+
+  it("refreshes the normal portfolio with shared native inventory after commit", async () => {
+    await installNativeCodexFixture(current.context.home);
+    expect(await run(previewArgs(), current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+
+    expect(await run([
+      "install", "--plan", preview.planId, "--confirm", "--json"
+    ], current.context)).toBe(0);
+
+    const report = JSON.parse(
+      await readFile(join(current.stateDir, "latest-report.json"), "utf8")
+    );
+    expect(report).toMatchObject({
+      schemaVersion: 2,
+      skills: expect.arrayContaining([
+        expect.objectContaining({ name: "testing-review" }),
+        expect.objectContaining({
+          name: "native-review",
+          ownership: "native-plugin"
+        })
+      ])
+    });
+    expect(report.inventory.harnesses).toContainEqual(
+      expect.objectContaining({ harness: "codex", status: "verified" })
+    );
   });
 
   it("persists a private exact plan and applies it in a fresh process without restaging", async () => {
@@ -620,18 +648,24 @@ describe("catalog install command", () => {
     }
   );
 
-  it("explains mutually exclusive preview and apply modes in help", async () => {
-    const output: string[] = [];
-    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-      output.push(String(chunk));
-      return true;
-    });
-    try {
-      expect(await run(["install", "--help"], current.context)).toBe(0);
-    } finally {
-      write.mockRestore();
-    }
-    const help = output.join("");
+  it("isolates concurrent help output in each injected context", async () => {
+    const otherStdout: string[] = [];
+    const otherStderr: string[] = [];
+    const otherContext: CliContext = {
+      ...current.context,
+      stdout: (value) => otherStdout.push(value),
+      stderr: (value) => otherStderr.push(value)
+    };
+    const { run: runCli } = await import("../src/main.js");
+
+    const [installExitCode, preflightExitCode] = await Promise.all([
+      runCli(["install", "--help"], current.context),
+      runCli(["preflight", "--help"], otherContext)
+    ]);
+
+    expect(installExitCode).toBe(0);
+    expect(preflightExitCode).toBe(0);
+    const help = current.stdout.join("");
     expect(help).toContain(
       "Preview: --catalog-candidate <id> --harness <id> --scope <scope>"
     );
@@ -640,6 +674,11 @@ describe("catalog install command", () => {
     expect(help).toMatch(/--harness <id>\s+target Harness for preview/);
     expect(help).toMatch(/--workspace <path>\s+project workspace path/);
     expect(help).toMatch(/--target-name <name>\s+installed directory name/);
+    expect(help).not.toContain("Usage: skill-steward preflight");
+    expect(otherStdout.join("")).toContain("Usage: skill-steward preflight");
+    expect(otherStdout.join("")).not.toContain("Usage: skill-steward install");
+    expect(current.stderr).toEqual([]);
+    expect(otherStderr).toEqual([]);
   });
 
   it("rejects provenance that does not name an explicit recommendation and cleans staging", async () => {

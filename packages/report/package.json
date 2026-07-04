@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "@skill-steward/engine": "workspace:*"
+  },
+  "devDependencies": {
+    "marked": "^18.0.5"
   }
 }

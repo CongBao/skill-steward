@@ -267,6 +267,61 @@ describe("reviewed plan store", () => {
     })).rejects.toMatchObject({ code: "REVIEWED_PLAN_NOT_FOUND" });
   });
 
+  it("restores a claimed plan when domain validation rejects its payload", async () => {
+    const stateDir = await state("steward-reviewed-domain-reject-");
+    const plan = envelope("domain-reject", "governance");
+    const rejection = Object.assign(new Error("native plugin managed"), {
+      code: "NATIVE_PLUGIN_MANAGED"
+    });
+    await writeReviewedPlan(stateDir, plan);
+
+    await expect(claimReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: plan.kind,
+      now: new Date("2026-07-03T00:01:00.000Z"),
+      validate: () => { throw rejection; }
+    })).rejects.toBe(rejection);
+
+    const pending = join(stateDir, "reviewed-plans", `${plan.id}.json`);
+    await expect(readFile(pending, "utf8")).resolves.toContain("domain-reject");
+    expect(await readdir(join(stateDir, "reviewed-plans"))).toEqual([
+      "domain-reject.json"
+    ]);
+  });
+
+  it("never overwrites a concurrent pending plan while restoring validator rejection", async () => {
+    const stateDir = await state("steward-reviewed-domain-race-");
+    const directory = join(stateDir, "reviewed-plans");
+    const plan = envelope("domain-race", "governance", {
+      payload: { generation: "old" }
+    });
+    const replacement = envelope("domain-race", "governance", {
+      payload: { generation: "new" }
+    });
+    await writeReviewedPlan(stateDir, plan);
+
+    await expect(claimReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: plan.kind,
+      now: new Date("2026-07-03T00:01:00.000Z"),
+      validate: async () => {
+        await writeFile(
+          join(directory, `${plan.id}.json`),
+          `${JSON.stringify(replacement, null, 2)}\n`,
+          { encoding: "utf8", flag: "wx", mode: 0o600 }
+        );
+        throw new Error("reject old generation");
+      }
+    })).rejects.toMatchObject({ code: "REVIEWED_PLAN_UNSAFE_STATE" });
+
+    expect(JSON.parse(await readFile(
+      join(directory, `${plan.id}.json`),
+      "utf8"
+    ))).toMatchObject({ payload: { generation: "new" } });
+    expect((await readdir(directory)).filter((name) => name.endsWith(".claimed")))
+      .toHaveLength(1);
+  });
+
   it("consumes kind-mismatched and expired plans without returning their payload", async () => {
     const stateDir = await state("steward-reviewed-rejected-");
     await writeReviewedPlan(stateDir, envelope("wrong-kind"));

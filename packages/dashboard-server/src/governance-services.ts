@@ -9,6 +9,7 @@ import {
   readGovernanceTransactions,
   type GovernanceApplyResult,
   type GovernancePlan,
+  type GovernancePostCommitWarning,
   type GovernanceTransaction
 } from "@skill-steward/governance";
 import {
@@ -44,6 +45,7 @@ export interface GovernanceServiceOptions {
   stateDirectory: string;
   activeRoots: () => SkillRoot[] | Promise<SkillRoot[]>;
   afterCommit: () => void | Promise<void>;
+  recordEvidence?: (result: GovernanceApplyResult) => void | Promise<void>;
   now?: () => Date;
 }
 
@@ -54,19 +56,19 @@ export function createGovernanceServices(
   const plans = new Map<string, GovernancePlan>();
 
   async function record(result: GovernanceApplyResult): Promise<void> {
-    try {
-      await appendEvidenceEvent(options.stateDirectory, {
-        schemaVersion: 1,
-        id: randomUUID(),
-        createdAt: now().toISOString(),
-        kind: "governance-applied",
-        actionId: result.transaction.id,
-        action: result.transaction.action,
-        skillId: result.transaction.skillId
-      });
-    } catch {
-      // The reviewed filesystem transaction is authoritative; evidence is best effort.
+    if (options.recordEvidence) {
+      await options.recordEvidence(result);
+      return;
     }
+    await appendEvidenceEvent(options.stateDirectory, {
+      schemaVersion: 1,
+      id: randomUUID(),
+      createdAt: now().toISOString(),
+      kind: "governance-applied",
+      actionId: result.transaction.id,
+      action: result.transaction.action,
+      skillId: result.transaction.skillId
+    });
   }
 
   return {
@@ -114,19 +116,39 @@ export function createGovernanceServices(
           "Review a current governance plan before applying it"
         );
       }
-      plans.delete(planId);
+      const activeRoots = await options.activeRoots();
       const result = plan.kind === "quarantine"
         ? await applyQuarantinePlan(plan, {
             stateDirectory: options.stateDirectory,
+            activeRoots,
             now
           })
         : await applyRestorePlan(plan, {
             stateDirectory: options.stateDirectory,
+            activeRoots,
             now
           });
-      await options.afterCommit();
-      await record(result);
-      return result;
+      plans.delete(planId);
+      const postCommitWarnings: GovernancePostCommitWarning[] = [];
+      try {
+        await options.afterCommit();
+      } catch {
+        postCommitWarnings.push({
+          code: "GOVERNANCE_REFRESH_FAILED",
+          message: "Portfolio refresh failed after governance committed"
+        });
+      }
+      try {
+        await record(result);
+      } catch {
+        postCommitWarnings.push({
+          code: "GOVERNANCE_EVIDENCE_FAILED",
+          message: "Evidence recording failed after governance committed"
+        });
+      }
+      return postCommitWarnings.length === 0
+        ? result
+        : { ...result, postCommitWarnings };
     },
     transactions: () => readGovernanceTransactions(options.stateDirectory)
   };

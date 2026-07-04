@@ -1,12 +1,13 @@
 import type { CatalogSkillRecord, CatalogSource } from "@skill-steward/catalog";
-import type { PortfolioReport, SkillRecord } from "@skill-steward/engine";
+import type { PortfolioReportV2, SkillRecordV2 } from "@skill-steward/engine";
 import { expect, it } from "vitest";
 import { analyzePreflight } from "../src/analyze.js";
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
 
 it("analyzes one thousand installed and five thousand available Skills within budget", () => {
-  const skills: SkillRecord[] = Array.from({ length: 1_000 }, (_, index) => ({
+  const sourceId = "codex:performance";
+  const skills: SkillRecordV2[] = Array.from({ length: 1_000 }, (_, index) => ({
     id: `skill-${String(index).padStart(4, "0")}`,
     name: `skill-${index}`,
     description: index % 50 === 0
@@ -18,7 +19,16 @@ it("analyzes one thousand installed and five thousand available Skills within bu
     visibleTo: ["codex"],
     fingerprint: `sha256:${index.toString(16).padStart(64, "0")}`,
     files: [],
-    estimatedTokens: 100 + index
+    estimatedTokens: 100 + index,
+    ownership: "direct",
+    sourceIds: [sourceId],
+    exposures: [{
+      harness: "codex",
+      effectiveName: `skill-${index}`,
+      state: "effective",
+      sourceId,
+      reason: "TEST_EFFECTIVE"
+    }]
   }));
   const source: CatalogSource = {
     id: "performance-catalog",
@@ -46,12 +56,32 @@ it("analyzes one thousand installed and five thousand available Skills within bu
     compatibleHarnesses: [],
     compatibility: "unknown"
   }));
-  const report: PortfolioReport = {
-    schemaVersion: 1,
+  const report: PortfolioReportV2 = {
+    schemaVersion: 2,
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: hash("a"),
+    workspace: { path: "/workspace", identity: hash("f") },
     skills,
-    findings: []
+    findings: [],
+    inventory: {
+      sources: [{
+        id: sourceId,
+        harness: "codex",
+        scope: "global",
+        kind: "direct-root",
+        path: "/skills",
+        status: "scanned",
+        skillCount: skills.length,
+        effectiveSkillCount: skills.length
+      }],
+      harnesses: [{
+        harness: "codex",
+        status: "verified",
+        sourceIds: [sourceId],
+        skillCount: skills.length,
+        effectiveSkillCount: skills.length
+      }]
+    }
   };
   const input = {
     task: "Review this TypeScript change for security regressions and missing tests",
@@ -59,6 +89,7 @@ it("analyzes one thousand installed and five thousand available Skills within bu
     catalogSkills,
     catalogSources: [source],
     maxSkills: 5,
+    harness: "codex" as const,
     id: "performance-run",
     now: new Date("2026-07-03T00:00:00.000Z")
   };

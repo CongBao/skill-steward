@@ -1,6 +1,6 @@
 import {
   discoverSkills,
-  standardRoots,
+  scanInventoryWithDiscovery,
   type SkillRoot
 } from "@skill-steward/engine";
 import type { CliContext } from "../context.js";
@@ -9,15 +9,16 @@ export async function discoverCommand(
   options: { roots: string[]; json: boolean },
   context: CliContext
 ): Promise<number> {
-  const roots: SkillRoot[] =
-    options.roots.length > 0
-      ? options.roots.map((path) => ({
-          path,
-          scope: "unknown",
-          visibleTo: ["unknown"]
-        }))
-      : standardRoots({ home: context.home, cwd: context.cwd });
-  const skills = await discoverSkills(roots);
+  const skills = options.roots.length > 0
+    ? await discoverSkills(options.roots.map((path): SkillRoot => ({
+        path,
+        scope: "unknown",
+        visibleTo: ["unknown"]
+      })))
+    : (await scanInventoryWithDiscovery({
+        home: context.home,
+        cwd: context.cwd
+      })).discoveries;
 
   if (options.json) {
     context.stdout(`${JSON.stringify(skills, null, 2)}\n`);

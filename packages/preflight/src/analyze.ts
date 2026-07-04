@@ -11,9 +11,14 @@ import {
   preflightRequestSchema,
   preflightResultSchema,
   type PreflightCandidate,
+  type InventoryWarning,
   type PreflightReason,
   type PreflightResult
 } from "./domain.js";
+import {
+  gapDisplayTerms,
+  positiveGapConcepts
+} from "./gap-display-internal.js";
 import { normalizeTask, tokenize } from "./tokenize.js";
 
 export type AnalyzePreflightInput = AnalyzePreflightInputV2;
@@ -70,6 +75,153 @@ function stableNumber(value: number): number {
   return Number(value.toFixed(6));
 }
 
+function boundedCandidateIdentifier(value: string): string {
+  return /^[a-z0-9][a-z0-9._:@+-]{0,95}$/iu.test(value)
+    ? value
+    : sha256(value);
+}
+
+function boundedReasonDetail(value: string): string {
+  let detail = "";
+  for (const character of value) {
+    if (detail.length + character.length > 200) break;
+    detail += character;
+  }
+  return detail;
+}
+
+const FINDING_REFERENCE_DOMAIN = "skill-steward:preflight-finding-reference:v1";
+
+class FindingReferenceAllocationError extends Error {
+  readonly code = "FINDING_REFERENCE_NAMESPACE_EXHAUSTED";
+
+  constructor() {
+    super("FINDING_REFERENCE_NAMESPACE_EXHAUSTED");
+    this.name = "FindingReferenceAllocationError";
+  }
+}
+
+function baseFindingReferenceReplacement(candidateIds: string[]): string {
+  const normalized = [...new Set(candidateIds)].sort();
+  if (normalized.length === 1) return boundedCandidateIdentifier(normalized[0]!);
+  return sha256([FINDING_REFERENCE_DOMAIN, ...normalized].join("\0"));
+}
+
+function allocateFindingReferences(
+  candidateIdsByRaw: ReadonlyMap<string, string[]>,
+  referencedRawIds: string[],
+  additionalReservedCandidateIds: string[]
+): Map<string, string> {
+  const rawIds = [...new Set(referencedRawIds)]
+    .filter((rawId) => candidateIdsByRaw.has(rawId))
+    .sort();
+  if (rawIds.length === 0) return new Map();
+
+  const namespaceOwners = new Map<string, Set<string>>();
+  const reserve = (identifier: string, rawId: string) => {
+    const owners = namespaceOwners.get(identifier) ?? new Set<string>();
+    owners.add(rawId);
+    namespaceOwners.set(identifier, owners);
+  };
+  for (const [rawId, candidateIds] of candidateIdsByRaw) {
+    reserve(rawId, rawId);
+    for (const candidateId of candidateIds) reserve(candidateId, rawId);
+  }
+
+  const reserved = new Set(namespaceOwners.keys());
+  const externalReserved = new Set(additionalReservedCandidateIds.filter((candidateId) =>
+    !namespaceOwners.has(candidateId)
+  ));
+  for (const candidateId of additionalReservedCandidateIds) reserved.add(candidateId);
+  const allocated = new Set<string>();
+  const replacements = new Map<string, string>();
+  const maxCollisionAttempts = candidateIdsByRaw.size + 1;
+  for (const rawId of rawIds) {
+    const candidateIds = [...new Set(candidateIdsByRaw.get(rawId)!)].sort();
+    const base = baseFindingReferenceReplacement(candidateIds);
+    const owners = namespaceOwners.get(base);
+    const uniqueSelfAlias = candidateIds.length === 1 &&
+      base === candidateIds[0] &&
+      owners?.size === 1 &&
+      owners.has(rawId) &&
+      !externalReserved.has(base) &&
+      !allocated.has(base);
+    if (!reserved.has(base) || uniqueSelfAlias) {
+      replacements.set(rawId, base);
+      reserved.add(base);
+      allocated.add(base);
+      continue;
+    }
+
+    let replacement: string | undefined;
+    for (let attempt = 1; attempt <= maxCollisionAttempts; attempt += 1) {
+      const candidate = sha256([
+        FINDING_REFERENCE_DOMAIN,
+        "collision",
+        rawId,
+        ...candidateIds,
+        String(attempt)
+      ].join("\0"));
+      if (!reserved.has(candidate)) {
+        replacement = candidate;
+        break;
+      }
+    }
+    if (!replacement) throw new FindingReferenceAllocationError();
+    replacements.set(rawId, replacement);
+    reserved.add(replacement);
+    allocated.add(replacement);
+  }
+  return replacements;
+}
+
+function replaceFindingReferences(
+  value: string,
+  replacements: ReadonlyMap<string, string>
+): string {
+  const ordered = [...replacements].sort(([left], [right]) =>
+    right.length - left.length || (left < right ? -1 : left > right ? 1 : 0)
+  );
+  if (ordered.length === 0 || !ordered.some(([rawId]) => value.includes(rawId))) {
+    return value;
+  }
+
+  let sanitized = "";
+  let offset = 0;
+  while (offset < value.length) {
+    const match = ordered.find(([rawId]) => value.startsWith(rawId, offset));
+    if (match) {
+      sanitized += match[1];
+      offset += match[0].length;
+    } else {
+      sanitized += value[offset];
+      offset += 1;
+    }
+  }
+  return sanitized;
+}
+
+function sanitizeFinding(
+  finding: Finding,
+  candidateIdsByRaw: ReadonlyMap<string, string[]>,
+  allocatedReferences: ReadonlyMap<string, string>
+): Finding {
+  const references = new Map(finding.skillIds.flatMap((rawId) => {
+    const replacement = allocatedReferences.get(rawId);
+    return replacement ? [[rawId, replacement] as const] : [];
+  }));
+  const sanitize = (value: string) => replaceFindingReferences(value, references);
+  return {
+    ...finding,
+    skillIds: [...new Set(finding.skillIds.flatMap((rawId) =>
+      candidateIdsByRaw.get(rawId) ?? []
+    ))].sort(),
+    summary: sanitize(finding.summary),
+    evidence: finding.evidence.map(sanitize),
+    recommendation: sanitize(finding.recommendation)
+  };
+}
+
 function candidateRisk(findings: Finding[]): number {
   return clamp(findings.reduce(
     (total, { severity }) => total + PREFLIGHT_CONFIG.riskWeights[severity],
@@ -105,74 +257,88 @@ const GENERIC_NEGATIVE_ROUTE_TERMS = new Set([
   "work"
 ]);
 
-const CJK_DISPLAY_STOP_WORDS = new Set([
-  "的",
-  "了",
-  "和",
-  "与",
-  "及",
-  "并",
-  "将",
-  "把",
-  "为",
-  "在",
-  "对",
-  "中",
-  "用",
-  "让",
-  "请"
+const BROAD_CJK_ROUTE_TERMS = new Set([
+  "分析",
+  "评估",
+  "評估",
+  "质量",
+  "品質"
 ]);
 
-function chineseDisplayTerms(value: string): string[] {
-  const terms: string[] = [];
-  let pendingSingles = "";
-  const flushSingles = () => {
-    if ([...pendingSingles].length >= 2) terms.push(pendingSingles);
-    pendingSingles = "";
-  };
+const GENERIC_CAPABILITY_GAP_TERMS = new Set([
+  ...GENERIC_NEGATIVE_ROUTE_TERMS,
+  "create",
+  "product",
+  "project",
+  "review",
+  "source",
+  "test"
+]);
 
-  for (const part of new Intl.Segmenter("zh-CN", { granularity: "word" }).segment(value)) {
-    if (!part.isWordLike) continue;
-    const length = [...part.segment].length;
-    if (length === 1) {
-      if (CJK_DISPLAY_STOP_WORDS.has(part.segment)) {
-        flushSingles();
-      } else {
-        pendingSingles += part.segment;
-      }
-      continue;
-    }
-    flushSingles();
-    terms.push(part.segment);
-  }
-  flushSingles();
-  return terms;
+function isSpecificGapConcept(term: string): boolean {
+  return !GENERIC_CAPABILITY_GAP_TERMS.has(term) &&
+    !BROAD_CJK_ROUTE_TERMS.has(term);
 }
 
-function displayCapabilityGaps(task: string, coveredTerms: Set<string>): string[] {
-  const gaps: string[] = [];
-  const seen = new Set<string>();
-  const add = (term: string) => {
-    if (seen.has(term)) return;
-    seen.add(term);
-    gaps.push(term);
-  };
+function canonicalMatchedGapConcepts(candidate: ScoredCandidate): Set<string> {
+  return new Set([...candidate.matchedTaskTerms].flatMap((term) =>
+    [...positiveGapConcepts(term, "")]
+  ).filter(isSpecificGapConcept));
+}
 
-  for (const match of task.toLowerCase().matchAll(
-    /[a-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]+/gu
-  )) {
-    const segment = match[0];
-    const displayTerms = /^[a-z0-9]+$/u.test(segment)
-      ? [segment]
-      : chineseDisplayTerms(segment);
-    for (const displayTerm of displayTerms) {
-      const normalized = tokenize(displayTerm).terms;
-      if (normalized.length > 0 && normalized.some((term) => !coveredTerms.has(term))) {
-        add(displayTerm);
-      }
-    }
+function hasSpecificNameGapEvidence(candidate: ScoredCandidate): boolean {
+  return candidate.nameMatch && [...positiveGapConcepts(
+    candidate.candidate.name,
+    ""
+  )].some(isSpecificGapConcept);
+}
+
+function displayCapabilityGaps(
+  task: string,
+  candidates: ScoredCandidate[],
+  selectedCandidates: ScoredCandidate[]
+): string[] {
+  const gaps: string[] = [];
+  const seenConcepts = new Set<string>();
+  const corroboratingCandidates = candidates.filter((candidate) =>
+    hasSpecificNameGapEvidence(candidate) || (
+      canonicalMatchedGapConcepts(candidate).size >=
+        PREFLIGHT_CONFIG.minimumMatchedTerms &&
+      candidate.adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold
+    )
+  );
+  const corroboratedTerms = new Set(corroboratingCandidates.flatMap(
+    ({ candidate }) => [...positiveGapConcepts(candidate.name, candidate.description)]
+  ));
+  const coveredTerms = new Set(selectedCandidates.flatMap(({ candidate }) =>
+    [...positiveGapConcepts(candidate.name, candidate.description)]
+  ));
+  const displayTerms = gapDisplayTerms(task);
+  const standaloneTerms = new Set(displayTerms.flatMap(({ concepts }) =>
+    concepts
+  ).filter((term) =>
+    !coveredTerms.has(term) && isSpecificGapConcept(term)
+  ));
+  const allowStandaloneTerms = corroboratingCandidates.length === 0 &&
+    standaloneTerms.size > 0 &&
+    standaloneTerms.size <= PREFLIGHT_CONFIG.maxStandaloneCapabilityTerms;
+  const isSearchable = (term: string) =>
+    isSpecificGapConcept(term) &&
+    (corroboratedTerms.has(term) || (
+      allowStandaloneTerms && standaloneTerms.has(term)
+    ));
+  for (const { display, concepts } of displayTerms) {
+    const uncovered = concepts.filter((term) =>
+      !coveredTerms.has(term) &&
+      !seenConcepts.has(term) &&
+      isSearchable(term)
+    );
+    if (uncovered.length === 0) continue;
+    gaps.push(display);
+    uncovered.forEach((term) => seenConcepts.add(term));
+    if (gaps.length >= PREFLIGHT_CONFIG.maxCapabilityGaps) break;
   }
-  return gaps.slice(0, PREFLIGHT_CONFIG.maxCapabilityGaps);
+  return gaps;
 }
 
 function negativeTaskMatch(
@@ -227,6 +393,9 @@ function scoreCandidates(
       : 0;
     const critical = candidate.findings.some(({ severity }) => severity === "critical");
     const adjustedRelevance = clamp(relevance - riskPenalty - installPenalty);
+    const hasSpecificTaskMatch = [...matchedTaskTerms].some(
+      (term) => !BROAD_CJK_ROUTE_TERMS.has(term)
+    );
     const initialReasons: PreflightReason[] = [];
 
     if (matchedTaskTerms.size > 0) {
@@ -265,10 +434,30 @@ function scoreCandidates(
         detail: "A critical finding makes this catalog candidate non-installable."
       });
     }
-    if (!candidate.harnessCompatible) {
+    if (!candidate.harnessCompatible && candidate.harnessVisibility === undefined) {
       initialReasons.push({
         code: "HARNESS_INCOMPATIBLE",
         detail: "The candidate does not declare compatibility with the target Harness."
+      });
+    }
+    if (candidate.harnessVisibility === "shadowed") {
+      initialReasons.push({
+        code: "HARNESS_SHADOWED",
+        detail: candidate.shadowedByCandidateId
+          ? `Shadowed by installed candidate '${boundedCandidateIdentifier(candidate.shadowedByCandidateId)}'.`
+          : "Another installed candidate shadows this instance for the target Harness."
+      });
+    }
+    if (candidate.harnessVisibility === "inactive") {
+      initialReasons.push({
+        code: "HARNESS_INACTIVE",
+        detail: "The installed instance is inactive for the target Harness."
+      });
+    }
+    if (candidate.harnessVisibility === "ambiguous") {
+      initialReasons.push({
+        code: "HARNESS_AMBIGUOUS",
+        detail: "Harness visibility for this installed instance is ambiguous."
       });
     }
     if (negativeTaskTerms.size > 0) {
@@ -291,8 +480,9 @@ function scoreCandidates(
       installPenalty,
       nameMatch,
       projectScopeFit,
-      plausible: candidate.harnessCompatible && !critical && negativeTaskTerms.size === 0 &&
+      plausible: candidate.harnessEligible && !critical && negativeTaskTerms.size === 0 &&
         (nameMatch || (
+          hasSpecificTaskMatch &&
           matchedTaskTerms.size >= PREFLIGHT_CONFIG.minimumMatchedTerms &&
           adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold
         )),
@@ -439,7 +629,9 @@ function presentCandidates(
         code: "UNIQUE_COVERAGE",
         detail: `${Math.round(uniqueCoverage * 100)}% unique task-term coverage.`
       });
-    } else if (!candidate.plausible && !candidate.critical && candidate.candidate.harnessCompatible) {
+    } else if (!candidate.candidate.harnessEligible) {
+      // The Harness visibility or compatibility reason is the primary exclusion.
+    } else if (!candidate.plausible && !candidate.critical && candidate.candidate.harnessEligible) {
       reasons.push({
         code: "LOW_RELEVANCE",
         detail: "Task relevance is below the deterministic threshold."
@@ -449,7 +641,7 @@ function presentCandidates(
         code: "REDUNDANT_WITH_SELECTED",
         detail: `${Math.round(redundancyPenalty * 100)}% weighted overlap with the selected set.`
       });
-    } else if (!candidate.critical && candidate.candidate.harnessCompatible) {
+    } else if (!candidate.critical && candidate.candidate.harnessEligible) {
       reasons.push({
         code: "LOW_RELEVANCE",
         detail: "Candidate adds less marginal value than the selected set."
@@ -490,7 +682,10 @@ function presentCandidates(
       },
       decision,
       ...(candidate.candidate.source ? { source: candidate.candidate.source } : {}),
-      reasons
+      reasons: reasons.map(({ code, detail }) => ({
+        code,
+        detail: boundedReasonDetail(detail)
+      }))
     };
   }).sort((left, right) => {
     const leftSelected = selectedById.get(left.candidateId);
@@ -500,6 +695,29 @@ function presentCandidates(
     if (rightSelected) return 1;
     return right.relevance - left.relevance || left.candidateId.localeCompare(right.candidateId);
   });
+}
+
+function inventoryWarnings(
+  candidates: ScoredCandidate[],
+  harness: AnalyzePreflightInput["harness"]
+): InventoryWarning[] {
+  if (!harness || harness === "unknown") return [];
+  const matchingInstalled = candidates.filter(({ candidate, matchedTaskTerms, nameMatch }) =>
+    candidate.availability === "installed" &&
+    candidate.harnessVisibility !== undefined &&
+    (nameMatch || matchedTaskTerms.size >= PREFLIGHT_CONFIG.minimumMatchedTerms)
+  );
+  if (
+    matchingInstalled.length === 0 ||
+    matchingInstalled.some(({ candidate }) => candidate.harnessVisibility !== "ambiguous")
+  ) {
+    return [];
+  }
+  return [{
+    code: "HARNESS_AMBIGUOUS",
+    harness,
+    detail: "Visibility is ambiguous for every matching installed candidate."
+  }];
 }
 
 export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult {
@@ -530,9 +748,28 @@ export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult 
   const presented = presentCandidates(candidates, installed, available);
   const installedTerms = selectedTerms(installed);
   const projectedTerms = selectedTerms([...installed, ...available]);
-  const selectedIds = new Set(useCandidateIds);
-  const conflicts = input.report.findings.filter(({ skillIds }) =>
-    skillIds.some((id) => selectedIds.has(id))
+  const selectedRawInstalledIds = new Set(installed.flatMap(({ candidate }) =>
+    candidate.candidate.rawInstalledSkillId
+      ? [candidate.candidate.rawInstalledSkillId]
+      : []
+  ));
+  const installedCandidateIdsByRaw = new Map<string, string[]>();
+  for (const { candidate } of candidates) {
+    if (!candidate.rawInstalledSkillId) continue;
+    const ids = installedCandidateIdsByRaw.get(candidate.rawInstalledSkillId) ?? [];
+    ids.push(candidate.candidateId);
+    installedCandidateIdsByRaw.set(candidate.rawInstalledSkillId, ids);
+  }
+  const conflictFindings = input.report.findings.filter(({ skillIds }) =>
+    skillIds.some((id) => selectedRawInstalledIds.has(id))
+  );
+  const findingReferences = allocateFindingReferences(
+    installedCandidateIdsByRaw,
+    conflictFindings.flatMap(({ skillIds }) => skillIds),
+    presented.map(({ candidateId }) => candidateId)
+  );
+  const conflicts = conflictFindings.map((finding) =>
+    sanitizeFinding(finding, installedCandidateIdsByRaw, findingReferences)
   );
   const selectedContextTokens = [...installed, ...available].reduce(
     (total, { candidate }) => total + candidate.candidate.contextTokens,
@@ -556,7 +793,12 @@ export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult 
     installCandidateIds,
     candidates: presented,
     conflicts,
-    capabilityGaps: displayCapabilityGaps(normalizedTask, projectedTerms),
+    inventoryWarnings: inventoryWarnings(candidates, request.harness),
+    capabilityGaps: displayCapabilityGaps(
+      normalizedTask,
+      candidates,
+      [...installed, ...available].map(({ candidate }) => candidate)
+    ),
     installedCoverage: stableNumber(ratio(installedTerms.size, taskTerms.size)),
     projectedCoverage: stableNumber(ratio(projectedTerms.size, taskTerms.size)),
     selectedContextTokens,

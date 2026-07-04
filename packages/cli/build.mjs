@@ -27,6 +27,9 @@ const dashboardSource = join(dashboardPackageDirectory, "dist");
 const dashboardDestination = join(outputDirectory, "dashboard");
 const integrationsSource = fileURLToPath(new URL("../integrations/assets/", import.meta.url));
 const integrationsDestination = join(outputDirectory, "integrations");
+const jsoncParserEsm = createRequire(
+  new URL("../engine/package.json", import.meta.url)
+).resolve("jsonc-parser/lib/esm/main.js");
 const manifestPath = join(outputDirectory, "third-party-manifest.json");
 const noticesPath = join(outputDirectory, "THIRD_PARTY_NOTICES.txt");
 const licenseOverridesPath = join(packageDirectory, "license-overrides.json");
@@ -323,6 +326,9 @@ const cliBuild = await build({
   target: "node22",
   outfile: join(outputDirectory, "main.js"),
   metafile: true,
+  alias: {
+    "jsonc-parser": jsoncParserEsm
+  },
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
   }

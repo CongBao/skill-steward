@@ -46,8 +46,22 @@ function respond(data: unknown, ok = true) {
 beforeEach(() => vi.restoreAllMocks());
 
 it("reviews every quarantine operation before applying a recoverable action", async () => {
+  const committedResult = {
+    transaction: {
+      id: plan.id,
+      action: "quarantine" as const,
+      status: "quarantined" as const,
+      skillId: skill.id
+    },
+    rescanRequired: true as const,
+    cleanupPending: false,
+    postCommitWarnings: [{
+      code: "GOVERNANCE_REFRESH_FAILED" as const,
+      message: "Portfolio refresh failed after governance committed"
+    }]
+  };
   const fetchMock = vi.fn(async (input: string | URL | Request) => String(input).endsWith("/apply")
-    ? respond({ transaction: { id: plan.id, action: "quarantine", status: "quarantined", skillId: skill.id }, rescanRequired: true, cleanupPending: false })
+    ? respond(committedResult)
     : respond(plan));
   vi.stubGlobal("fetch", fetchMock);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -67,6 +81,7 @@ it("reviews every quarantine operation before applying a recoverable action", as
   expect(screen.getByText("codex · Global")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Apply reviewed quarantine" }));
   await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
+  expect(onComplete.mock.calls[0]?.[0]).toEqual(committedResult);
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/v1/governance/plans/govern-plan-1/apply",
     expect.objectContaining({ method: "POST" })

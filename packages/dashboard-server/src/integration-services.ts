@@ -1,13 +1,10 @@
 import {
   applyIntegrationPlan,
-  installCompanionSkill,
   integrationCapabilities,
   integrationHarnessSchema,
   integrationStatus,
   planIntegration,
   removeIntegration,
-  removeManagedCompanionSkill,
-  rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan,
   type IntegrationConfigOptions,
   type IntegrationHarness,
@@ -18,6 +15,8 @@ import { withIntegrationMutationLease } from "@skill-steward/store";
 
 const harnesses: IntegrationHarness[] = ["codex", "claude-code", "github-copilot"];
 const MAX_REVIEWED_INTEGRATION_PLANS = 128;
+const retainedCompanionMessage =
+  "Shared companion retained pending reviewed consumer-aware removal";
 
 export type IntegrationServiceErrorCode =
   | "INVALID_INTEGRATION_HARNESS"
@@ -60,15 +59,18 @@ export interface IntegrationServiceDependencies {
   applyPlan: typeof applyIntegrationPlan;
   rollbackPlan: typeof rollbackIntegrationPlan;
   removePlan: typeof removeIntegration;
-  removeCompanion: typeof removeManagedCompanionSkill;
   withLease: typeof withIntegrationMutationLease;
 }
 
-const integrationServiceDefaults: IntegrationServiceDependencies = {
+interface IntegrationServiceInternalDependencies extends IntegrationServiceDependencies {
+  plan: typeof planIntegration;
+}
+
+const integrationServiceDefaults: IntegrationServiceInternalDependencies = {
+  plan: planIntegration,
   applyPlan: applyIntegrationPlan,
   rollbackPlan: rollbackIntegrationPlan,
   removePlan: removeIntegration,
-  removeCompanion: removeManagedCompanionSkill,
   withLease: withIntegrationMutationLease
 };
 
@@ -85,7 +87,7 @@ function parseHarness(value: string): IntegrationHarness {
 
 export function createIntegrationServices(
   options: IntegrationServiceOptions,
-  dependencyOverrides: Partial<IntegrationServiceDependencies> = {}
+  dependencyOverrides: Partial<IntegrationServiceInternalDependencies> = {}
 ): IntegrationServices {
   const dependencies = { ...integrationServiceDefaults, ...dependencyOverrides };
   const plans = new Map<string, IntegrationPlan>();
@@ -108,14 +110,10 @@ export function createIntegrationServices(
   const configOptions: IntegrationConfigOptions = {
     home: options.home,
     stateDirectory: options.stateDirectory,
+    companionSourceDirectory: options.companionSkillDirectory,
     ...(options.now ? { now: options.now } : {}),
     ...(options.id ? { id: options.id } : {})
   };
-  const companionOptions = {
-    home: options.home,
-    sourceDirectory: options.companionSkillDirectory
-  };
-
   return {
     capabilities: () => integrationCapabilities,
     async list() {
@@ -124,7 +122,7 @@ export function createIntegrationServices(
     async plan(value) {
       const harness = parseHarness(value);
       prunePlans();
-      const plan = await planIntegration(harness, configOptions);
+      const plan = await dependencies.plan(harness, configOptions);
       plans.set(plan.id, plan);
       prunePlans();
       return plan;
@@ -148,60 +146,38 @@ export function createIntegrationServices(
             );
           }
           plans.delete(planId);
-          const installed = await installCompanionSkill(companionOptions);
-          let applied = false;
+          await dependencies.applyPlan(plan, configOptions);
           try {
-            await dependencies.applyPlan(plan, configOptions);
-            applied = true;
-            try {
-              await options.afterApply();
-            } catch (readinessError) {
-              const rollbackFailures: unknown[] = [];
-              if (plan.changes.length > 0) {
-                try {
-                  await dependencies.rollbackPlan(plan, configOptions);
-                } catch (error) {
-                  rollbackFailures.push(error);
-                }
+            await options.afterApply();
+          } catch (readinessError) {
+            const rollbackFailures: unknown[] = [];
+            if (plan.changes.length > 0) {
+              try {
+                await dependencies.rollbackPlan(plan, configOptions);
+              } catch (error) {
+                rollbackFailures.push(error);
               }
-              if (installed.created && rollbackFailures.length === 0) {
-                try {
-                  if (!await dependencies.removeCompanion(companionOptions)) {
-                    rollbackFailures.push(
-                      new Error("Companion Skill changed before rollback")
-                    );
-                  }
-                } catch (error) {
-                  rollbackFailures.push(error);
-                }
-              }
-              if (rollbackFailures.length > 0) {
-                const details = rollbackFailures.map((error) =>
-                  error instanceof Error ? error.message : String(error)
-                );
-                throw new IntegrationServiceError(
-                  "INTEGRATION_ROLLBACK_FAILED",
-                  `The initial readiness scan failed and rollback was incomplete: ${details.join("; ")}`,
-                  {
-                    cause: new AggregateError(
-                      [readinessError, ...rollbackFailures],
-                      "Integration readiness and rollback both failed"
-                    )
-                  }
-                );
-              }
+            }
+            if (rollbackFailures.length > 0) {
+              const details = rollbackFailures.map((error) =>
+                error instanceof Error ? error.message : String(error)
+              );
               throw new IntegrationServiceError(
-                "INTEGRATION_READINESS_FAILED",
-                "The initial readiness scan failed; artifacts created by this apply were rolled back",
-                { cause: readinessError }
+                "INTEGRATION_ROLLBACK_FAILED",
+                `The initial readiness scan failed and rollback was incomplete: ${details.join("; ")}`,
+                {
+                  cause: new AggregateError(
+                    [readinessError, ...rollbackFailures],
+                    "Integration readiness and rollback both failed"
+                  )
+                }
               );
             }
-          } catch (error) {
-            return rethrowAfterIntegrationApplyFailure({
-              error,
-              companionCreated: !applied && installed.created,
-              removeCompanion: () => dependencies.removeCompanion(companionOptions)
-            });
+            throw new IntegrationServiceError(
+              "INTEGRATION_READINESS_FAILED",
+              "The initial readiness scan failed; artifacts created by this apply were rolled back",
+              { cause: readinessError }
+            );
           }
           return integrationStatus(harness, configOptions);
         });
@@ -221,15 +197,8 @@ export function createIntegrationServices(
           for (const [id, plan] of plans) {
             if (plan.harness === harness) plans.delete(id);
           }
-          const statuses = await Promise.all(
-            harnesses.map((entry) => integrationStatus(entry, configOptions))
-          );
-          if (!statuses.some(({ status }) =>
-            status === "installed" || status === "needs-trust"
-          )) {
-            await dependencies.removeCompanion(companionOptions);
-          }
-          return integrationStatus(harness, configOptions);
+          const status = await integrationStatus(harness, configOptions);
+          return { ...status, message: retainedCompanionMessage };
         });
       } catch (error) {
         if (error instanceof Error && "code" in error && error.code === "INTEGRATION_BUSY") {

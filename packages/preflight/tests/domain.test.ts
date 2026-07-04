@@ -11,7 +11,7 @@ const hash = (character: string) => `sha256:${character.repeat(64)}`;
 
 function result(candidate: Record<string, unknown>) {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -23,6 +23,7 @@ function result(candidate: Record<string, unknown>) {
     installCandidateIds: [],
     candidates: [candidate],
     conflicts: [],
+    inventoryWarnings: [],
     capabilityGaps: [],
     installedCoverage: 0.5,
     projectedCoverage: 0.5,
@@ -32,19 +33,19 @@ function result(candidate: Record<string, unknown>) {
   };
 }
 
-describe("preflight v3 domain", () => {
+describe("preflight v4 domain", () => {
   it("separates ranking evidence when the Intl word-boundary runtime changes", () => {
     expect(algorithmVersionForIntlRuntime({
       cldr: "48.0",
       icu: "78.2",
       unicode: "17.0"
-    })).toBe(4);
+    })).toBe(7);
     const alternate = algorithmVersionForIntlRuntime({
       cldr: "47.0",
       icu: "76.1",
       unicode: "16.0"
     });
-    expect(alternate).toBeGreaterThan(4_000_000_000_000);
+    expect(alternate).toBeGreaterThan(7_000_000_000_000);
     expect(algorithmVersionForIntlRuntime({
       cldr: "47.0",
       icu: "76.1",
@@ -84,6 +85,65 @@ describe("preflight v3 domain", () => {
     })).toThrow();
   });
 
+  it("keeps full results strict while accepting legacy candidate IDs for membership-checked feedback", () => {
+    const candidate = {
+      candidateId: "review",
+      availability: "installed",
+      installedSkillId: "review",
+      name: "review",
+      description: "Review code",
+      scope: "global",
+      compatibleHarnesses: ["codex"],
+      compatibility: "declared",
+      scripts: [],
+      executables: [],
+      highestSeverity: null,
+      relevance: 0.8,
+      uniqueCoverage: 0.4,
+      riskPenalty: 0,
+      redundancyPenalty: 0,
+      installPenalty: 0,
+      contextTokens: 200,
+      features: {
+        taskCoverage: 0.75,
+        skillPrecision: 0.5,
+        nameMatch: true,
+        projectScopeFit: false
+      },
+      decision: "use",
+      reasons: [{ code: "UNIQUE_COVERAGE", detail: "Covers review" }]
+    };
+    const valid = result(candidate);
+
+    for (const invalidId of ["unsafe id", "x".repeat(97)]) {
+      expect(() => preflightResultSchema.parse({ ...valid, id: invalidId })).toThrow();
+      expect(() => preflightResultSchema.parse({
+        ...valid,
+        useCandidateIds: [invalidId],
+        candidates: [{
+          ...candidate,
+          candidateId: invalidId,
+          installedSkillId: invalidId
+        }]
+      })).toThrow();
+      expect(preflightFeedbackSchema.parse({
+        label: "useful",
+        candidateIds: [invalidId]
+      }).candidateIds).toEqual([invalidId]);
+    }
+
+    expect(preflightResultSchema.parse({
+      ...valid,
+      id: `P${"a".repeat(95)}`,
+      useCandidateIds: [`C${"b".repeat(95)}`],
+      candidates: [{
+        ...candidate,
+        candidateId: `C${"b".repeat(95)}`,
+        installedSkillId: `C${"b".repeat(95)}`
+      }]
+    })).toBeDefined();
+  });
+
   it("requires installed identity for use decisions and a reason", () => {
     const candidate = {
       candidateId: "review",
@@ -112,12 +172,81 @@ describe("preflight v3 domain", () => {
       decision: "use",
       reasons: [{ code: "UNIQUE_COVERAGE", detail: "Covers review" }]
     };
-    expect(preflightResultSchema.parse(result(candidate)).schemaVersion).toBe(3);
+    expect(preflightResultSchema.parse(result(candidate)).schemaVersion).toBe(4);
     expect(() => preflightResultSchema.parse(result({
       ...candidate,
       installedSkillId: undefined,
       reasons: []
     }))).toThrow();
+  });
+
+  it("bounds visibility explanations and inventory warnings", () => {
+    const candidate = {
+      candidateId: "shadowed",
+      availability: "installed",
+      installedSkillId: "shadowed",
+      name: "shadowed",
+      description: "Review code",
+      scope: "global",
+      compatibleHarnesses: [],
+      compatibility: "declared",
+      scripts: [],
+      executables: [],
+      highestSeverity: null,
+      relevance: 0.8,
+      uniqueCoverage: 0,
+      riskPenalty: 0,
+      redundancyPenalty: 0,
+      installPenalty: 0,
+      contextTokens: 200,
+      features: {
+        taskCoverage: 0.75,
+        skillPrecision: 0.5,
+        nameMatch: true,
+        projectScopeFit: false
+      },
+      decision: "excluded",
+      reasons: [{
+        code: "HARNESS_SHADOWED",
+        detail: "Shadowed by installed candidate 'effective'."
+      }]
+    };
+    const parsed = preflightResultSchema.parse({
+      ...result(candidate),
+      useCandidateIds: [],
+      inventoryWarnings: [{
+        code: "HARNESS_AMBIGUOUS",
+        harness: "codex",
+        detail: "Visibility is ambiguous for every matching installed candidate."
+      }]
+    });
+
+    expect(parsed.inventoryWarnings).toHaveLength(1);
+    expect(() => preflightResultSchema.parse({
+      ...parsed,
+      inventoryWarnings: Array.from({ length: 4 }, () => parsed.inventoryWarnings[0])
+    })).toThrow();
+    expect(() => preflightResultSchema.parse({
+      ...parsed,
+      candidates: [{
+        ...candidate,
+        reasons: [{ code: "HARNESS_INACTIVE", detail: "x".repeat(201) }]
+      }]
+    })).toThrow();
+    expect(() => preflightResultSchema.parse({
+      ...parsed,
+      inventoryWarnings: [{
+        ...parsed.inventoryWarnings[0],
+        detail: "Ambiguous source at /private/native/cache"
+      }]
+    })).toThrow();
+    expect(() => preflightResultSchema.parse({
+      ...parsed,
+      candidates: [{
+        ...candidate,
+        reasons: Array.from({ length: 13 }, () => candidate.reasons[0])
+      }]
+    })).toThrow();
   });
 
   it("requires available identity and source for install decisions", () => {

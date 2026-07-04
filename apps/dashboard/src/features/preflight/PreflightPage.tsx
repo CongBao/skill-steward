@@ -27,7 +27,11 @@ const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
   INSTALL_REQUIRED: "preflight.reason.INSTALL_REQUIRED",
   CRITICAL_RISK: "preflight.reason.CRITICAL_RISK",
   NEGATIVE_TRIGGER: "preflight.reason.NEGATIVE_TRIGGER",
-  HARNESS_INCOMPATIBLE: "preflight.reason.HARNESS_INCOMPATIBLE"
+  HARNESS_INCOMPATIBLE: "preflight.reason.HARNESS_INCOMPATIBLE",
+  HARNESS_SHADOWED: "preflight.reason.HARNESS_SHADOWED",
+  HARNESS_INACTIVE: "preflight.reason.HARNESS_INACTIVE",
+  HARNESS_AMBIGUOUS: "preflight.reason.HARNESS_AMBIGUOUS",
+  INVENTORY_RESCAN_REQUIRED: "preflight.reason.INVENTORY_RESCAN_REQUIRED"
 };
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
@@ -103,6 +107,7 @@ export function PreflightPage() {
             <article><span>{t("preflight.selectedContext")}</span><strong>{number.format(result.selectedContextTokens)}</strong></article>
             <article><span>{t("preflight.contextSaved")}</span><strong>{number.format(result.estimatedContextSaved)}</strong></article>
           </section>
+          {result.inventoryWarnings.length ? <section className="preflight-section preflight-conflicts" aria-labelledby="preflight-inventory-warnings"><header><div><TriangleAlert size={18} /><h2 id="preflight-inventory-warnings">{t("preflight.inventoryWarnings")}</h2></div><span>{result.inventoryWarnings.length}</span></header>{result.inventoryWarnings.map((warning) => <article key={`${warning.harness}-${warning.code}`}><code>{warning.code}</code><p>{warning.detail}</p></article>)}</section> : null}
           {useNow.length ? <section className="preflight-section preflight-use" aria-labelledby="preflight-use"><header><div><Check size={18} /><h2 id="preflight-use">{t("preflight.useNow")}</h2></div><span>{useNow.length}</span></header><div className="preflight-selected-grid">{useNow.map((candidate) => <CandidateCard candidate={candidate} key={candidate.candidateId} />)}</div></section> : null}
           {install.length ? <section className="preflight-section preflight-install" aria-labelledby="preflight-install"><header><div><Sparkles size={18} /><h2 id="preflight-install">{t("preflight.considerInstalling")}</h2></div><span>{install.length}</span></header><p className="preflight-section-copy">{t("preflight.installCopy")}</p><div className="preflight-selected-grid">{install.map((candidate) => <AvailableCandidateCard candidate={candidate} preflightId={result.id} key={candidate.candidateId} />)}</div></section> : null}
           {result.capabilityGaps.length ? <section className="preflight-section preflight-gaps" aria-labelledby="preflight-gaps"><header><div><TriangleAlert size={18} /><h2 id="preflight-gaps">{t("preflight.capabilityGaps")}</h2></div><span>{result.capabilityGaps.length}</span></header><p>{t("preflight.gapsCopy")}</p><div>{result.capabilityGaps.map((gap) => <span key={gap}>{gap}</span>)}</div></section> : null}

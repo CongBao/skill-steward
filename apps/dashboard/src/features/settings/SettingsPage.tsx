@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Check } from "lucide-react";
-import { fetchDashboard, fetchRoots } from "../../api/client.js";
+import { fetchDashboard } from "../../api/client.js";
 import { KpiCard } from "../../components/KpiCard.js";
 import { formatKpiValue } from "../../components/kpiFormatting.js";
 import { PageHeader } from "../../components/PageHeader.js";
@@ -12,14 +12,14 @@ import {
 import { CatalogSourcesPanel } from "./CatalogSourcesPanel.js";
 import { HarnessIntegrationsPanel } from "./HarnessIntegrationsPanel.js";
 import { DataPolicyPanel } from "./DataPolicyPanel.js";
+import { InventoryCoveragePanel } from "./InventoryCoveragePanel.js";
 import "./settings.css";
 
-const KPI_IDS = ["health-score", "open-findings", "installed-skills", "estimated-context", "harness-coverage", "bundle-size", "tracked-files", "broken-references", "overlap-groups", "parse-failures", "scope-distribution", "portfolio-change", "health-trend", "largest-skill", "root-availability", "finding-confidence"];
+const KPI_IDS = ["health-score", "open-findings", "installed-skills", "estimated-context", "harness-coverage", "inventory-coverage", "bundle-size", "tracked-files", "broken-references", "overlap-groups", "parse-failures", "scope-distribution", "portfolio-change", "health-trend", "largest-skill", "root-availability", "finding-confidence"];
 
 export function SettingsPage() {
   const { locale, t } = useI18n();
   const { preferences, update } = usePreferences();
-  const roots = useQuery({ queryKey: ["roots"], queryFn: fetchRoots });
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const toggle = (id: string) => {
     const enabled = preferences.enabledKpis.includes(id);
@@ -50,10 +50,11 @@ export function SettingsPage() {
     <><PageHeader title={t("page.settings.title")} description={t("page.settings.description")} actions={<button className="button" onClick={restore}>{t("settings.restore")}</button>} />
       <div className="settings-layout"><div className="settings-stack">
         <section className="settings-card"><header><h2>{t("settings.appearance")}</h2></header><div className="settings-fields"><label>{t("settings.language")}<select value={preferences.locale} onChange={(event) => update({ locale: event.target.value as "en-US" | "zh-CN" })}><option value="en-US">English</option><option value="zh-CN">中文</option></select></label><label>{t("settings.theme")}<select value={preferences.theme} onChange={(event) => update({ theme: event.target.value as "system" | "light" | "dark" })}><option value="system">{t("theme.system")}</option><option value="light">{t("theme.light")}</option><option value="dark">{t("theme.dark")}</option></select></label><label>{t("settings.sidebar")}<select value={preferences.sidebar} onChange={(event) => update({ sidebar: event.target.value as "auto" | "expanded" | "collapsed" })}><option value="auto">{t("settings.auto")}</option><option value="expanded">{t("settings.expanded")}</option><option value="collapsed">{t("settings.collapsed")}</option></select></label></div></section>
+        <InventoryCoveragePanel inventory={dashboard.data?.inventory} loading={dashboard.isLoading} error={dashboard.isError} />
         <HarnessIntegrationsPanel />
         <DataPolicyPanel />
         <CatalogSourcesPanel />
-        <section className="settings-card"><header><div><h2>{t("settings.kpis")}</h2><span className="recommended-badge">{t("settings.recommended")}</span></div></header><label className="count-control">{t("settings.visibleCount")}<input aria-label={t("settings.visibleCount")} type="number" min="3" max="16" value={preferences.kpiCount} onChange={(event) => update({ kpiCount: Math.max(3, Math.min(16, Number(event.target.value) || 3)) })} /></label><h3>{t("settings.selected")}</h3><div className="selected-kpis">{selected.map((id, index) => <div key={id}><span>{label(id)}</span><button aria-label={`${t("settings.moveUp")} ${label(id)}`} disabled={!index} onClick={() => move(id, -1)}><ArrowUp size={14} /></button><button aria-label={`${t("settings.moveDown")} ${label(id)}`} disabled={index === selected.length - 1} onClick={() => move(id, 1)}><ArrowDown size={14} /></button></div>)}</div><h3>{t("settings.catalog")}</h3><div className="kpi-catalog">{KPI_IDS.map((id) => <label key={id} data-enabled={preferences.enabledKpis.includes(id)}><input type="checkbox" checked={preferences.enabledKpis.includes(id)} onChange={() => toggle(id)} aria-label={label(id)} /><span className="catalog-check">{preferences.enabledKpis.includes(id) ? <Check size={12} /> : null}</span>{label(id)}</label>)}</div></section>
+        <section className="settings-card"><header><div><h2>{t("settings.kpis")}</h2><span className="recommended-badge">{t("settings.recommended")}</span></div></header><label className="count-control">{t("settings.visibleCount")}<input aria-label={t("settings.visibleCount")} type="number" min="3" max="17" value={preferences.kpiCount} onChange={(event) => update({ kpiCount: Math.max(3, Math.min(17, Number(event.target.value) || 3)) })} /></label><h3>{t("settings.selected")}</h3><div className="selected-kpis">{selected.map((id, index) => <div key={id}><span>{label(id)}</span><button aria-label={`${t("settings.moveUp")} ${label(id)}`} disabled={!index} onClick={() => move(id, -1)}><ArrowUp size={14} /></button><button aria-label={`${t("settings.moveDown")} ${label(id)}`} disabled={index === selected.length - 1} onClick={() => move(id, 1)}><ArrowDown size={14} /></button></div>)}</div><h3>{t("settings.catalog")}</h3><div className="kpi-catalog">{KPI_IDS.map((id) => <label key={id} data-enabled={preferences.enabledKpis.includes(id)}><input type="checkbox" checked={preferences.enabledKpis.includes(id)} onChange={() => toggle(id)} aria-label={label(id)} /><span className="catalog-check">{preferences.enabledKpis.includes(id) ? <Check size={12} /> : null}</span>{label(id)}</label>)}</div></section>
       </div><aside className="settings-preview"><section className="settings-card sticky"><header><h2>{t("settings.preview")}</h2><span>{preferences.kpiCount}</span></header><div className="preview-grid">{selected.slice(0, preferences.kpiCount).map((id) => {
         const storedKpi = kpisById.get(id);
         const validHealthTimestamps = new Set(
@@ -72,7 +73,7 @@ export function SettingsPage() {
               })()
             : storedKpi;
         return <KpiCard key={id} label={label(id)} value={formatKpiValue(kpi, locale)} status={kpi?.status ?? "neutral"} />;
-      })}</div></section><section className="settings-card roots-card"><header><h2>{t("settings.roots")}</h2><span>{roots.data?.length ?? 0}</span></header><p>{t("settings.localOnly")}</p><div className="root-summary">{(roots.data ?? []).slice(0, 6).map((root) => <div key={`${root.scope}:${root.path}`}><span data-available={root.available} /> <code>{root.path}</code></div>)}</div></section></aside></div>
+      })}</div></section></aside></div>
     </>
   );
 }

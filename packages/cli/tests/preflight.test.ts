@@ -4,17 +4,21 @@ import { join } from "node:path";
 import {
   readPreflightEvidence,
   readLatestReport,
+  writeLatestReport,
   writeCatalogSnapshot,
   writeCatalogSources
 } from "@skill-steward/store";
 import {
+  COMPACT_PREFLIGHT_MAX_BYTES,
   PREFLIGHT_ALGORITHM_VERSION,
+  compactPreflightResultSchema,
   type PreflightResult
 } from "@skill-steward/preflight";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderPreflightHuman } from "../src/commands/preflight.js";
 import type { CliContext } from "../src/context.js";
 import { run } from "../src/main.js";
+import { installNativeCodexFixture } from "./native-inventory-fixture.js";
 
 interface Fixture {
   base: string;
@@ -125,7 +129,7 @@ describe("preflight command", () => {
     expect(current.stdout.join("")).toContain("testing-review");
     expect(current.stdout.join("")).toContain("Estimated context saved");
     expect(await readLatestReport(current.stateDir)).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       skills: [expect.objectContaining({ name: "security-review" })]
     });
     const disk = await readFile(join(current.stateDir, "preflights.json"), "utf8");
@@ -133,6 +137,43 @@ describe("preflight command", () => {
     expect((await readPreflightEvidence(current.stateDir))[0]).toMatchObject({
       harness: "codex",
       delivery: "cli"
+    });
+  });
+
+  it("runs explicit preflight against the shared native inventory", async () => {
+    await writeLatestReport(current.stateDir, {
+      schemaVersion: 1,
+      generatedAt: "2026-07-03T00:00:00.000Z",
+      portfolioFingerprint: `sha256:${"1".repeat(64)}`,
+      skills: [],
+      findings: []
+    });
+    await installNativeCodexFixture(current.context.home, "native-security-review");
+
+    expect(await run([
+      "preflight",
+      "--task", "Review native plugin security changes and tests",
+      "--harness", "codex",
+      "--json"
+    ], current.context)).toBe(0);
+
+    const output = JSON.parse(current.stdout.splice(0).join(""));
+    expect(output.schemaVersion).toBe(4);
+    expect(output.candidates).toContainEqual(expect.objectContaining({
+      name: "native-security-review",
+      availability: "installed"
+    }));
+    expect(await readLatestReport(current.stateDir)).toMatchObject({
+      schemaVersion: 2,
+      skills: expect.arrayContaining([expect.objectContaining({
+        name: "native-security-review",
+        ownership: "native-plugin"
+      })]),
+      inventory: {
+        harnesses: expect.arrayContaining([
+          expect.objectContaining({ harness: "codex", status: "verified" })
+        ])
+      }
     });
   });
 
@@ -144,7 +185,7 @@ describe("preflight command", () => {
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       candidates: [expect.objectContaining({ name: "security-review" })]
     });
   });
@@ -158,12 +199,52 @@ describe("preflight command", () => {
     expect(exitCode).toBe(0);
     const output = JSON.parse(current.stdout.join(""));
     expect(output).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       useCandidateIds: expect.any(Array),
       installCandidateIds: expect.any(Array)
     });
     expect(output).not.toHaveProperty("task");
+  });
+
+  it("emits one minified compact JSON line from the same fresh inventory path", async () => {
+    await seedCatalog(current);
+    const exitCode = await run(
+      ["preflight", "--stdin", "--harness", "codex", "--compact-json"],
+      current.context
+    );
+
+    expect(exitCode).toBe(0);
+    const serialized = current.stdout.join("");
+    expect(serialized.endsWith("\n")).toBe(true);
+    expect(serialized.slice(0, -1)).not.toContain("\n");
+    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+      COMPACT_PREFLIGHT_MAX_BYTES + 1
+    );
+    const output = compactPreflightResultSchema.parse(JSON.parse(serialized));
+    expect(output).toMatchObject({
+      schemaVersion: 1,
+      algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
+      use: [expect.objectContaining({ name: "security-review" })],
+      feedbackCommand: expect.stringContaining("skill-steward evidence feedback --preflight ")
+    });
+    expect(output).not.toHaveProperty("candidates");
+    expect(output).not.toHaveProperty("taskHash");
+    expect(await readLatestReport(current.stateDir)).toMatchObject({ schemaVersion: 2 });
+    expect((await readPreflightEvidence(current.stateDir))[0]).toMatchObject({
+      harness: "codex",
+      delivery: "cli"
+    });
+  });
+
+  it("rejects complete and compact JSON flags together", async () => {
+    expect(await run([
+      "preflight",
+      "--stdin",
+      "--json",
+      "--compact-json"
+    ], current.context)).toBe(1);
+    expect(current.stderr.join(" ")).toMatch(/cannot be used with|conflict/i);
   });
 
   it("attributes valid cursor and gemini preflight requests", async () => {
@@ -237,7 +318,7 @@ describe("preflight command", () => {
 
   it("bounds low-value exclusions and points to complete JSON", () => {
     const result: PreflightResult = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
@@ -278,6 +359,7 @@ describe("preflight command", () => {
         }]
       })),
       conflicts: [],
+      inventoryWarnings: [],
       capabilityGaps: ["security"],
       installedCoverage: 0,
       projectedCoverage: 0,
@@ -301,7 +383,7 @@ describe("preflight command", () => {
 
   it("explains a hard exclusion instead of the generic relevance fallback", () => {
     const result: PreflightResult = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
@@ -349,6 +431,11 @@ describe("preflight command", () => {
         ]
       }],
       conflicts: [],
+      inventoryWarnings: [{
+        code: "HARNESS_AMBIGUOUS",
+        harness: "codex",
+        detail: "Visibility is ambiguous for every matching installed candidate."
+      }],
       capabilityGaps: ["pdf"],
       installedCoverage: 0,
       projectedCoverage: 0,
@@ -359,6 +446,9 @@ describe("preflight command", () => {
 
     expect(renderPreflightHuman(result)).toContain(
       "docx: The Skill explicitly excludes PDF tasks."
+    );
+    expect(renderPreflightHuman(result)).toContain(
+      "Inventory warning: Visibility is ambiguous for every matching installed candidate."
     );
   });
 });

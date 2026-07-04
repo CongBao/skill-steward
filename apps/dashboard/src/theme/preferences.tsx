@@ -27,7 +27,8 @@ const recommendedKpis = [
   "open-findings",
   "installed-skills",
   "estimated-context",
-  "harness-coverage"
+  "harness-coverage",
+  "inventory-coverage"
 ];
 
 const initialLocale: Locale =
@@ -40,7 +41,7 @@ export const DEFAULT_PREFERENCES: DashboardPreferencesV1 = {
   locale: initialLocale,
   theme: "system",
   sidebar: "auto",
-  kpiCount: 5,
+  kpiCount: 6,
   kpiOrder: recommendedKpis,
   enabledKpis: recommendedKpis
 };
@@ -55,7 +56,7 @@ export function parsePreferences(value: unknown): DashboardPreferencesV1 {
     !["auto", "expanded", "collapsed"].includes(input.sidebar ?? "") ||
     !Number.isInteger(input.kpiCount) ||
     (input.kpiCount ?? 0) < 3 ||
-    (input.kpiCount ?? 0) > 16 ||
+    (input.kpiCount ?? 0) > 17 ||
     !Array.isArray(input.kpiOrder) ||
     !input.kpiOrder.every((item) => typeof item === "string") ||
     !Array.isArray(input.enabledKpis) ||

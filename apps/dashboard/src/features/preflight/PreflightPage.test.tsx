@@ -11,7 +11,7 @@ import {
 import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   algorithmVersion: 4,
   id: "run-1",
   generatedAt: "2026-07-03T01:00:00.000Z",
@@ -149,6 +149,11 @@ const result = {
     }
   ],
   conflicts: [],
+  inventoryWarnings: [{
+    code: "HARNESS_AMBIGUOUS",
+    harness: "codex",
+    detail: "Visibility is ambiguous for every matching installed candidate."
+  }],
   capabilityGaps: ["deployment"],
   installedCoverage: 0.57,
   projectedCoverage: 0.85,
@@ -214,6 +219,9 @@ describe("PreflightPage v2", () => {
     expect(await screen.findByText("Use now")).toBeVisible();
     expect(screen.getByText("Consider installing")).toBeVisible();
     expect(screen.getByText("Capability gaps")).toBeVisible();
+    expect(screen.getByText("Inventory visibility warning")).toBeVisible();
+    expect(screen.getByText("Visibility is ambiguous for every matching installed candidate."))
+      .toBeVisible();
     expect(screen.getByText("deployment")).toBeVisible();
     expect(screen.getAllByText("Known publisher · not a safety guarantee")[0]).toBeVisible();
     expect(screen.getAllByText("Negative trigger")[0]).toBeVisible();

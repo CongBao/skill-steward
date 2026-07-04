@@ -35,6 +35,46 @@ const required = [
   ...englishScreenshots.map((name) => `docs/images/${name}`),
   ...chineseScreenshots.map((name) => `docs/images/${name}`)
 ];
+const inventoryTaxonomies = {
+  source: [
+    "scanned",
+    "missing",
+    "unreadable",
+    "invalid",
+    "disabled",
+    "stale",
+    "ambiguous",
+    "truncated"
+  ],
+  coverage: ["verified", "partial", "unavailable", "convention-only"],
+  exposure: ["effective", "shadowed", "inactive", "ambiguous"]
+} as const;
+
+function expectTaxonomyLine(
+  markdown: string,
+  label: string,
+  expected: readonly string[]
+): void {
+  const line = markdown.split("\n").find((candidate) => candidate.includes(label));
+  expect(line, `missing ${label} taxonomy`).toBeDefined();
+  expect(
+    [...(line ?? "").matchAll(/`([^`]+)`/gu)].map((match) => match[1]),
+    label
+  ).toEqual(expected);
+}
+
+function expectInventoryTaxonomies(
+  markdown: string,
+  labels: { source: string; coverage: string; exposure: string } = {
+    source: "Source statuses:",
+    coverage: "Harness coverage:",
+    exposure: "Skill exposure:"
+  }
+): void {
+  expectTaxonomyLine(markdown, labels.source, inventoryTaxonomies.source);
+  expectTaxonomyLine(markdown, labels.coverage, inventoryTaxonomies.coverage);
+  expectTaxonomyLine(markdown, labels.exposure, inventoryTaxonomies.exposure);
+}
 
 async function expectLocalLinksToExist(markdownPath: string, markdown: string): Promise<void> {
   const links = [...markdown.matchAll(/\[[^\]]*\]\((?!https?:|#)([^)]+)\)/g)].map(
@@ -121,6 +161,42 @@ describe("open-source repository", () => {
     expect(readme).toContain("runtime-audit.json");
     expect(readme).toMatch(/real npm and pnpm tarballs/i);
     expect(readme).toContain("Status: active alpha");
+    const nativeHeading = readme.indexOf("## Native inventory visibility");
+    const userValue = readme.search(
+      /finding (?:a|the) director(?:y|ies)[^.]*not prove[^.]*Harness[^.]*use[^.]*Skill/i
+    );
+    expect(userValue).toBeGreaterThan(nativeHeading);
+    expect(userValue).toBeLessThan(readme.indexOf("Core native inventory adapters"));
+    expectInventoryTaxonomies(readme);
+    expect(readme).toMatch(/native plugin-managed Skills[^.]*read-only[^.]*governance/i);
+    expect(readme).toMatch(/quarantine and restore[^.]*directly managed Skills/i);
+    expect(readme).toContain("Across the total 30 Harnesses");
+    expect(readme).toMatch(/outside the three core adapters[^.]*convention-only/i);
+    expect(readme).toMatch(/current-workspace snapshot[^.]*user scopes/i);
+    expect(readme).toMatch(/does not crawl every project or workspace/i);
+    expect(readme).toMatch(/Copilot Harness coverage[^.]*`partial`/i);
+    expect(readme).toMatch(/source or Skill exposure[^.]*`ambiguous`/i);
+    expect(readme).toContain("Algorithm v7");
+    expect(readme).toContain("schema v4");
+    expect(readme).toMatch(/capability gaps[^.]*high-confidence[^.]*search hints/i);
+    expect(readme).toMatch(/unsegmented two-character fragments[^.]*low confidence/i);
+    expect(readme).toMatch(/positive candidate metadata[^.]*canonical namespace/i);
+    expect(readme).toMatch(/name match[^.]*specific capability concept/i);
+    expect(readme).toContain("--stdin --compact-json");
+    expect(readme).toContain("one line and at most 4,096 UTF-8 bytes");
+    expect(readme).toContain("selected use/install recommendations");
+    expect(readme).toContain("`--json` returns the complete `PreflightResult`");
+    expect(readme).toContain("catalog `source` metadata");
+    expect(readme).toMatch(/does not (?:embed|include)[^.]*native inventory[^.]*ownership[^.]*plugin[^.]*exposure records/i);
+    expect(readme).toMatch(/portfolio reports and (?:the )?dashboard[^.]*preserve/i);
+    expect(readme).toMatch(/reason codes and inventory warnings/i);
+    expect(readme).toContain("Companion Hooks remain capped at 2,048 bytes");
+    expect(readme).not.toContain("--stdin --json");
+    expect(readme).not.toContain("Algorithm v4");
+    expect(readme).not.toContain(
+      "does not yet enumerate every Skill nested inside a natively installed plugin"
+    );
+    expect(readme).not.toMatch(/remaining 30-Harness|full candidate, feature, exposure/i);
     expect(readme).toContain("managed integration setup");
     expect(readme).not.toContain("or integration change");
     expect(readme).toMatch(
@@ -162,7 +238,7 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("[English](README.md)");
     expect(chineseReadme).not.toContain("并非设计稿");
     expect(chineseReadme).not.toContain("OpenSpec");
-    expect(chineseReadme).toContain("先看清、再选择、最后安全地改变你的 Agent Skills。");
+    expect(chineseReadme).toContain("先看清、再选择、最后安全地调整你的 Agent Skills。");
     expect(chineseReadme).toContain("Codex、Claude Code、GitHub Copilot");
     expect(chineseReadme).toContain("它不是 Harness");
     expect(chineseReadme.indexOf("## 它主要做三件事")).toBeLessThan(
@@ -208,6 +284,51 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("runtime-audit.json");
     expect(chineseReadme).toMatch(/npm 和 pnpm[^。]*真实 tarball/);
     expect(chineseReadme).toContain("当前状态：活跃 Alpha");
+    const chineseNativeHeading = chineseReadme.indexOf("## 原生盘点可见性");
+    const chineseUserValue = chineseReadme.search(
+      /找到目录[^。]*不(?:代表|能证明)[^。]*Harness[^。]*使用[^。]*Skill/
+    );
+    expect(chineseUserValue).toBeGreaterThan(chineseNativeHeading);
+    expect(chineseUserValue).toBeLessThan(
+      chineseReadme.indexOf("核心原生盘点适配器")
+    );
+    expectInventoryTaxonomies(chineseReadme, {
+      source: "来源状态：",
+      coverage: "Harness 覆盖状态：",
+      exposure: "Skill 可见状态："
+    });
+    expect(chineseReadme).toMatch(/原生插件管理[^。]*治理[^。]*只读/);
+    expect(chineseReadme).toMatch(/隔离与恢复[^。]*直接管理的 Skills/);
+    expect(chineseReadme).toContain("在总计 30 种 Harness 中");
+    expect(chineseReadme).toMatch(/三种核心适配器之外[^。]*`convention-only`/);
+    expect(chineseReadme).toMatch(/当前工作区[^。]*用户级作用域[^。]*快照/);
+    expect(chineseReadme).toMatch(/不会遍历本机上的每个项目或工作区/);
+    expect(chineseReadme).toMatch(/Copilot 的 Harness 覆盖状态[^。]*`partial`/);
+    expect(chineseReadme).toMatch(/来源或 Skill 可见状态[^。]*`ambiguous`/);
+    expect(chineseReadme).toContain("算法 v7");
+    expect(chineseReadme).toContain("结果格式 v4");
+    expect(chineseReadme).toMatch(/对一组有限的[^。]*概念做确定性归一化/);
+    expect(chineseReadme).toMatch(/能力缺口[^。]*高置信[^。]*搜索提示/);
+    expect(chineseReadme).toMatch(/未分词[^。]*两字片段[^。]*低置信/);
+    expect(chineseReadme).toMatch(/候选项的正向元数据[^。]*canonical 命名空间/);
+    expect(chineseReadme).toMatch(/名称匹配[^。]*具体能力概念/);
+    expect(chineseReadme).toContain("--stdin --compact-json");
+    expect(chineseReadme).toMatch(
+      /需要把结果交给 Harness 或配套 Skill 时[^。]*`--compact-json`/
+    );
+    expect(chineseReadme).toContain("单行且不超过 4,096 UTF-8 字节");
+    expect(chineseReadme).toContain("只保留选中的使用/安装建议");
+    expect(chineseReadme).toContain("`--json` 返回完整的 `PreflightResult`");
+    expect(chineseReadme).toMatch(/目录候选项[^。；]*`source` 元数据/);
+    expect(chineseReadme).toMatch(/不包含原生盘点的来源、所有权、插件或可见状态记录/);
+    expect(chineseReadme).toMatch(/资产报告与 Dashboard[^。]*保留/);
+    expect(chineseReadme).toMatch(/原因码和盘点警告/);
+    expect(chineseReadme).toContain("配套 Hook 仍以 2,048 字节为上限");
+    expect(chineseReadme).not.toContain("--stdin --json");
+    expect(chineseReadme).not.toContain("算法 v4");
+    expect(chineseReadme).not.toContain("尚不能枚举所有原生已安装插件内部嵌套的 Skill");
+    expect(chineseReadme).not.toMatch(/其余 30 种|结果 schema v4|候选项特征、暴露状态/);
+    expect(chineseReadme).not.toMatch(/失败开放策略|临时 HOME 夹具|边界失败/);
     expect(chineseReadme).toContain("新增 Harness 集成");
     expect(chineseReadme).toMatch(/新增集成遇到忙碌[^。]*不会消耗[^。]*计划/);
     expect(chineseReadme).toMatch(/安装、回滚和 Harness 集成共用同一把状态级跨进程锁/);
@@ -304,6 +425,23 @@ describe("open-source repository", () => {
   it("keeps internal planning references out of the public documentation tree", async () => {
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     expect(changelog).not.toContain("OpenSpec");
+    expect(changelog).toContain("## [0.5.0-alpha.4] - 2026-07-04");
+    expect(changelog).toContain("native inventory adapters");
+    expectInventoryTaxonomies(changelog);
+    expect(changelog).toContain("Preflight algorithm v7 and result schema v4");
+    expect(changelog).toMatch(/high-confidence capability-gap search hints/i);
+    expect(changelog).toMatch(/gap-only canonical namespace[^.]*negative usage clauses/i);
+    expect(changelog).toMatch(/generic single-token names[^.]*corroborat/i);
+    expect(changelog).toContain("--compact-json");
+    expect(changelog).toContain("read-only in Skill Steward governance");
+    expect(changelog).toContain("current-workspace snapshot plus user scopes");
+    expect(changelog).toContain("jsonc-parser@3.3.1");
+    expect(changelog).toContain("smol-toml@1.7.0");
+    expect(changelog).toContain("marked");
+    expect(changelog).toMatch(/reports and (?:the )?dashboard preserve native[^.]*ownership[^.]*plugin[^.]*exposure records/i);
+    expect(changelog).toMatch(/Preflight consumes resolved visibility[^.]*reason codes and inventory warnings/i);
+    expect(changelog).toContain("Across the total 30 Harnesses");
+    expect(changelog).not.toMatch(/remaining 30-Harness|Preflight and report surfaces preserve native/i);
     expect(changelog).toContain("## [0.5.0-alpha.3] - 2026-07-03");
     expect(changelog).toMatch(/exact, single-use reviewed plans/i);
     expect(changelog).toMatch(
@@ -324,7 +462,26 @@ describe("open-source repository", () => {
     expect(architecture).toContain("evidence-events.jsonl");
     expect(architecture).toContain("governance.jsonl");
     expect(architecture).toContain("observe-only");
-    expect(architecture).toContain("Preflight algorithm v4");
+    expect(architecture).toContain("Preflight algorithm v7 / schema v4");
+    expect(architecture).toMatch(/candidate-corroborated capability-gap search hints/i);
+    expect(architecture).toMatch(/positive candidate metadata[^.]*selected positive coverage/i);
+    expect(architecture).toMatch(/negative usage clauses[^.]*neither corroborate nor cover/i);
+    expect(architecture).toMatch(/name match[^.]*specific canonical concept/i);
+    expect(architecture).toContain("native inventory and visibility resolver");
+    expectInventoryTaxonomies(architecture);
+    expect(architecture).toContain("Across the total 30 Harnesses");
+    expect(architecture).toContain("current-workspace snapshot plus user scopes");
+    expect(architecture).toContain("does not crawl every project or workspace");
+    expect(architecture).toContain("--compact-json");
+    expect(architecture).toContain("4,096 UTF-8 bytes");
+    expect(architecture).toContain("selected use/install recommendations");
+    expect(architecture).toContain("full `--json` output is the complete `PreflightResult`");
+    expect(architecture).toContain("catalog `source` metadata");
+    expect(architecture).toMatch(/does not (?:embed|include)[^.]*native inventory[^.]*ownership[^.]*plugin[^.]*exposure records/i);
+    expect(architecture).toMatch(/reports and (?:the )?dashboard[^.]*preserve/i);
+    expect(architecture).toMatch(/reason codes and inventory warnings/i);
+    expect(architecture).toContain("2,048 bytes");
+    expect(architecture).not.toContain("stale/error status");
     expect(architecture).toContain("explicit CLI feedback command");
     expect(architecture).toContain("reviewed-plans/");
     expect(architecture).toContain("staging/");
@@ -348,9 +505,10 @@ describe("open-source repository", () => {
     expect(architecture).not.toMatch(/OpenSpec|Superpowers/);
 
     const alphaTesting = await readFile(join(root, "docs/alpha-testing.md"), "utf8");
-    expect(alphaTesting).toContain("0.5.0-alpha.3");
+    expectInventoryTaxonomies(alphaTesting);
+    expect(alphaTesting).toContain("0.5.0-alpha.4");
     expect(alphaTesting).toContain("--plan <id> --confirm");
-    expect(alphaTesting).toContain("## Alpha.3 test matrix");
+    expect(alphaTesting).toContain("## Alpha.4 test matrix");
     expect(alphaTesting).toMatch(/busy[^.]*does not consume[^.]*plan/i);
     expect(alphaTesting).toMatch(/readiness scan[^.]*rolls back/i);
     expect(alphaTesting).toContain("THIRD_PARTY_NOTICES.txt");
@@ -359,16 +517,41 @@ describe("open-source repository", () => {
     expect(alphaTesting).toMatch(/same operating-system user/i);
     expect(alphaTesting).toContain("## Reviewed installation concurrency");
     expect(alphaTesting).toMatch(/Exactly one process must succeed/);
+    expect(alphaTesting).toMatch(/low-confidence two-character fragments[^.]*empty/i);
+    expect(alphaTesting).toMatch(/negative usage clauses[^.]*neither corroborate nor cover/i);
+    expect(alphaTesting).toMatch(/generic exact names[^.]*empty gap list/i);
     expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);
     for (const command of [
       "CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts",
       "CI=true pnpm --filter skill-steward exec vitest run tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts",
       "CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts",
       "CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs",
-      "CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts"
+      "CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts",
+      "CI=true pnpm --filter @skill-steward/engine exec vitest run tests/codex-inventory.test.ts tests/claude-inventory.test.ts tests/copilot-inventory.test.ts tests/inventory-workspace.test.ts tests/visibility-resolution.test.ts",
+      "CI=true pnpm --filter @skill-steward/preflight exec vitest run tests/analyze.test.ts tests/tokenize.test.ts tests/compact.test.ts",
+      "CI=true pnpm --filter skill-steward exec vitest run tests/govern.test.ts tests/preflight.test.ts"
     ]) {
       expect(alphaTesting).toContain(command);
     }
+    for (const coverage of [
+      "native adapter coverage",
+      "compact handoff output",
+      "bilingual concept matching",
+      "native governance refusal",
+      "current-workspace snapshot limitation"
+    ]) {
+      expect(alphaTesting).toContain(coverage);
+    }
+    expect(alphaTesting).toContain("Across the total 30 Harnesses");
+    expect(alphaTesting).toMatch(/Copilot Harness coverage[^.]*`partial`/i);
+    expect(alphaTesting).toMatch(/source or Skill exposure[^.]*`ambiguous`/i);
+    expect(alphaTesting).toContain("complete `PreflightResult`");
+    expect(alphaTesting).toContain("catalog `source` metadata");
+    expect(alphaTesting).toMatch(/not native inventory ownership, plugin, source, or exposure records/i);
+    expect(alphaTesting).toMatch(/reason codes and inventory warnings/i);
+    expect(alphaTesting).not.toMatch(
+      /source status(?:es)?[^\n]*`partial`|planned source[^\n.]*`partial`/i
+    );
     expect(alphaTesting).not.toContain("pnpm --filter skill-steward test -- tests/");
     expect(alphaTesting.indexOf(
       "pnpm --filter skill-steward pack --pack-destination artifacts/pnpm"
@@ -393,6 +576,17 @@ describe("open-source repository", () => {
       throw error;
     });
     expect(internalEntries.filter((entry) => entry.isFile())).toEqual([]);
+
+    for (const [path, source] of [
+      ["README.md", await readFile(join(root, "README.md"), "utf8")],
+      ["README.zh-CN.md", await readFile(join(root, "README.zh-CN.md"), "utf8")],
+      ["docs/architecture.md", architecture],
+      ["docs/alpha-testing.md", alphaTesting],
+      ["CHANGELOG.md", changelog],
+      ["packages/cli/README.md", await readFile(join(root, "packages/cli/README.md"), "utf8")]
+    ] as const) {
+      expect(source, path).not.toMatch(/OpenSpec|Superpowers/);
+    }
   });
 
   it("records the real product review, evidence, priorities, and accepted gaps", async () => {

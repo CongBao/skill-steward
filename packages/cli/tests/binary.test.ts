@@ -34,7 +34,7 @@ describe("built CLI", () => {
     };
     const { stdout } = await execFileAsync(process.execPath, [binary, "--version"]);
 
-    expect(manifest.version).toBe("0.5.0-alpha.3");
+    expect(manifest.version).toBe("0.5.0-alpha.4");
     expect(stdout.trim()).toBe(manifest.version);
   });
 
@@ -57,10 +57,33 @@ describe("built CLI", () => {
       ["evidence", "policy", "set", "--help"],
       ["evidence", "erase", "--help"]
     ]) {
-      const help = (await execFileAsync(process.execPath, [binary, ...args])).stdout;
+      const { stdout: help, stderr } = await execFileAsync(
+        process.execPath,
+        [binary, ...args]
+      );
       expect(help, args.join(" ")).toContain("--plan <id>");
       expect(help, args.join(" ")).toContain("--confirm");
+      expect(stderr, args.join(" ")).toBe("");
     }
+  });
+
+  it("prints a conflicting-option parse error exactly once", async () => {
+    let stderr = "";
+    try {
+      await execFileAsync(process.execPath, [
+        binary,
+        "preflight",
+        "--stdin",
+        "--json",
+        "--compact-json"
+      ]);
+      throw new Error("Expected conflicting options to fail");
+    } catch (error) {
+      stderr = String((error as { stderr?: string }).stderr ?? "");
+    }
+
+    expect(stderr.match(/option '--compact-json' cannot be used with option '--json'/gu))
+      .toHaveLength(1);
   });
 
   it("runs as an ESM executable", async () => {
@@ -99,7 +122,7 @@ describe("built CLI", () => {
     });
   });
 
-  it("runs cached Hooks and reversible integration lifecycles for all three adapters in a temporary HOME", async () => {
+  it("runs cached Hooks and fails closed on Phase 1 integration apply for all adapters", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-vertical-slice-"));
     const home = join(base, "home");
     const workspace = join(base, "workspace");
@@ -187,39 +210,20 @@ describe("built CLI", () => {
         [binary, "integrate", "plan", "--harness", harness, "--json"],
         { cwd: workspace, env }
       )).stdout) as { id: string };
-      await execFileAsync(
+      await expect(execFileAsync(
         process.execPath,
         [binary, "integrate", "apply", "--plan", preview.id, "--confirm"],
         { cwd: workspace, env }
-      );
+      )).rejects.toMatchObject({
+        stderr: expect.stringContaining("INTEGRATION_COMPANION_ACTION_UNAVAILABLE")
+      });
     }
-    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
     expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"))).toMatchObject({ unrelated: true });
-    expect(await readFile(join(home, ".copilot", "hooks", "skill-steward.json"), "utf8")).toContain("hook observe --harness github-copilot");
-
-    const managed = [
-      { harness: "codex", path: join(home, ".codex", "hooks.json"), drift: (source: string) => source.replace("hook prompt --harness codex", "hook prompt --harness codex --drifted") },
-      { harness: "claude-code", path: join(home, ".claude", "settings.json"), drift: (source: string) => source.replace("hook prompt --harness claude-code", "hook prompt --harness claude-code --drifted") },
-      { harness: "github-copilot", path: join(home, ".copilot", "hooks", "skill-steward.json"), drift: (source: string) => `${source.trimEnd().slice(0, -1)},\"drifted\":true}\n` }
-    ];
-    for (const entry of managed) {
-      const original = await readFile(entry.path, "utf8");
-      const drifted = entry.drift(original);
-      await writeFile(entry.path, drifted, "utf8");
-      await expect(execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", entry.harness, "--confirm"], { cwd: workspace, env })).rejects.toThrow();
-      expect(await readFile(entry.path, "utf8")).toBe(drifted);
-      await writeFile(entry.path, original, "utf8");
-    }
-
-    await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "codex", "--confirm"], { cwd: workspace, env });
-    expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
-    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
-    await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "claude-code", "--confirm"], { cwd: workspace, env });
-    expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"))).toMatchObject({ unrelated: true });
-    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).resolves.toContain("name: skill-steward-preflight");
-    await execFileAsync(process.execPath, [binary, "integrate", "remove", "--harness", "github-copilot", "--confirm"], { cwd: workspace, env });
     expect(JSON.parse(await readFile(join(home, ".copilot", "hooks", "keep-me.json"), "utf8"))).toMatchObject({ unrelated: true });
-    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(home, ".copilot", "hooks", "skill-steward.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
   }, 30_000);
 });

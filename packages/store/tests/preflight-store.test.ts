@@ -2,9 +2,11 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  analyzePreflight,
   PREFLIGHT_ALGORITHM_VERSION,
   type PreflightResult
 } from "@skill-steward/preflight";
+import type { PortfolioReportV2, SkillRecordV2 } from "@skill-steward/engine";
 import { describe, expect, it } from "vitest";
 import {
   appendPreflightEvidence,
@@ -20,7 +22,7 @@ const sourceUrl = "https://example.com/private-skills.git";
 
 function result(id: string, createdAt: string): PreflightResult {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id,
     generatedAt: createdAt,
@@ -56,7 +58,10 @@ function result(id: string, createdAt: string): PreflightResult {
           projectScopeFit: true
         },
         decision: "use",
-        reasons: [{ code: "TASK_TERM_MATCH", detail: "cryptography customer" }]
+        reasons: [{
+          code: "HARNESS_SHADOWED",
+          detail: "private-plugin-id at /private/native/cache and /private/plugin.json is shadowed by security-review"
+        }]
       },
       {
         candidateId: "catalog-testing",
@@ -94,6 +99,11 @@ function result(id: string, createdAt: string): PreflightResult {
       }
     ],
     conflicts: [],
+    inventoryWarnings: [{
+      code: "HARNESS_AMBIGUOUS",
+      harness: "codex",
+      detail: "workspace-identity-secret plugin-version-9 cache-version-7"
+    }],
     capabilityGaps: ["customer"],
     installedCoverage: 0.5,
     projectedCoverage: 0.75,
@@ -165,6 +175,91 @@ function legacyV2File() {
 }
 
 describe("preflight evidence store", () => {
+  it("stores unique pseudonymous candidate IDs from unsafe duplicate installed records", async () => {
+    const state = await mkdtemp(join(tmpdir(), "steward-preflight-unsafe-ids-"));
+    const rawId = "/private/native/cache/duplicate-skill";
+    const sourceIds = ["codex:unsafe-a", "codex:unsafe-b"];
+    const skills: SkillRecordV2[] = sourceIds.map((sourceId, index) => ({
+      id: rawId,
+      name: `security-review-${index}`,
+      description: "Review security changes",
+      path: `/private/native/cache/record-${index}`,
+      root: `record-${index}`,
+      scope: "global",
+      visibleTo: ["codex"],
+      fingerprint: hash(String(index + 1)),
+      files: [],
+      estimatedTokens: 100 + index,
+      ownership: "direct",
+      sourceIds: [sourceId],
+      exposures: [{
+        harness: "codex",
+        effectiveName: `security-review-${index}`,
+        state: "effective",
+        sourceId,
+        reason: "TEST_EFFECTIVE"
+      }]
+    }));
+    const report: PortfolioReportV2 = {
+      schemaVersion: 2,
+      generatedAt: "2026-07-04T00:00:00.000Z",
+      portfolioFingerprint: hash("f"),
+      workspace: { path: "/private/workspace", identity: hash("e") },
+      skills,
+      findings: [{
+        id: "unsafe-duplicate-finding",
+        code: "PORTFOLIO_RISK",
+        severity: "warning",
+        skillIds: [rawId],
+        summary: `Finding for ${rawId}`,
+        evidence: [`Observed ${rawId}`],
+        recommendation: `Review ${rawId}`,
+        confidence: 1
+      }],
+      inventory: {
+        sources: sourceIds.map((sourceId, index) => ({
+          id: sourceId,
+          harness: "codex",
+          scope: "global",
+          kind: "direct-root",
+          path: `/private/native/cache/source-${index}`,
+          status: "scanned",
+          skillCount: 1,
+          effectiveSkillCount: 1
+        })),
+        harnesses: [{
+          harness: "codex",
+          status: "verified",
+          sourceIds,
+          skillCount: 2,
+          effectiveSkillCount: 2
+        }]
+      }
+    };
+    const preflight = analyzePreflight({
+      task: "Review security changes",
+      report,
+      catalogSkills: [],
+      catalogSources: [],
+      harness: "codex",
+      id: "unsafe-duplicate-run",
+      now: new Date("2026-07-04T00:01:00.000Z")
+    });
+
+    await appendPreflightEvidence(state, preflight, {
+      harness: "codex",
+      delivery: "hook"
+    });
+    const disk = await readFile(join(state, "preflights.json"), "utf8");
+    const [record] = JSON.parse(disk).records as Array<{ candidateIds: string[] }>;
+
+    expect(record?.candidateIds).toHaveLength(2);
+    expect(new Set(record?.candidateIds).size).toBe(2);
+    expect(JSON.stringify(preflight)).not.toContain(rawId);
+    expect(disk).not.toContain(rawId);
+    expect(disk).not.toContain("/private/native/cache");
+  });
+
   it("reads legacy evidence and appends sanitized version-3 evidence", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-preflight-migrate-"));
     await writeFile(
@@ -185,7 +280,15 @@ describe("preflight evidence store", () => {
       "scripts/private.sh",
       "TASK_TERM_MATCH",
       "Review available Skill",
-      "cryptography customer"
+      "cryptography customer",
+      "private-plugin-id",
+      "/private/native/cache",
+      "workspace-identity-secret",
+      "/private/plugin.json",
+      "plugin-version-9",
+      "cache-version-7",
+      "HARNESS_SHADOWED",
+      "HARNESS_AMBIGUOUS"
     ]) {
       expect(disk).not.toContain(secret);
     }
@@ -281,6 +384,70 @@ describe("preflight evidence store", () => {
     expect(records[1]?.feedback).toMatchObject({ selectedSkillIds: ["legacy-skill"] });
   });
 
+  it("records complete feedback sets for readable legacy identifiers and rejects unknown IDs", async () => {
+    const legacyIds = ["legacy/skill", "legacy skill", "x".repeat(97)];
+    const fixtures = [
+      {
+        file: (() => {
+          const file = legacyFile();
+          file.records[0]!.selectedSkillIds = legacyIds;
+          file.records[0]!.candidates = legacyIds.map((skillId) => ({
+            skillId,
+            relevance: 0.8,
+            uniqueCoverage: 0.5,
+            riskPenalty: 0,
+            redundancyPenalty: 0,
+            contextTokens: 200,
+            decision: "selected"
+          }));
+          return file;
+        })(),
+        id: "legacy-run",
+        feedbackKey: "selectedSkillIds"
+      },
+      {
+        file: (() => {
+          const file = legacyV2File();
+          file.records[0]!.useCandidateIds = legacyIds;
+          file.records[0]!.candidates = legacyIds.map((candidateId) => ({
+            candidateId,
+            availability: "installed",
+            relevance: 0.8,
+            uniqueCoverage: 0.5,
+            riskPenalty: 0,
+            redundancyPenalty: 0,
+            installPenalty: 0,
+            contextTokens: 200,
+            decision: "use"
+          }));
+          return file;
+        })(),
+        id: "legacy-v2",
+        feedbackKey: "candidateIds"
+      }
+    ];
+
+    for (const fixture of fixtures) {
+      const state = await mkdtemp(join(tmpdir(), "steward-legacy-feedback-"));
+      await writeFile(join(state, "preflights.json"), `${JSON.stringify(fixture.file)}\n`);
+      await recordPreflightFeedback(
+        state,
+        fixture.id,
+        { label: "incomplete", candidateIds: legacyIds },
+        new Date("2026-07-03T02:00:00.000Z")
+      );
+      expect((await readPreflightEvidence(state))[0]?.feedback).toMatchObject({
+        [fixture.feedbackKey]: legacyIds
+      });
+      await expect(recordPreflightFeedback(
+        state,
+        fixture.id,
+        { label: "incorrect", candidateIds: ["unknown legacy/id"] },
+        new Date("2026-07-03T03:00:00.000Z")
+      )).rejects.toMatchObject({ code: "INVALID_FEEDBACK_CANDIDATE" });
+    }
+  });
+
   it("rejects unknown runs and candidate IDs without changing the file", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-preflight-invalid-"));
     await appendPreflightEvidence(state, result("run-1", "2026-07-03T00:00:00.000Z"));
@@ -295,7 +462,7 @@ describe("preflight evidence store", () => {
     await expect(recordPreflightFeedback(
       state,
       "run-1",
-      { label: "incorrect", candidateIds: ["unknown"] },
+      { label: "incorrect", candidateIds: ["unknown/current skill"] },
       new Date()
     )).rejects.toBeInstanceOf(PreflightEvidenceError);
     expect(await readFile(path, "utf8")).toBe(before);
