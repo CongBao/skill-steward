@@ -128,12 +128,13 @@ describe("built package root", () => {
     const declarationText = await readFile(builtDeclaration, "utf8");
     expect(declarationText).not.toContain("export *");
     expect(declarationText).not.toMatch(
-      /CompanionManifest|companionTree|compareCompanionPaths|createCompanionTreeManifest/u
+      /CompanionManifest|companionTree|compareCompanionPaths|createCompanionTreeManifest|LegacyAlpha|resolveCompanionManagedProof/u
     );
   });
 
   it.each([
     "@skill-steward/integrations/companion-domain",
+    "@skill-steward/integrations/companion-legacy",
     "@skill-steward/integrations/companion-manifest",
     "@skill-steward/integrations/companion-inspector-internal"
   ])("does not export internal subpath %s", async (specifier) => {
@@ -154,6 +155,21 @@ describe("built package root", () => {
     ], { cwd: packageRoot })).resolves.toMatchObject({
       stdout: "ERR_PACKAGE_PATH_NOT_EXPORTED"
     });
+  });
+
+  it("keeps legacy allowlist identities out of public CLI and dashboard diagnostics", async () => {
+    const manifest = JSON.parse(await readFile(new URL(
+      "./fixtures/companion-legacy/alpha-0.3.0-alpha.1/manifest.posix.json",
+      import.meta.url
+    ), "utf8"));
+    const publicSources = await Promise.all([
+      readFile(new URL("../../cli/src/commands/integrate.ts", import.meta.url), "utf8"),
+      readFile(new URL("../../dashboard-server/src/integration-services.ts", import.meta.url), "utf8")
+    ]);
+    for (const source of publicSources) {
+      expect(source).not.toContain(manifest.fingerprint);
+      expect(source).not.toContain("skill-steward-preflight@0.3.0-alpha.1");
+    }
   });
 
   it("keeps public Win32 source-unprovable inspection reviewable and non-mutating", async () => {
