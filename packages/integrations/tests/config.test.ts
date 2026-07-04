@@ -432,6 +432,34 @@ it("runs the integration worker from current source instead of package dist", as
   expect(source).not.toContain("../../dist/");
 });
 
+it("keeps product lifecycle writes on v1 until the finalized companion transaction", async () => {
+  const source = await readFile(new URL("../src/config.ts", import.meta.url), "utf8");
+  expect(source).toContain("schemaVersion: 1");
+  expect(source).not.toContain("schemaVersion: 2");
+  expect(source).not.toContain("appendIntegrationRecordV2");
+});
+
+it("keeps the companion tree when the Phase 2 product path removes a Harness", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-phase2-remove-retains-companion-"));
+  const options = {
+    home,
+    stateDirectory: join(home, "state"),
+    now: () => new Date("2026-07-04T04:00:00.000Z")
+  };
+  const plan = await planIntegration("codex", options);
+  await applyIntegrationPlan(plan, options);
+  const companionPath = companionSkillDirectory(home);
+  const before = await inspectCompanionTree(companionPath, { boundary: home });
+
+  await removeIntegration("codex", options);
+
+  const after = await inspectCompanionTree(companionPath, { boundary: home });
+  expect(after).toEqual(before);
+  expect((await readIntegrationRecords(options.stateDirectory)).every(
+    ({ schemaVersion }) => schemaVersion === 1
+  )).toBe(true);
+});
+
 it("refuses malformed configuration without changing it", async () => {
   const home = await mkdtemp(join(tmpdir(), "steward-invalid-config-"));
   const stateDirectory = join(home, "state");

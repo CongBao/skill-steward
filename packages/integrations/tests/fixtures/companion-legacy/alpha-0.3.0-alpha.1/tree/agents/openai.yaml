@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Steward Preflight"
+  short_description: "Review task-time Skill recommendations safely"
+  default_prompt: "Use $skill-steward-preflight to review installed and available Skills for this task."

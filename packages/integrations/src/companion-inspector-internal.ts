@@ -13,6 +13,11 @@ import {
   companionSkillDirectory,
   type CompanionSkillInspection
 } from "./companion-shared.js";
+import type { IntegrationHarness } from "./domain.js";
+import {
+  resolveCompanionManagedProof,
+  type CompanionConfigProofOptions
+} from "./companion-legacy.js";
 
 export type InternalCompanionManagedProof =
   | {
@@ -31,12 +36,14 @@ export type InternalCompanionManagedProof =
 export interface InternalInspectCompanionSkillInput {
   home: string;
   sourceDirectory: string;
-  managedProof?: InternalCompanionManagedProof;
+  stateDirectory?: string;
+  harness?: IntegrationHarness;
 }
 
 export interface InternalInspectCompanionSkillOptions {
   source?: CompanionManifestOptions;
   destination?: CompanionManifestOptions;
+  config?: CompanionConfigProofOptions;
 }
 
 function inspectionReason(error: CompanionManifestError): {
@@ -171,10 +178,38 @@ export async function inspectCompanionSkillWithProof(
     };
   }
 
+  let managedProof: InternalCompanionManagedProof | undefined;
+  let proofConflictReason: string | undefined;
+  if (input.stateDirectory !== undefined && input.harness !== undefined) {
+    const resolution = await resolveCompanionManagedProof({
+      home: input.home,
+      stateDirectory: input.stateDirectory,
+      harness: input.harness,
+      manifest: before
+    }, options.config);
+    if (resolution.state === "unknown") {
+      return {
+        status: "unknown",
+        reason: resolution.reason,
+        path,
+        subplan: companionSubplanSchema.parse({
+          action: "conflict",
+          path,
+          expectedBefore: { state: "unknown", reason: resolution.reason },
+          after,
+          source,
+          proof: { kind: "unknown", reason: resolution.reason }
+        })
+      };
+    }
+    if (resolution.state === "proven") managedProof = resolution.proof;
+    else proofConflictReason = resolution.reason;
+  }
+
   if (
     before.fingerprint === after.fingerprint
-    && input.managedProof !== undefined
-    && input.managedProof.installedFingerprint === before.fingerprint
+    && managedProof !== undefined
+    && managedProof.installedFingerprint === before.fingerprint
   ) {
     return {
       status: "current",
@@ -186,14 +221,14 @@ export async function inspectCompanionSkillWithProof(
         expectedBefore: { state: "exact", fingerprint: before.fingerprint },
         after,
         source,
-        proof: input.managedProof
+        proof: managedProof
       })
     };
   }
 
   if (
-    input.managedProof !== undefined
-    && input.managedProof.installedFingerprint === before.fingerprint
+    managedProof !== undefined
+    && managedProof.installedFingerprint === before.fingerprint
   ) {
     return {
       status: "upgrade-available",
@@ -205,14 +240,14 @@ export async function inspectCompanionSkillWithProof(
         expectedBefore: { state: "exact", fingerprint: before.fingerprint },
         after,
         source,
-        proof: input.managedProof
+        proof: managedProof
       })
     };
   }
 
-  const reason = input.managedProof === undefined
+  const reason = proofConflictReason ?? (managedProof === undefined
     ? "COMPANION_UNMANAGED_TREE"
-    : "COMPANION_RECORDED_TREE_DRIFT";
+    : "COMPANION_RECORDED_TREE_DRIFT");
   return {
     status: "conflict",
     reason,

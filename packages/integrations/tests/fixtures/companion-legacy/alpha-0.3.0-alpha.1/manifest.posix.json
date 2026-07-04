@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "platform": "posix",
+  "entries": [
+    {
+      "relativePath": ".",
+      "kind": "directory",
+      "bytes": 0,
+      "securityMode": "posix:0755"
+    },
+    {
+      "relativePath": "SKILL.md",
+      "kind": "file",
+      "bytes": 943,
+      "sha256": "sha256:b42ddc81658b2437ef1b953944908cbf2b2bd7712e10a6fb8c4e2f9a2093f77c",
+      "securityMode": "posix:0644"
+    },
+    {
+      "relativePath": "agents",
+      "kind": "directory",
+      "bytes": 0,
+      "securityMode": "posix:0755"
+    },
+    {
+      "relativePath": "agents/openai.yaml",
+      "kind": "file",
+      "bytes": 227,
+      "sha256": "sha256:16a8dee60266db250d4be92c76674f8ad854c657d7edbf41b0965dbd3c9bd5cc",
+      "securityMode": "posix:0644"
+    }
+  ],
+  "fingerprint": "sha256:8a2cd894ed93650b66a85ec2c0b21be1193ea86d1daf154b63f7cce5b46491e9"
+}

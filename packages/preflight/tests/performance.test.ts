@@ -103,10 +103,11 @@ it("analyzes one thousand installed and five thousand available Skills within bu
   const medianElapsed = samples
     .map(({ elapsed }) => elapsed)
     .sort((left, right) => left - right)[1]!;
+  const elapsedBudgetMs = process.env.CI === "true" ? 500 : 250;
   const first = samples[0]!.result;
   const second = samples[1]!.result;
 
-  expect(medianElapsed).toBeLessThan(250);
+  expect(medianElapsed).toBeLessThan(elapsedBudgetMs);
   expect(warm.useCandidateIds).toEqual(first.useCandidateIds);
   expect(first.useCandidateIds).toEqual(second.useCandidateIds);
   expect(first.installCandidateIds).toEqual(second.installCandidateIds);

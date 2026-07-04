@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readdir,
+  stat,
   symlink,
   utimes,
   writeFile
@@ -19,8 +20,9 @@ import {
 import { withIntegrationMutationLease } from "../src/integration-mutation-lease.js";
 
 function record(index: number): IntegrationRecord {
+  const createdAt = new Date(Date.UTC(2026, 6, 4) + index).toISOString();
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: `windows-${index}`,
     harness: "codex",
     action: "apply",
@@ -29,7 +31,18 @@ function record(index: number): IntegrationRecord {
     beforeFingerprint: `sha256:${"a".repeat(64)}`,
     afterFingerprint: `sha256:${"b".repeat(64)}`,
     installedEntryFingerprint: `sha256:${"c".repeat(64)}`,
-    createdAt: new Date(Date.UTC(2026, 6, 4) + index).toISOString()
+    companion: {
+      action: "none",
+      path: "C:\\Users\\runner\\.agents\\skills\\skill-steward-preflight",
+      before: { state: "exact", fingerprint: `sha256:${"d".repeat(64)}` },
+      after: { state: "exact", fingerprint: `sha256:${"d".repeat(64)}` },
+      source: { fingerprint: `sha256:${"d".repeat(64)}` },
+      proof: { category: "recorded" },
+      installedFingerprint: `sha256:${"d".repeat(64)}`,
+      consumers: ["codex"]
+    },
+    trigger: { planId: `windows-${index}`, harness: "codex", createdAt },
+    createdAt
   };
 }
 
@@ -47,9 +60,18 @@ describe.skipIf(process.platform !== "win32")("Windows integration journal smoke
     const records = await readIntegrationRecords(state);
     expect(records).toHaveLength(100);
     expect(records.some(({ id }) => id === "windows-104")).toBe(true);
-    expect((await readdir(directory)).filter((name) => name.endsWith(".json")))
-      .toHaveLength(100);
-  });
+    const fragmentNames = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+    expect(fragmentNames).toHaveLength(100);
+    const parentIdentities = await Promise.all([
+      stat(state, { bigint: true }),
+      stat(directory, { bigint: true })
+    ]);
+    expect(parentIdentities.every(({ ino }) => ino !== 0n)).toBe(true);
+    const nativeIdentities = await Promise.all(fragmentNames.map((name) =>
+      stat(join(directory, name), { bigint: true })
+    ));
+    expect(nativeIdentities.every(({ ino }) => ino !== 0n)).toBe(true);
+  }, 30_000);
 
   it("refuses a junctioned fragment directory without writing outside state", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-windows-junction-"));
