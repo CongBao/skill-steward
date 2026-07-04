@@ -2,6 +2,7 @@ export const PREFLIGHT_CONFIG = Object.freeze({
   taskCoverageWeight: 0.5,
   skillPrecisionWeight: 0.2,
   nameMatchWeight: 0.25,
+  highConfidenceTriggerWeight: 0.15,
   projectScopeWeight: 0.05,
   plausibleThreshold: 0.18,
   minimumMatchedTerms: 2,

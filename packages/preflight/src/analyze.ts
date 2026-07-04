@@ -19,7 +19,13 @@ import {
   gapDisplayTerms,
   positiveGapConcepts
 } from "./gap-display-internal.js";
-import { normalizeTask, tokenize } from "./tokenize.js";
+import {
+  negativeRoutingClauses,
+  negativeTaskClauses,
+  positiveRoutingText,
+  positiveTaskText
+} from "./polarity.js";
+import { normalizeTask, tokenize, tokenizeSequence } from "./tokenize.js";
 
 export type AnalyzePreflightInput = AnalyzePreflightInputV2;
 
@@ -30,6 +36,7 @@ interface ScoredCandidate {
   negativeTaskTerms: Set<string>;
   relevance: number;
   adjustedRelevance: number;
+  gapAdjustedRelevance: number;
   taskCoverage: number;
   skillPrecision: number;
   riskPenalty: number;
@@ -246,6 +253,118 @@ function matchesName(
   return nameTerms.length > 0 && nameTerms.every((term) => taskTerms.has(term));
 }
 
+const HIGH_CONFIDENCE_TRIGGER_ANCHORS = new Set([
+  "after",
+  "before",
+  "during"
+]);
+
+interface HighConfidenceTriggerRule {
+  key: string;
+  display: string;
+  requiredNameTerms: readonly string[];
+  taskIntentTerms: readonly string[];
+  objectTerms: readonly string[];
+}
+
+const HIGH_CONFIDENCE_TRIGGER_RULES: readonly HighConfidenceTriggerRule[] = [{
+  key: "before\0merge",
+  display: "before merge",
+  requiredNameTerms: ["request", "code", "review"],
+  taskIntentTerms: ["review"],
+  objectTerms: ["code"]
+}];
+
+const PHRASE_BOUNDARIES = /[\p{P}\p{S}\n]+/u;
+
+function anchoredTriggerPhrases(value: string): Map<string, string> {
+  const phrases = new Map<string, string>();
+  for (const segment of value.split(PHRASE_BOUNDARIES)) {
+    const terms = tokenizeSequence(segment);
+    for (let index = 0; index < terms.length - 1; index += 1) {
+      const anchor = terms[index]!;
+      const concept = terms[index + 1]!;
+      if (!HIGH_CONFIDENCE_TRIGGER_ANCHORS.has(anchor)) continue;
+      phrases.set(`${anchor}\0${concept}`, `${anchor} ${concept}`);
+    }
+  }
+  return phrases;
+}
+
+function highConfidenceTrigger(
+  taskTerms: Set<string>,
+  taskPhrases: ReadonlyMap<string, string>,
+  candidate: NormalizedPreflightCandidate,
+  positiveDescription: string
+): string | undefined {
+  const nameTerms = new Set(tokenize(
+    candidate.name.replace(/[-_]+/g, " ")
+  ).terms);
+  const descriptionPhrases = anchoredTriggerPhrases(
+    positiveDescription
+  );
+  for (const rule of HIGH_CONFIDENCE_TRIGGER_RULES) {
+    if (
+      taskPhrases.has(rule.key) &&
+      descriptionPhrases.has(rule.key) &&
+      rule.requiredNameTerms.every((term) => nameTerms.has(term)) &&
+      rule.taskIntentTerms.every((term) => taskTerms.has(term))
+    ) {
+      return rule.display;
+    }
+  }
+  return undefined;
+}
+
+function negativeTaskIntentMatch(
+  clauses: readonly string[],
+  candidate: NormalizedPreflightCandidate,
+  positiveTaskTerms: Set<string>,
+  positiveTaskPhrases: ReadonlyMap<string, string>
+): Set<string> {
+  const matched = new Set<string>();
+  const nameTerms = tokenize(
+    candidate.name.replace(/[-_]+/g, " ")
+  ).terms;
+  for (const rule of HIGH_CONFIDENCE_TRIGGER_RULES) {
+    if (!rule.requiredNameTerms.every((term) => nameTerms.includes(term))) continue;
+    for (const clause of clauses) {
+      const clauseTerms = new Set(tokenize(clause).terms);
+      if (
+        anchoredTriggerPhrases(clause).has(rule.key) &&
+        rule.taskIntentTerms.every((term) => clauseTerms.has(term))
+      ) {
+        const positiveCounterpart = positiveTaskPhrases.has(rule.key) &&
+          rule.taskIntentTerms.every((term) => positiveTaskTerms.has(term)) &&
+          rule.objectTerms.some((term) => positiveTaskTerms.has(term));
+        const negativeTargetsObject = rule.objectTerms.some(
+          (term) => clauseTerms.has(term)
+        );
+        if (positiveCounterpart && !negativeTargetsObject) continue;
+        rule.taskIntentTerms.forEach((term) => matched.add(term));
+        rule.key.split("\0").forEach((term) => matched.add(term));
+      }
+    }
+  }
+  if (!matchesName(positiveTaskTerms, candidate)) {
+    const positiveNameOverlap = nameTerms.filter(
+      (term) => positiveTaskTerms.has(term)
+    ).length;
+    for (const clause of clauses) {
+      const clauseTerms = new Set(tokenize(clause).terms);
+      const negativeNameTerms = nameTerms.filter((term) => clauseTerms.has(term));
+      const fullNameMatch = nameTerms.length > 0 &&
+        negativeNameTerms.length === nameTerms.length;
+      const strongerCoreMatch = negativeNameTerms.length >= 2 &&
+        negativeNameTerms.length > positiveNameOverlap;
+      if (fullNameMatch || strongerCoreMatch) {
+        negativeNameTerms.forEach((term) => matched.add(term));
+      }
+    }
+  }
+  return matched;
+}
+
 const GENERIC_NEGATIVE_ROUTE_TERMS = new Set([
   "change",
   "code",
@@ -281,9 +400,18 @@ function isSpecificGapConcept(term: string): boolean {
 }
 
 function canonicalMatchedGapConcepts(candidate: ScoredCandidate): Set<string> {
+  if (candidate.matchedTaskTerms.size < PREFLIGHT_CONFIG.minimumMatchedTerms) {
+    return new Set();
+  }
+  const positiveCandidateConcepts = positiveGapConcepts(
+    candidate.candidate.name,
+    candidate.candidate.description
+  );
   return new Set([...candidate.matchedTaskTerms].flatMap((term) =>
     [...positiveGapConcepts(term, "")]
-  ).filter(isSpecificGapConcept));
+  ).filter((term) =>
+    positiveCandidateConcepts.has(term) && isSpecificGapConcept(term)
+  ));
 }
 
 function hasSpecificNameGapEvidence(candidate: ScoredCandidate): boolean {
@@ -302,9 +430,9 @@ function displayCapabilityGaps(
   const seenConcepts = new Set<string>();
   const corroboratingCandidates = candidates.filter((candidate) =>
     hasSpecificNameGapEvidence(candidate) || (
+      candidate.gapAdjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold &&
       canonicalMatchedGapConcepts(candidate).size >=
-        PREFLIGHT_CONFIG.minimumMatchedTerms &&
-      candidate.adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold
+        PREFLIGHT_CONFIG.minimumMatchedTerms
     )
   );
   const corroboratedTerms = new Set(corroboratingCandidates.flatMap(
@@ -343,18 +471,37 @@ function displayCapabilityGaps(
 
 function negativeTaskMatch(
   taskTerms: Set<string>,
-  description: string
+  taskPhrases: ReadonlyMap<string, string>,
+  candidate: NormalizedPreflightCandidate,
+  positiveDescription: string
 ): Set<string> {
   const matched = new Set<string>();
-  const positiveDescriptionTerms = new Set(tokenize(description.replace(
-    /(?:do\s+not|don't)\s+use(?:\s+this\s+skill)?\s+(?:for|when)\s+[^.!?\n]+/giu,
-    " "
-  )).terms);
-  for (const clause of description.matchAll(
-    /(?:do\s+not|don't)\s+use(?:\s+this\s+skill)?\s+(?:for|when)\s+([^.!?\n]+)/giu
-  )) {
-    const clauseMatches = tokenize(clause[1] ?? "").terms
+  const positiveDescriptionTerms = new Set(tokenize(positiveDescription).terms);
+  const positiveDescriptionPhrases = anchoredTriggerPhrases(
+    positiveDescription
+  );
+  for (const clause of negativeRoutingClauses(candidate.description)) {
+    const clauseTerms = tokenize(clause).terms;
+    const clauseTermSet = new Set(clauseTerms);
+    const clauseMatches = clauseTerms
       .filter((term) => taskTerms.has(term) && !positiveDescriptionTerms.has(term));
+    const clausePhrases = anchoredTriggerPhrases(clause);
+    for (const [key] of clausePhrases) {
+      if (!taskPhrases.has(key)) continue;
+      const rule = HIGH_CONFIDENCE_TRIGGER_RULES.find((entry) => entry.key === key);
+      if (positiveDescriptionPhrases.has(key)) {
+        const positiveCounterpart = rule !== undefined &&
+          rule.objectTerms.some((term) => taskTerms.has(term)) &&
+          rule.objectTerms.some((term) => positiveDescriptionTerms.has(term));
+        const negativeTargetsObject = rule?.objectTerms.some(
+          (term) => clauseTermSet.has(term)
+        ) ?? false;
+        if (rule === undefined || (positiveCounterpart && !negativeTargetsObject)) {
+          continue;
+        }
+      }
+      key.split("\0").forEach((term) => matched.add(term));
+    }
     const hasSpecificMatch = clauseMatches.some(
       (term) => !GENERIC_NEGATIVE_ROUTE_TERMS.has(term)
     );
@@ -369,22 +516,53 @@ function scoreCandidates(
   task: string,
   normalizedCandidates: NormalizedPreflightCandidate[]
 ): { candidates: ScoredCandidate[]; taskTerms: Set<string> } {
-  const tokenizedTask = tokenize(task);
-  const taskTerms = new Set(tokenizedTask.terms);
+  const positiveTask = positiveTaskText(task);
+  const taskTerms = new Set(tokenize(positiveTask).terms);
+  const taskPhrases = anchoredTriggerPhrases(positiveTask);
+  const taskNegativeClauses = negativeTaskClauses(task);
   const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
+    const positiveDescription = positiveRoutingText(candidate.description);
     const routeTerms = new Set(
       tokenize(`${candidate.name.replace(/[-_]+/g, " ")} ${candidate.description}`).terms
     );
     const matchedTaskTerms = intersection(taskTerms, routeTerms);
-    const negativeTaskTerms = negativeTaskMatch(taskTerms, candidate.description);
+    const positiveRouteTerms = new Set(tokenize(
+      `${candidate.name.replace(/[-_]+/g, " ")} ${positiveDescription}`
+    ).terms);
+    const positiveMatchedTaskTerms = intersection(taskTerms, positiveRouteTerms);
+    const negativeRouteTerms = negativeTaskMatch(
+      taskTerms,
+      taskPhrases,
+      candidate,
+      positiveDescription
+    );
+    const negativeIntentTerms = negativeTaskIntentMatch(
+      taskNegativeClauses,
+      candidate,
+      taskTerms,
+      taskPhrases
+    );
+    const negativeTaskTerms = new Set([
+      ...negativeRouteTerms,
+      ...negativeIntentTerms
+    ]);
     const taskCoverage = ratio(matchedTaskTerms.size, taskTerms.size);
     const skillPrecision = ratio(matchedTaskTerms.size, routeTerms.size);
     const nameMatch = matchesName(taskTerms, candidate);
+    const matchedHighConfidenceTrigger = highConfidenceTrigger(
+      taskTerms,
+      taskPhrases,
+      candidate,
+      positiveDescription
+    );
     const projectScopeFit = candidate.scope === "project";
     const relevance = clamp(
       taskCoverage * PREFLIGHT_CONFIG.taskCoverageWeight +
       skillPrecision * PREFLIGHT_CONFIG.skillPrecisionWeight +
       (nameMatch ? PREFLIGHT_CONFIG.nameMatchWeight : 0) +
+      (matchedHighConfidenceTrigger
+        ? PREFLIGHT_CONFIG.highConfidenceTriggerWeight
+        : 0) +
       (projectScopeFit ? PREFLIGHT_CONFIG.projectScopeWeight : 0)
     );
     const riskPenalty = candidateRisk(candidate.findings);
@@ -393,6 +571,17 @@ function scoreCandidates(
       : 0;
     const critical = candidate.findings.some(({ severity }) => severity === "critical");
     const adjustedRelevance = clamp(relevance - riskPenalty - installPenalty);
+    const gapRelevance = clamp(
+      ratio(positiveMatchedTaskTerms.size, taskTerms.size) *
+        PREFLIGHT_CONFIG.taskCoverageWeight +
+      ratio(positiveMatchedTaskTerms.size, routeTerms.size) *
+        PREFLIGHT_CONFIG.skillPrecisionWeight +
+      (nameMatch ? PREFLIGHT_CONFIG.nameMatchWeight : 0) +
+      (projectScopeFit ? PREFLIGHT_CONFIG.projectScopeWeight : 0)
+    );
+    const gapAdjustedRelevance = clamp(
+      gapRelevance - riskPenalty - installPenalty
+    );
     const hasSpecificTaskMatch = [...matchedTaskTerms].some(
       (term) => !BROAD_CJK_ROUTE_TERMS.has(term)
     );
@@ -408,6 +597,12 @@ function scoreCandidates(
       initialReasons.push({
         code: "NAME_MATCH",
         detail: `Task matches '${candidate.name}' routing metadata.`
+      });
+    }
+    if (matchedHighConfidenceTrigger) {
+      initialReasons.push({
+        code: "HIGH_CONFIDENCE_TRIGGER",
+        detail: `Task and routing metadata share the '${matchedHighConfidenceTrigger}' lifecycle trigger.`
       });
     }
     if (projectScopeFit) {
@@ -463,7 +658,9 @@ function scoreCandidates(
     if (negativeTaskTerms.size > 0) {
       initialReasons.push({
         code: "NEGATIVE_TRIGGER",
-        detail: `The Skill routing description explicitly excludes: ${[...negativeTaskTerms].slice(0, 6).join(", ")}.`
+        detail: negativeIntentTerms.size > 0
+          ? `The task explicitly excludes: ${[...negativeIntentTerms].slice(0, 6).join(", ")}.`
+          : `The Skill routing description explicitly excludes: ${[...negativeRouteTerms].slice(0, 6).join(", ")}.`
       });
     }
 
@@ -474,6 +671,7 @@ function scoreCandidates(
       negativeTaskTerms,
       relevance,
       adjustedRelevance,
+      gapAdjustedRelevance,
       taskCoverage,
       skillPrecision,
       riskPenalty,
@@ -795,7 +993,7 @@ export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult 
     conflicts,
     inventoryWarnings: inventoryWarnings(candidates, request.harness),
     capabilityGaps: displayCapabilityGaps(
-      normalizedTask,
+      positiveTaskText(normalizedTask),
       candidates,
       [...installed, ...available].map(({ candidate }) => candidate)
     ),

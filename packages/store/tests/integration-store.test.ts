@@ -51,12 +51,15 @@ const publicationGate = vi.hoisted(() => ({
 const readRaceGate = vi.hoisted(() => ({
   mode: null as
     | "remove-target-before-read"
+    | "remove-target-during-final-identity"
+    | "remove-target-during-path-revalidation"
     | "replace-target-before-read"
     | "replace-directory-after-read"
     | null,
   target: null as string | null,
   directory: null as string | null,
   replacement: null as Uint8Array | null,
+  pathLstatCalls: 0,
   triggered: false,
   zeroIdentityPath: null as string | null
 }));
@@ -335,6 +338,32 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           }
           return metadata;
         }
+      }
+      if (
+        (readRaceGate.mode === "remove-target-during-path-revalidation"
+          || readRaceGate.mode === "remove-target-during-final-identity")
+        && path === readRaceGate.target
+      ) {
+        readRaceGate.pathLstatCalls += 1;
+        const metadata = await original.lstat(...args);
+        const triggerCall = readRaceGate.mode === "remove-target-during-path-revalidation"
+          ? 2
+          : 3;
+        if (!readRaceGate.triggered && readRaceGate.pathLstatCalls === triggerCall) {
+          readRaceGate.triggered = true;
+          await original.unlink(path);
+          return new Proxy(metadata, {
+            get(target, property, receiver) {
+              if (property === "ctimeNs") {
+                const ctimeNs = Reflect.get(target, property, receiver);
+                return typeof ctimeNs === "bigint" ? ctimeNs + 1n : ctimeNs;
+              }
+              const value = Reflect.get(target, property, receiver);
+              return typeof value === "function" ? value.bind(target) : value;
+            }
+          });
+        }
+        return metadata;
       }
       const metadata = await original.lstat(...args);
       if (
@@ -711,6 +740,7 @@ afterEach(() => {
   readRaceGate.target = null;
   readRaceGate.directory = null;
   readRaceGate.replacement = null;
+  readRaceGate.pathLstatCalls = 0;
   readRaceGate.triggered = false;
   readRaceGate.zeroIdentityPath = null;
   stateSwapGate.armed = false;
@@ -1685,6 +1715,27 @@ describe("integration store", () => {
     readRaceGate.mode = null;
   });
 
+  it.each([
+    "remove-target-during-path-revalidation",
+    "remove-target-during-final-identity"
+  ] as const)("retries ordinary cleanup observed during %s", async (mode) => {
+    const state = await mkdtemp(join(tmpdir(), `steward-integration-${mode}-`));
+    await appendIntegrationRecord(
+      state,
+      record("cleanup-race", "2026-07-03T00:00:00.000Z")
+    );
+    const directory = join(state, "integration-records");
+    const [fileName] = await readdir(directory);
+    readRaceGate.mode = mode;
+    readRaceGate.target = join(directory, fileName!);
+
+    const journal = await readIntegrationRecordJournal(state);
+
+    expect(readRaceGate.triggered).toBe(true);
+    expect(journal.changedDuringRead).toBe(true);
+    expect(journal.records).toEqual([]);
+  });
+
   it("rejects replacement of the records directory after reading a fragment", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-fragment-parent-swap-"));
     await appendIntegrationRecord(
@@ -1876,7 +1927,7 @@ describe("integration store", () => {
     }
     expect(await readIntegrationRecords(state)).toHaveLength(100);
     expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
-  }, 15_000);
+  });
 
   it("retains a late-published fragment whose temporary file had an old mtime", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-publish-order-"));
@@ -1926,7 +1977,7 @@ describe("integration store", () => {
     ]));
     expect(records).toHaveLength(100);
     expect(await readdir(join(state, "integration-records"))).toHaveLength(100);
-  }, 60_000);
+  }, 15_000);
 
   it("removes its owned fragment when validation fails after publication", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-post-publish-"));

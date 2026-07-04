@@ -23,10 +23,10 @@ export function algorithmVersionForIntlRuntime(runtime: IntlRuntimeVersions): nu
     `icu=${runtime.icu ?? "unknown"}`,
     `unicode=${runtime.unicode ?? "unknown"}`
   ].join(";");
-  if (fingerprint === REFERENCE_INTL_RUNTIME) return 7;
+  if (fingerprint === REFERENCE_INTL_RUNTIME) return 8;
 
   const runtimeHash = sha256(fingerprint).slice("sha256:".length, "sha256:".length + 12);
-  return 7_000_000_000_000 + Number.parseInt(runtimeHash, 16);
+  return 8_000_000_000_000 + Number.parseInt(runtimeHash, 16);
 }
 
 export const PREFLIGHT_ALGORITHM_VERSION = algorithmVersionForIntlRuntime({
@@ -38,6 +38,7 @@ export const PREFLIGHT_ALGORITHM_VERSION = algorithmVersionForIntlRuntime({
 export const preflightReasonCodeSchema = z.enum([
   "TASK_TERM_MATCH",
   "NAME_MATCH",
+  "HIGH_CONFIDENCE_TRIGGER",
   "PROJECT_SCOPE_FIT",
   "UNIQUE_COVERAGE",
   "REDUNDANT_WITH_SELECTED",

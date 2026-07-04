@@ -198,6 +198,7 @@ export interface InstallationTransaction {
 export type PreflightReasonCode =
   | "TASK_TERM_MATCH"
   | "NAME_MATCH"
+  | "HIGH_CONFIDENCE_TRIGGER"
   | "PROJECT_SCOPE_FIT"
   | "UNIQUE_COVERAGE"
   | "REDUNDANT_WITH_SELECTED"

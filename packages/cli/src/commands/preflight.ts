@@ -61,6 +61,7 @@ function percentage(value: number): string {
 const reasonLabels: Record<PreflightReasonCode, string> = {
   TASK_TERM_MATCH: "Task match",
   NAME_MATCH: "Name match",
+  HIGH_CONFIDENCE_TRIGGER: "Lifecycle trigger",
   PROJECT_SCOPE_FIT: "Project fit",
   UNIQUE_COVERAGE: "Unique value",
   REDUNDANT_WITH_SELECTED: "Redundant",

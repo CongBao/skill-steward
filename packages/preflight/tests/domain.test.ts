@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as publicApi from "../src/index.js";
 import {
   PREFLIGHT_ALGORITHM_VERSION,
   algorithmVersionForIntlRuntime,
@@ -34,18 +35,28 @@ function result(candidate: Record<string, unknown>) {
 }
 
 describe("preflight v4 domain", () => {
+  it("keeps ordered phrase and polarity internals out of the public package API", () => {
+    expect(publicApi).not.toHaveProperty("tokenizeSequence");
+    expect(publicApi).not.toHaveProperty("positiveTaskText");
+    expect(publicApi).not.toHaveProperty("negativeTaskClauses");
+    expect(publicApi).not.toHaveProperty("positiveRoutingText");
+    expect(publicApi).not.toHaveProperty("negativeRoutingClauses");
+    expect(publicApi).toHaveProperty("tokenize");
+    expect(publicApi).toHaveProperty("normalizeTask");
+  });
+
   it("separates ranking evidence when the Intl word-boundary runtime changes", () => {
     expect(algorithmVersionForIntlRuntime({
       cldr: "48.0",
       icu: "78.2",
       unicode: "17.0"
-    })).toBe(7);
+    })).toBe(8);
     const alternate = algorithmVersionForIntlRuntime({
       cldr: "47.0",
       icu: "76.1",
       unicode: "16.0"
     });
-    expect(alternate).toBeGreaterThan(7_000_000_000_000);
+    expect(alternate).toBeGreaterThan(8_000_000_000_000);
     expect(algorithmVersionForIntlRuntime({
       cldr: "47.0",
       icu: "76.1",
