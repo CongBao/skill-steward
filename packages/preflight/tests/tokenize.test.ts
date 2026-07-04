@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTask, tokenize } from "../src/tokenize.js";
+import { normalizeTask, tokenize, tokenizeSequence } from "../src/tokenize.js";
 
 describe("tokenize", () => {
   it("normalizes Latin words, stop words, and common suffixes", () => {
@@ -10,6 +10,27 @@ describe("tokenize", () => {
       "test",
       "security"
     ]);
+  });
+
+  it("canonicalizes merge lifecycle inflections without broad stemming", () => {
+    expect(tokenize("merge merging merged managing").terms).toEqual([
+      "merge",
+      "merged",
+      "manag"
+    ]);
+  });
+
+  it("preserves normalized term order and repetition for phrase matching", () => {
+    expect(tokenizeSequence("before release before merging")).toEqual([
+      "before",
+      "release",
+      "before",
+      "merge"
+    ]);
+    expect(tokenize("before release before merging")).toEqual({
+      terms: ["before", "release", "merge"],
+      counts: { before: 2, release: 1, merge: 1 }
+    });
   });
 
   it("does not corrupt singular s words or doubled s after ing", () => {

@@ -185,7 +185,8 @@ const CONCEPT_TERMS = new Map<string, string>([
   ["保存", "preserve"],
   ["intent", "intent"],
   ["意图", "intent"],
-  ["意圖", "intent"]
+  ["意圖", "intent"],
+  ["merg", "merge"]
 ]);
 
 const INFLECTION_DOUBLED_CONSONANTS = new Set([
@@ -271,17 +272,15 @@ function segmentCjk(value: string): string[] {
   return terms;
 }
 
-export function tokenize(value: string): TokenizedText {
+export function tokenizeSequence(value: string): string[] {
   let normalized = normalizeTask(value).toLowerCase();
   for (const [phrase, concept] of CONCEPT_PHRASES) {
     normalized = normalized.replaceAll(phrase, ` ${concept} `);
   }
-  const terms: string[] = [];
-  const counts: Record<string, number> = {};
+  const sequence: string[] = [];
   const emit = (term: string) => {
     if (!term) return;
-    if (!(term in counts)) terms.push(term);
-    counts[term] = (counts[term] ?? 0) + 1;
+    sequence.push(term);
   };
 
   for (const match of normalized.matchAll(
@@ -295,6 +294,17 @@ export function tokenize(value: string): TokenizedText {
     }
 
     segmentCjk(segment).map(canonicalConcept).forEach(emit);
+  }
+
+  return sequence;
+}
+
+export function tokenize(value: string): TokenizedText {
+  const terms: string[] = [];
+  const counts: Record<string, number> = {};
+  for (const term of tokenizeSequence(value)) {
+    if (!(term in counts)) terms.push(term);
+    counts[term] = (counts[term] ?? 0) + 1;
   }
 
   return { terms, counts };

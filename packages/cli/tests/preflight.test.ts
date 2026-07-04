@@ -10,6 +10,7 @@ import {
 } from "@skill-steward/store";
 import {
   COMPACT_PREFLIGHT_MAX_BYTES,
+  COMPACT_PREFLIGHT_SCHEMA_VERSION,
   PREFLIGHT_ALGORITHM_VERSION,
   compactPreflightResultSchema,
   type PreflightResult
@@ -140,6 +141,24 @@ describe("preflight command", () => {
     });
   });
 
+  it("renders a readable lifecycle-trigger explanation for a long review task", async () => {
+    await writeFile(
+      join(current.base, ".agents", "skills", "security-review", "SKILL.md"),
+      "---\nname: requesting-code-review\ndescription: Use before merging to review completed work\n---\nReview the change.\n"
+    );
+
+    expect(await run([
+      "preflight",
+      "--task", "Review Phase 2 lifecycle compatibility, filesystem safety, and API privacy before merge",
+      "--harness", "codex"
+    ], current.context)).toBe(0);
+
+    const output = current.stdout.join("");
+    expect(output).toContain("requesting-code-review");
+    expect(output).toContain("Lifecycle trigger:");
+    expect(output).not.toContain("HIGH_CONFIDENCE_TRIGGER:");
+  });
+
   it("runs explicit preflight against the shared native inventory", async () => {
     await writeLatestReport(current.stateDir, {
       schemaVersion: 1,
@@ -223,7 +242,7 @@ describe("preflight command", () => {
     );
     const output = compactPreflightResultSchema.parse(JSON.parse(serialized));
     expect(output).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: COMPACT_PREFLIGHT_SCHEMA_VERSION,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       use: [expect.objectContaining({ name: "security-review" })],
       feedbackCommand: expect.stringContaining("skill-steward evidence feedback --preflight ")

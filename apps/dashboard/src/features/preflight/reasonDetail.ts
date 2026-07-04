@@ -10,6 +10,8 @@ export function preflightReasonDetail(
   switch (reason.code) {
     case "NAME_MATCH":
       return t("preflight.reasonDetail.NAME_MATCH").replace("{name}", candidate.name);
+    case "HIGH_CONFIDENCE_TRIGGER":
+      return t("preflight.reasonDetail.HIGH_CONFIDENCE_TRIGGER");
     case "PROJECT_SCOPE_FIT":
       return t("preflight.reasonDetail.PROJECT_SCOPE_FIT");
     case "UNIQUE_COVERAGE":

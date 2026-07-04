@@ -147,6 +147,8 @@ describe("compact preflight contract", () => {
   it("keeps only bounded actionable recommendations, codes, coverage, and feedback", () => {
     const compact = toCompactPreflight(result());
 
+    expect(COMPACT_PREFLIGHT_SCHEMA_VERSION).toBe(2);
+
     expect(compact).toEqual({
       schemaVersion: COMPACT_PREFLIGHT_SCHEMA_VERSION,
       preflightId: "run-1",
@@ -205,6 +207,24 @@ describe("compact preflight contract", () => {
 
     exact.id = "unsafe preflight id";
     expect(() => toCompactPreflight(exact)).toThrow();
+  });
+
+  it("keeps high-confidence trigger details private and the compact response bounded", () => {
+    const full = result();
+    full.candidates[0]!.reasons.unshift({
+      code: "HIGH_CONFIDENCE_TRIGGER",
+      detail: "PRIVATE before merge trigger detail"
+    });
+
+    const compact = toCompactPreflight(full);
+    const serialized = JSON.stringify(compact);
+
+    expect(compact.use[0]?.reasonCodes).toContain("HIGH_CONFIDENCE_TRIGGER");
+    expect(serialized).not.toContain("before merge");
+    expect(serialized).not.toContain("PRIVATE");
+    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+      COMPACT_PREFLIGHT_MAX_BYTES
+    );
   });
 
   it("stays within the byte cap for hostile multibyte valid fields", () => {

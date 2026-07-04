@@ -722,7 +722,7 @@ async function readConstrainedUtf8File(options: FileReadOptions): Promise<string
       );
     }
     if (!sameFileIdentity(initial, current)) {
-      throw new IntegrationFileChangedError(label, "path identity validation", false);
+      await throwFileChanged(path, label, "path identity validation");
     }
     const currentPhysicalPath = await realpath(path);
     if (
@@ -1101,11 +1101,21 @@ async function readFragmentSnapshotAttempt(
           throw error;
         }
         if (!sameFileIdentity(fragment.identity, current)) {
-          throw new IntegrationFileChangedError(
-            "Integration record fragment",
-            "final identity validation",
-            false
-          );
+          try {
+            await throwFileChanged(
+              path,
+              "Integration record fragment",
+              "final identity validation"
+            );
+          } catch (error) {
+            if (error instanceof IntegrationFileChangedError && error.disappeared) {
+              throw new IntegrationSnapshotChangedError(
+                "final fragment identity validation",
+                { cause: error }
+              );
+            }
+            throw error;
+          }
         }
       })
     );

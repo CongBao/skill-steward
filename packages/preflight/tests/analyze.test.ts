@@ -178,6 +178,8 @@ const fixed = {
   catalogSources: [catalogSource]
 };
 
+const PHASE_2_REVIEW_TASK = "Review Phase 2 lifecycle-record v1/v2 compatibility, legacy Alpha dual-proof adoption, filesystem race safety, and public API privacy before merge.";
+
 function sessionRequirementsSkill(): SkillRecordV2 {
   return skill(
     "maintaining-session-requirements",
@@ -187,7 +189,7 @@ function sessionRequirementsSkill(): SkillRecordV2 {
   );
 }
 
-describe("analyzePreflight schema v4 / algorithm v7", () => {
+describe("analyzePreflight schema v4 / algorithm v8", () => {
   it("requires a visibility-aware inventory before ranking", () => {
     try {
       analyzePreflight({
@@ -1955,6 +1957,1030 @@ describe("analyzePreflight schema v4 / algorithm v7", () => {
     expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
     ]));
+  });
+
+  it("selects only the corroborated review Skill for the Phase 2 long-task dogfood prompt", () => {
+    const candidates = [
+      skill(
+        "request",
+        "requesting-code-review",
+        "Use when completing tasks, implementing major features, or before merging to verify work meets requirements",
+        729
+      ),
+      skill(
+        "receive",
+        "receiving-code-review",
+        "Use when receiving code review feedback before implementing suggestions",
+        1_628
+      ),
+      skill(
+        "finish",
+        "finishing-a-development-branch",
+        "Integrate completed work through merge or cleanup",
+        1_811
+      ),
+      skill(
+        "api",
+        "api-documentation",
+        "Document API endpoints after release",
+        900
+      ),
+      skill(
+        "phase",
+        "phase-checklist",
+        "Use before merge to verify deployment readiness",
+        600
+      ),
+      skill(
+        "documentation",
+        "documentation-review",
+        "Use before merging to review documentation changes",
+        600
+      )
+    ];
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report(candidates)
+    });
+    const reordered = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([...candidates].reverse())
+    });
+
+    expect(result.useCandidateIds).toEqual(["request"]);
+    expect(result.selectedContextTokens).toBe(729);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "request")?.reasons)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "HIGH_CONFIDENCE_TRIGGER" })
+      ]));
+    expect(result.candidates.filter(({ decision }) => decision === "use"))
+      .toHaveLength(1);
+    expect(reordered.useCandidateIds).toEqual(result.useCandidateIds);
+    expect(reordered.selectedContextTokens).toBe(result.selectedContextTokens);
+    expect(reordered.candidates.find(({ candidateId }) => candidateId === "request")?.relevance)
+      .toBe(result.candidates.find(({ candidateId }) => candidateId === "request")?.relevance);
+  });
+
+  it("retains an independently relevant specialist beside the lifecycle-trigger Skill", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([
+        skill(
+          "request",
+          "requesting-code-review",
+          "Use before merge to review completed code and verify requirements",
+          729
+        ),
+        skill(
+          "api",
+          "api-privacy-review",
+          "Review API privacy boundaries after release",
+          900
+        )
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(expect.arrayContaining([
+      "api",
+      "request"
+    ]));
+    expect(result.useCandidateIds).toHaveLength(2);
+    expect(result.selectedContextTokens).toBe(1_629);
+  });
+
+  it("keeps a corroborated available review Skill behind explicit installation approval", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([]),
+      catalogSkills: [catalogSkill(
+        "request-catalog",
+        "requesting-code-review",
+        "Use when completing tasks or before merging to verify work meets requirements",
+        { compatibleHarnesses: ["codex"], estimatedTokens: 729 }
+      )],
+      harness: "codex"
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.installCandidateIds).toEqual(["request-catalog"]);
+    expect(result.candidates[0]).toMatchObject({
+      availability: "available",
+      decision: "install",
+      contextTokens: 729,
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ code: "HIGH_CONFIDENCE_TRIGGER" }),
+        expect.objectContaining({ code: "INSTALL_REQUIRED" })
+      ])
+    });
+  });
+
+  it.each([
+    {
+      label: "name evidence without the lifecycle phrase",
+      name: "requesting-code-review",
+      description: "Use after implementation to verify requirements"
+    },
+    {
+      label: "lifecycle phrase without name evidence",
+      name: "release-gate",
+      description: "Use before merging to verify work"
+    },
+    {
+      label: "name evidence with a different lifecycle phrase",
+      name: "requesting-code-review",
+      description: "Use before release to review work"
+    },
+    {
+      label: "matching terms that are not an adjacent phrase",
+      name: "requesting-code-review",
+      description: "Use before a carefully staged and independently verified merge to review completed engineering work"
+    },
+    {
+      label: "a nearby code-review workflow",
+      name: "receiving-code-review",
+      description: "Use when receiving code review feedback before implementing suggestions"
+    },
+    {
+      label: "a phrase split across sentence boundaries",
+      name: "requesting-code-review",
+      description: "Use before. Merge after review is complete"
+    },
+    {
+      label: "a phrase split by a slash",
+      name: "requesting-code-review",
+      description: "Use before / merge to review completed work"
+    },
+    {
+      label: "a phrase split by an em dash",
+      name: "requesting-code-review",
+      description: "Use before — merge to review completed work"
+    }
+  ])("does not promote partial high-confidence evidence: $label", ({ name, description }) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([skill("partial", name, description, 700)])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({ decision: "excluded" });
+  });
+
+  it.each([
+    "before / merge",
+    "before — merge"
+  ])("does not join a task trigger across punctuation: %s", (phrase) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK.replace("before merge", phrase),
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review completed code and verify requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "HIGH_CONFIDENCE_TRIGGER" })
+    ]));
+  });
+
+  it("does not let corroborated trigger evidence bypass critical risk", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([
+        skill(
+          "critical-review",
+          "requesting-code-review",
+          "Use before merging to review completed work",
+          700
+        )
+      ], [finding("critical-trigger", ["critical-review"], "critical")])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      highestSeverity: "critical"
+    });
+  });
+
+  it("does not let corroborated trigger evidence bypass Harness visibility", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([withExposure(skill(
+        "inactive-review",
+        "requesting-code-review",
+        "Use before merging to review completed work",
+        700
+      ), "inactive")]),
+      harness: "codex"
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ code: "HARNESS_INACTIVE" })
+      ])
+    });
+  });
+
+  it.each([
+    "Never use before merge. Use after release to verify completed work.",
+    "Avoid using this skill before merge. Use after release instead.",
+    "Do not invoke this skill before merge. Invoke it after release instead.",
+    "Don't call this skill before merge. Call it after release instead.",
+    "Don’t use this skill before merge. Use it after release instead.",
+    "Never run this skill before merge. Run it after release instead.",
+    "Do not apply this skill before merge. Apply it after release instead.",
+    "Do not use this skill for code-review before merge. Use it after release instead.",
+    "Do not use this skill for code/review before merge. Use it after release instead.",
+    "Do not use this skill for code—review before merge. Use it after release instead.",
+    "Do not use this skill for code©review before merge. Use it after release instead.",
+    "Do not use this skill for code💡review before merge. Use it after release instead."
+  ])("does not let corroborated trigger evidence bypass a negative route: %s", (description) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: PHASE_2_REVIEW_TASK,
+      report: report([skill(
+        "negative-review",
+        "requesting-code-review",
+        description,
+        700
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.capabilityGaps).not.toEqual(expect.arrayContaining([
+      "before",
+      "merge"
+    ]));
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+      ])
+    });
+  });
+
+  it.each([
+    "Do not review before merge. Update the release notes only.",
+    "Don't review before merge. Update the release notes only.",
+    "Don’t review before merge. Update the release notes only.",
+    "Never review before merge. Update the release notes only.",
+    "Avoid review before merge. Update the release notes only.",
+    "Without review before merge, update the release notes only."
+  ])("does not treat explicitly negated task intent as positive: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use when completing tasks or before merging to verify work meets requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.selectedContextTokens).toBe(0);
+    expect(result.capabilityGaps).not.toContain("before");
+    expect(result.capabilityGaps).not.toContain("merge");
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+      ])
+    });
+  });
+
+  it("does not match the never negation inside whenever", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Whenever reviewing code before merge, verify API privacy and lifecycle compatibility.",
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review completed code and verify requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["request"]);
+    expect(result.capabilityGaps).not.toContain("whe");
+    expect(result.candidates[0]).toMatchObject({
+      decision: "use",
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ code: "HIGH_CONFIDENCE_TRIGGER" })
+      ])
+    });
+  });
+
+  it("preserves positive task intent after a negated semicolon clause", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not review before merge; add PostgreSQL support.",
+      report: report([])
+    });
+
+    expect(result.capabilityGaps).toEqual(expect.arrayContaining([
+      "add",
+      "postgresql",
+      "support"
+    ]));
+    expect(result.capabilityGaps).not.toEqual(expect.arrayContaining([
+      "before",
+      "merge"
+    ]));
+  });
+
+  it.each([
+    "Do not use requesting-code-review before merge.",
+    "Do not request code-review before merge.",
+    "Do not request code/review before merge.",
+    "Do not request code—review before merge.",
+    "Do not request code©review before merge.",
+    "Do not request code💡review before merge."
+  ])("keeps hyphenated Skill intent inside the negated task clause: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review completed code and verify requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it("keeps hyphenated words out of gaps when their clause is negated", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not auto-merge this deployment.",
+      report: report([])
+    });
+
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    "Do not create PDF, DOCX, or HTML files.",
+    "Do not use: PDF, DOCX, or HTML files."
+  ])("keeps comma and colon lists inside a negated task clause: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([
+        skill("pdf", "pdf", "Create PDF files", 300),
+        skill("docx", "docx", "Create DOCX files", 300),
+        skill("html", "html", "Create HTML files", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    {
+      task: "Do not use: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Do not use these tools: Build.",
+      names: ["build"]
+    },
+    {
+      task: "Avoid using the following tools: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Without using these tools: Build.",
+      names: ["build"]
+    },
+    {
+      task: "Avoid calling workflows: Test.",
+      names: ["test"]
+    },
+    {
+      task: "Avoid using any of the following tools: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Without calling any of these workflows: Build workflows.",
+      names: ["build"]
+    },
+    {
+      task: "Do not use the tools: Test tools.",
+      names: ["test"]
+    },
+    {
+      task: "Avoid using any of the tools: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Do not use all of the locally installed tools: Test tools.",
+      names: ["test"]
+    },
+    {
+      task: "Avoid using CI/CD tools: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Without using team’s tools: Build tools.",
+      names: ["build"]
+    },
+    {
+      task: "Avoid using AI🚀 tools: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Avoid using AI⚙️ tools: Run tools.",
+      names: ["run"]
+    },
+    {
+      task: "Avoid using AI👩‍💻 tools: Build tools.",
+      names: ["build"]
+    },
+    {
+      task: "Do not use: Run, Test, or Build skills.",
+      names: ["run", "test", "build"]
+    },
+    {
+      task: "Do not use: create, edit, or review skills.",
+      names: ["create", "edit", "review"]
+    },
+    {
+      task: "Do not use: Run, or Test tools.",
+      names: ["run", "test"]
+    },
+    {
+      task: "Do not use: Run, and Test tools.",
+      names: ["run", "test"]
+    },
+    {
+      task: "Do not use: Run, and/or Test tools.",
+      names: ["run", "test"]
+    },
+    {
+      task: "Do not use: Run/Test/Build skills.",
+      names: ["run", "test", "build"]
+    },
+    {
+      task: "Do not use: Run & Test tools.",
+      names: ["run", "test"]
+    },
+    {
+      task: "Do not use these tools: Run and Test instead of Build.",
+      names: ["run", "test", "build"]
+    },
+    {
+      task: "Do not use: Run and Test tools instead of Build.",
+      names: ["run", "test", "build"]
+    },
+    {
+      task: "Do not use these tools: Run instead of Build.",
+      names: ["run", "build"]
+    },
+    {
+      task: "Do not use: Run tools instead of Build.",
+      names: ["run", "build"]
+    },
+    {
+      task: "Do not use: Run instead of Build tools.",
+      names: ["run", "build"]
+    },
+    {
+      task: "Do not use: Run tools, instead of Build tools.",
+      names: ["run", "build"]
+    }
+  ])("keeps action-named colon lists negative: $task", ({ task, names }) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report(names.map((name) => skill(
+        name,
+        name,
+        `${name} skills`,
+        300
+      )))
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    { task: "Do not use: Run-v2 tools.", name: "run-v2" },
+    { task: "Do not use: Run/v2 tools.", name: "run/v2" },
+    { task: "Do not use: Run🚀 tools.", name: "run🚀" }
+  ])("keeps punctuation-rich action names negative: $task", ({ task, name }) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([skill(name, name, `${name} tools`, 300)])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it("preserves an instead-marked multi-action colon contrast", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not create PDF: build and test DOCX instead.",
+      report: report([
+        skill("pdf", "pdf", "Create PDF files", 300),
+        skill("docx", "docx", "Build and test DOCX files", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["docx"]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    "Do not create PDF: build/test DOCX instead.",
+    "Do not create PDF: create, edit DOCX instead.",
+    "Do not create PDF: create, edit, and test DOCX instead.",
+    "Do not create PDF: instead build/test DOCX.",
+    "Do not create PDF: instead create, edit DOCX."
+  ])("preserves a punctuation-separated colon contrast marked by instead: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([
+        skill("pdf", "pdf", "Create PDF files", 300),
+        skill("docx", "docx", "Build, create, edit, and test DOCX files", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["docx"]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    { task: "Do not create PDF: instead Run-v2 tools.", name: "run-v2" },
+    { task: "Do not create PDF: Run-v2 tools instead.", name: "run-v2" },
+    { task: "Do not create PDF: instead Run/v2 tools.", name: "run/v2" },
+    { task: "Do not create PDF: Run/v2 tools instead.", name: "run/v2" },
+    { task: "Do not create PDF: instead Run🚀 tools.", name: "run🚀" },
+    { task: "Do not create PDF: Run🚀 tools instead.", name: "run🚀" }
+  ])("preserves an explicit technical-name contrast: $task", ({ task, name }) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([
+        skill("pdf", "pdf", "Create PDF files", 300),
+        skill(name, name, `${name} tools`, 300)
+      ])
+    });
+
+    expect(result.candidates
+      .filter(({ decision }) => decision === "use")
+      .map(({ name: candidateName }) => candidateName))
+      .toEqual([name]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    { task: "Do not use legacy tools: Build new tools instead.", name: "build" },
+    { task: "Do not use outdated workflows: Run-v2 instead.", name: "run-v2" },
+    { task: "Do not use old project tools: instead Build new tools.", name: "build" },
+    { task: "Do not use legacy tools: create, edit, and test DOCX instead.", name: "docx" }
+  ])("lets an explicit alternative override a natural rejected object: $task", ({ task, name }) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([skill(name, name, `${name} tools and workflows`, 300)])
+    });
+
+    expect(result.candidates
+      .filter(({ decision }) => decision === "use")
+      .map(({ name: candidateName }) => candidateName))
+      .toEqual([name]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    "Do not use: Run-v2 tools, use Build instead.",
+    "Do not use these tools: Run-v2, but use Build instead.",
+    "Do not use these tools: Run-v2 tools, use Build instead.",
+    "Do not use legacy tools: Run-v2 tools, use Build instead."
+  ])("keeps a technical name negative before a later explicit contrast: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([
+        skill("run-v2", "run-v2", "Run-v2 tools", 300),
+        skill("build", "build", "Build tools", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["build"]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each(["Run/Test", "Run&Test", "Run-test"])(
+    "keeps task-adjacent action name %s negative before a later comma alternative",
+    (negativePhrase) => {
+      const result = analyzePreflight({
+        ...fixed,
+        task: `Do not use legacy tools: ${negativePhrase} tools, use Build instead.`,
+        report: report([
+          skill("run-test", "run-test", `${negativePhrase} tools`, 300),
+          skill("build", "build", "Build tools", 300)
+        ])
+      });
+
+      expect(result.useCandidateIds).toEqual(["build"]);
+      expect(result.capabilityGaps).toEqual([]);
+    }
+  );
+
+  it("keeps every earlier comma-list item negative before a later alternative", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not use: Run-v2 tools, Test tools, use Build instead.",
+      report: report([
+        skill("run-v2", "run-v2", "Run-v2 tools", 300),
+        skill("test", "test", "Test tools", 300),
+        skill("build", "build", "Build tools", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["build"]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it.each([
+    "Do not create PDF, but create DOCX instead.",
+    "Do not create PDF: create DOCX instead."
+  ])("preserves an explicit positive contrast after a negated clause: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([
+        skill("pdf", "pdf", "Create PDF files", 300),
+        skill("docx", "docx", "Create DOCX files", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["docx"]);
+    expect(result.capabilityGaps).toEqual([]);
+  });
+
+  it("keeps a positive lifecycle request after a negated semicolon clause", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not auto-merge; review Phase 2 code before merge.",
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review completed code and verify requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["request"]);
+    expect(result.candidates[0]?.reasons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "HIGH_CONFIDENCE_TRIGGER" })
+    ]));
+  });
+
+  it.each([
+    "Do not use old tools.\nUse tools: Run tools.",
+    "Do not use old tools. Use tools: Run tools.",
+    "Do not use old tools! Use tools: Run tools.",
+    "Do not use old tools\rRun tools for this task.",
+    "Do not use old tools\u2028Run tools for this task.",
+    "Do not use old tools\u2029Run tools for this task."
+  ])("does not carry a task list header across a sentence boundary: %s", (task) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([skill("run", "run", "Run tools", 300)])
+    });
+
+    expect(result.useCandidateIds).toEqual(["run"]);
+  });
+
+  it("keeps negated task terms out of ordinary relevance and name matching", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not create PDF files. Create a DOCX document.",
+      report: report([
+        skill("pdf", "pdf", "Create and edit PDF files", 300),
+        skill("docx", "docx", "Create and edit DOCX documents", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["docx"]);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "pdf"))
+      .toMatchObject({ decision: "excluded", features: { nameMatch: false } });
+  });
+
+  it("allows a positively requested Skill despite a different negated use of its name", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not edit PDF metadata. Create a PDF report.",
+      report: report([skill(
+        "pdf",
+        "pdf",
+        "Create and review PDF reports",
+        300
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["pdf"]);
+    expect(result.capabilityGaps).toEqual([]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it("keeps positive code review eligible beside a different negated review object", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not review documentation before merge. Review Phase 2 code before merge.",
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review completed code and verify requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["request"]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it("keeps every code-review workflow excluded when code review is negated", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not review code before merge. Review documentation before merge.",
+      report: report([
+        skill(
+          "request",
+          "requesting-code-review",
+          "Use before merge to review completed code and verify requirements",
+          729
+        ),
+        skill(
+          "receive",
+          "receiving-code-review",
+          "Use when receiving code review feedback before implementing suggestions",
+          1_628
+        )
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ candidateId: "request", decision: "excluded" }),
+      expect.objectContaining({ candidateId: "receive", decision: "excluded" })
+    ]));
+  });
+
+  it("keeps a positive route eligible beside a different negated routing object", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Review Phase 2 code before merge.",
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review code. Do not use before merge to review documentation.",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["request"]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it.each([
+    "Avoid using this skill for the following tools: Run tools.",
+    "Avoid using the following tools: Run tools.",
+    "Avoid calling any of these workflows: Run tools.",
+    "Avoid using this skill for any of the tools: Run tools.",
+    "Avoid calling all of the locally installed workflows: Run tools.",
+    "Avoid using this skill for CI/CD tools: Run tools.",
+    "Avoid using this skill for team’s tools: Run tools.",
+    "Avoid using this skill for AI🚀 tools: Run tools.",
+    "Avoid using this skill for AI⚙️ tools: Run tools.",
+    "Avoid using this skill for AI👩‍💻 tools: Run tools."
+  ])("keeps routing colon lists negative: %s", (description) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Run tools for this task.",
+      report: report([skill("run", "run", description, 300)])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]?.reasons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it("lets an explicit routing alternative override a natural rejected object", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Build new tools for this task.",
+      report: report([skill(
+        "build",
+        "build",
+        "Do not use this skill for legacy tools: Build new tools instead.",
+        300
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["build"]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+  });
+
+  it.each(["\r", "\u2028", "\u2029"])(
+    "does not carry a routing list header across line boundary %j",
+    (lineBoundary) => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Run tools for this task.",
+      report: report([skill(
+        "run",
+        "run",
+        `Avoid using this skill for old tools${lineBoundary}Run tools for this task.`,
+        300
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual(["run"]);
+    expect(result.candidates[0]?.reasons).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+    ]));
+    }
+  );
+
+  it("keeps a routed technical item negative before a later comma alternative", () => {
+    const description =
+      "Avoid using this skill for legacy tools: Run-v2 tools, use Build instead.";
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Run-v2 tools and Build tools for this task.",
+      report: report([
+        skill("run-v2", "run-v2", description, 300),
+        skill("build", "build", "Use Build tools instead.", 300)
+      ])
+    });
+
+    expect(result.useCandidateIds).toEqual(["build"]);
+    expect(result.candidates.find(({ candidateId }) => candidateId === "run-v2"))
+      .toMatchObject({ decision: "excluded" });
+  });
+
+  it.each(["Run/Test", "Run&Test", "Run-test"])(
+    "keeps routed adjacent action name %s negative before a later comma alternative",
+    (negativePhrase) => {
+      const description =
+        `Avoid using this skill for legacy tools: ${negativePhrase} tools, use Build instead.`;
+      const result = analyzePreflight({
+        ...fixed,
+        task: `${negativePhrase} tools and Build tools for this task.`,
+        report: report([
+          skill("run-test", "run-test", description, 300),
+          skill("build", "build", "Use Build tools instead.", 300)
+        ])
+      });
+
+      expect(result.useCandidateIds).toEqual(["build"]);
+      expect(result.candidates.find(({ candidateId }) => candidateId === "run-test"))
+        .toMatchObject({ decision: "excluded" });
+    }
+  );
+
+  it("keeps a negative code route as a veto beside positive documentation routing", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Review Phase 2 code before merge.",
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review documentation. Do not use before merge to review code.",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ code: "NEGATIVE_TRIGGER" })
+      ])
+    });
+  });
+
+  it("keeps negative candidate terms out of capability-gap corroboration", () => {
+    const baseline = analyzePreflight({
+      ...fixed,
+      task: "Add PostgreSQL support",
+      report: report([skill(
+        "postgres",
+        "postgresql-helper",
+        "General database advice.",
+        300
+      )])
+    });
+    const negative = analyzePreflight({
+      ...fixed,
+      task: "Add PostgreSQL support",
+      report: report([skill(
+        "postgres",
+        "postgresql-helper",
+        "Do not use this skill for support.",
+        300
+      )])
+    });
+    const negativeOnly = analyzePreflight({
+      ...fixed,
+      task: "Add PostgreSQL support",
+      report: report([skill(
+        "release",
+        "release-helper",
+        "Do not use this skill for PostgreSQL support.",
+        300
+      )])
+    });
+
+    expect(baseline.capabilityGaps).toEqual(["add", "postgresql", "support"]);
+    expect(negative.capabilityGaps).toEqual(baseline.capabilityGaps);
+    expect(negativeOnly.capabilityGaps).toEqual(baseline.capabilityGaps);
+  });
+
+  it("does not let negative metadata push positive gap evidence over the relevance gate", () => {
+    const task = "Plan PostgreSQL schemas cryptography migration rollback validation deployment";
+    const baseline = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([]),
+      catalogSkills: [catalogSkill(
+        "database",
+        "database-helper",
+        "PostgreSQL schemas",
+        { compatibleHarnesses: ["claude"] }
+      )],
+      harness: "codex"
+    });
+    const negative = analyzePreflight({
+      ...fixed,
+      task,
+      report: report([]),
+      catalogSkills: [catalogSkill(
+        "database",
+        "database-helper",
+        "PostgreSQL schemas. Do not use this skill for cryptography migration.",
+        { compatibleHarnesses: ["claude"] }
+      )],
+      harness: "codex"
+    });
+
+    expect(baseline.capabilityGaps).toEqual([]);
+    expect(negative.capabilityGaps).toEqual(baseline.capabilityGaps);
+  });
+
+  it("does not select an exact Skill name that appears only in a negated clause", () => {
+    const result = analyzePreflight({
+      ...fixed,
+      task: "Do not request code review. Prepare release notes before merge.",
+      report: report([skill(
+        "request",
+        "requesting-code-review",
+        "Use before merge to review completed code and verify requirements",
+        729
+      )])
+    });
+
+    expect(result.useCandidateIds).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      decision: "excluded",
+      features: { nameMatch: false }
+    });
   });
 
   it("does not match a Skill name inside a larger task word", () => {

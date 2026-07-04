@@ -4,6 +4,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Changed
+
+- Preflight algorithm v8 adds one versioned, corroborated lifecycle trigger for detailed pre-merge review tasks. The current profile requires the `request` + `code` + `review` name signature, positive `review ... before merge` task intent, and a positive `before merge` routing phrase; generic names and phrases split by Unicode punctuation/symbol boundaries cannot provide the signal. One bounded parser handles straight/curly English negations, negative lists, and explicit comma/colon contrasts. A `code` discriminator resolves mixed review objects without changing the positive trigger requirement. Capability-gap gating uses positive matches over the complete metadata denominator, so negative terms cannot strengthen corroboration. Existing safety exclusions and complementary-Skill selection still apply. Compact output moves to schema v2, remains bounded and task-free, and the CLI and bilingual dashboard render the new reason explicitly.
+- Negative intent also wins when at least two candidate-name terms have stronger negative than positive coverage, preventing requesting and receiving review variants from bypassing an explicit code-review exclusion. Action-named colon lists joined by bounded words or Unicode punctuation/symbols remain negative, as do optional-comma `instead of` forms; a standalone `instead` marker still preserves a multi-action positive contrast.
+- Lifecycle-fragment readers now retry ordinary concurrent cleanup when an identity mismatch is immediately followed by proven path absence, while a still-present same-name replacement continues to fail closed.
+
 ## [0.5.0-alpha.4] - 2026-07-04
 
 ### Added

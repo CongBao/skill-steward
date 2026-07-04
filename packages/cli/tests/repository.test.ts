@@ -176,8 +176,12 @@ describe("open-source repository", () => {
     expect(readme).toMatch(/does not crawl every project or workspace/i);
     expect(readme).toMatch(/Copilot Harness coverage[^.]*`partial`/i);
     expect(readme).toMatch(/source or Skill exposure[^.]*`ambiguous`/i);
-    expect(readme).toContain("Algorithm v7");
+    expect(readme).toContain("Algorithm v8");
     expect(readme).toContain("schema v4");
+    expect(readme).toContain("uses a versioned trigger profile");
+    expect(readme).toContain("`request` + `code` + `review` Skill-name signature");
+    expect(readme).toMatch(/phrase matching never crosses Unicode punctuation or symbol boundaries/i);
+    expect(readme).toMatch(/negated task text[^.]*neither ordinary relevance[^.]*capability gaps/i);
     expect(readme).toMatch(/capability gaps[^.]*high-confidence[^.]*search hints/i);
     expect(readme).toMatch(/unsegmented two-character fragments[^.]*low confidence/i);
     expect(readme).toMatch(/positive candidate metadata[^.]*canonical namespace/i);
@@ -305,8 +309,11 @@ describe("open-source repository", () => {
     expect(chineseReadme).toMatch(/不会遍历本机上的每个项目或工作区/);
     expect(chineseReadme).toMatch(/Copilot 的 Harness 覆盖状态[^。]*`partial`/);
     expect(chineseReadme).toMatch(/来源或 Skill 可见状态[^。]*`ambiguous`/);
-    expect(chineseReadme).toContain("算法 v7");
+    expect(chineseReadme).toContain("算法 v8");
     expect(chineseReadme).toContain("结果格式 v4");
+    expect(chineseReadme).toMatch(/版本化的窄规则[^。]*request[^。]*code[^。]*review/);
+    expect(chineseReadme).toMatch(/短语也不会跨 Unicode 标点或符号拼接/);
+    expect(chineseReadme).toMatch(/否定任务内容[^。]*不参与普通相关性[^。]*能力缺口/);
     expect(chineseReadme).toMatch(/对一组有限的[^。]*概念做确定性归一化/);
     expect(chineseReadme).toMatch(/能力缺口[^。]*高置信[^。]*搜索提示/);
     expect(chineseReadme).toMatch(/未分词[^。]*两字片段[^。]*低置信/);
@@ -429,6 +436,7 @@ describe("open-source repository", () => {
     expect(changelog).toContain("native inventory adapters");
     expectInventoryTaxonomies(changelog);
     expect(changelog).toContain("Preflight algorithm v7 and result schema v4");
+    expect(changelog).toMatch(/Preflight algorithm v8[^.]*corroborated lifecycle trigger/i);
     expect(changelog).toMatch(/high-confidence capability-gap search hints/i);
     expect(changelog).toMatch(/gap-only canonical namespace[^.]*negative usage clauses/i);
     expect(changelog).toMatch(/generic single-token names[^.]*corroborat/i);
@@ -462,10 +470,13 @@ describe("open-source repository", () => {
     expect(architecture).toContain("evidence-events.jsonl");
     expect(architecture).toContain("governance.jsonl");
     expect(architecture).toContain("observe-only");
-    expect(architecture).toContain("Preflight algorithm v7 / schema v4");
+    expect(architecture).toContain("Preflight algorithm v8 / schema v4");
+    expect(architecture).toMatch(/versioned trigger-rule table/i);
+    expect(architecture).toMatch(/request[^.]*code[^.]*review[^.]*Skill-name signature/i);
     expect(architecture).toMatch(/candidate-corroborated capability-gap search hints/i);
     expect(architecture).toMatch(/positive candidate metadata[^.]*selected positive coverage/i);
-    expect(architecture).toMatch(/negative usage clauses[^.]*neither corroborate nor cover/i);
+    expect(architecture).toMatch(/capability-gap corroboration[^.]*positive matched terms[^.]*complete route-term denominator/i);
+    expect(architecture).toMatch(/negative metadata cannot raise its relevance gate/i);
     expect(architecture).toMatch(/name match[^.]*specific canonical concept/i);
     expect(architecture).toContain("native inventory and visibility resolver");
     expectInventoryTaxonomies(architecture);
@@ -520,6 +531,10 @@ describe("open-source repository", () => {
     expect(alphaTesting).toMatch(/low-confidence two-character fragments[^.]*empty/i);
     expect(alphaTesting).toMatch(/negative usage clauses[^.]*neither corroborate nor cover/i);
     expect(alphaTesting).toMatch(/generic exact names[^.]*empty gap list/i);
+    expect(alphaTesting).toContain("Algorithm v8/result schema v4");
+    expect(alphaTesting).toContain("compact schema v2");
+    expect(alphaTesting).toMatch(/phase-checklist[^.]*documentation-review/i);
+    expect(alphaTesting).toMatch(/Do not review before merge[^.]*positive lifecycle trigger/i);
     expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);
     for (const command of [
       "CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts",

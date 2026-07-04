@@ -12,7 +12,7 @@ import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
   schemaVersion: 4,
-  algorithmVersion: 4,
+  algorithmVersion: 8,
   id: "run-1",
   generatedAt: "2026-07-03T01:00:00.000Z",
   portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -48,6 +48,7 @@ const result = {
       },
       decision: "use",
       reasons: [
+        { code: "HIGH_CONFIDENCE_TRIGGER", detail: "raw internal lifecycle-trigger detail" },
         { code: "UNIQUE_COVERAGE", detail: "57% unique task-term coverage." },
         { code: "NEGATIVE_TRIGGER", detail: "raw internal negative-trigger detail" }
       ]
@@ -226,6 +227,9 @@ describe("PreflightPage v2", () => {
     expect(screen.getAllByText("Known publisher · not a safety guarantee")[0]).toBeVisible();
     expect(screen.getAllByText("Negative trigger")[0]).toBeVisible();
     expect(screen.getAllByText("This task matches terms the Skill explicitly says it should not handle.")[0]).toBeVisible();
+    expect(screen.getByText("Lifecycle trigger")).toBeVisible();
+    expect(screen.getByText("Task and Skill routing share a verified lifecycle trigger."))
+      .toBeVisible();
     expect(screen.getByText("Excluded candidates (2)")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Inspect docx", hidden: true })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Inspect test-review" }));
@@ -274,5 +278,8 @@ describe("PreflightPage v2", () => {
     expect(screen.getAllByText("全局").length).toBeGreaterThan(0);
     expect(screen.getAllByText("命中排除条件")[0]).toBeVisible();
     expect(screen.getAllByText("任务包含该 Skill 明确声明不应处理的内容。")[0]).toBeVisible();
+    expect(screen.getByText("生命周期触发")).toBeVisible();
+    expect(screen.getByText("任务与 Skill 路由信息共享一项已核验的生命周期触发条件。"))
+      .toBeVisible();
   });
 });

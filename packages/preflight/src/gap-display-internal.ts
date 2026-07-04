@@ -1,4 +1,5 @@
 import { normalizeTask, tokenize } from "./tokenize.js";
+import { positiveRoutingText } from "./polarity.js";
 
 export interface GapDisplayTerm {
   display: string;
@@ -80,9 +81,6 @@ const LEXICAL_DOUBLE_ROOTS = new Set([
   "purr",
   "whirr"
 ]);
-
-const NEGATIVE_USAGE_CLAUSE =
-  /(?:do\s+not|don't)\s+use(?:\s+this\s+skill)?\s+(?:for|when)\s+[^.!?\n]+/giu;
 
 function mappedConcepts(value: string): string[] | undefined {
   const mapped = DISPLAY_CONCEPTS.get(value);
@@ -186,8 +184,7 @@ export function gapDisplayTerms(value: string): GapDisplayTerm[] {
 
 /** @internal Positive candidate metadata projected into the gap-only namespace. */
 export function positiveGapConcepts(name: string, description: string): Set<string> {
-  const positiveDescription = description.replace(NEGATIVE_USAGE_CLAUSE, " ");
   return new Set(gapDisplayTerms(
-    `${name.replace(/[-_]+/gu, " ")} ${positiveDescription}`
+    `${name.replace(/[-_]+/gu, " ")} ${positiveRoutingText(description)}`
   ).flatMap(({ concepts }) => concepts));
 }

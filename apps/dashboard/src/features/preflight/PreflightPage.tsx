@@ -19,6 +19,7 @@ import "./preflight.css";
 const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
   TASK_TERM_MATCH: "preflight.reason.TASK_TERM_MATCH",
   NAME_MATCH: "preflight.reason.NAME_MATCH",
+  HIGH_CONFIDENCE_TRIGGER: "preflight.reason.HIGH_CONFIDENCE_TRIGGER",
   PROJECT_SCOPE_FIT: "preflight.reason.PROJECT_SCOPE_FIT",
   UNIQUE_COVERAGE: "preflight.reason.UNIQUE_COVERAGE",
   REDUNDANT_WITH_SELECTED: "preflight.reason.REDUNDANT_WITH_SELECTED",
