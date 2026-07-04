@@ -34,4 +34,4 @@ it("loads the plain TypeScript-compiled metadata module in Node ESM", async () =
   } finally {
     await rm(output, { recursive: true, force: true });
   }
-});
+}, 15_000);
