@@ -1,5 +1,6 @@
 import {
   PREFLIGHT_ALGORITHM_VERSION,
+  toCompactPreflight,
   type PreflightResult
 } from "@skill-steward/preflight";
 import { describe, expect, it, vi } from "vitest";
@@ -9,7 +10,7 @@ const rawTask = "PRIVATE rotate customer encryption keys";
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -92,6 +93,11 @@ function result(): PreflightResult {
       recommendation: "Review",
       confidence: 1
     }],
+    inventoryWarnings: [{
+      code: "HARNESS_AMBIGUOUS",
+      harness: "codex",
+      detail: "Visibility is ambiguous for every matching installed candidate."
+    }],
     capabilityGaps: ["deployment"],
     installedCoverage: 0.5,
     projectedCoverage: 0.75,
@@ -113,6 +119,7 @@ describe.each(["codex", "claude-code"] as const)("%s prompt hook", (harness) => 
       }
     });
     expect(serialized).toContain("Consider installing (approval required): testing-review");
+    expect(serialized).toContain("Warnings: HARNESS_AMBIGUOUS, OVERLAPPING_TRIGGER");
     expect(serialized).not.toContain(rawTask);
     expect(serialized).not.toContain("https://example.com/");
   });
@@ -131,6 +138,27 @@ it("truncates complete list items to the byte budget", () => {
   const context = output.hookSpecificOutput?.additionalContext ?? "";
   expect(context).not.toContain("�");
   expect(context).toContain("Do not install or modify Skills without explicit user approval.");
+});
+
+it("renders names and codes through the shared compact Preflight contract", () => {
+  const oversized = result();
+  oversized.candidates[0]!.name = `共享-${"安".repeat(2_000)}`;
+  oversized.candidates[1]!.name = `安装-${"测".repeat(2_000)}`;
+  const compact = toCompactPreflight(oversized);
+
+  const output = renderPromptHook({
+    harness: "codex",
+    result: oversized,
+    maxBytes: 2_048
+  });
+  const context = output.hookSpecificOutput?.additionalContext ?? "";
+  expect(context).toContain(`Use now: ${compact.use[0]!.name}`);
+  expect(context).toContain(`Warnings: ${[
+    ...compact.inventoryWarningCodes,
+    ...compact.conflictWarningCodes
+  ].join(", ")}`);
+  expect(context).not.toContain(oversized.candidates[0]!.name);
+  expect(Buffer.byteLength(JSON.stringify(output), "utf8")).toBeLessThanOrEqual(2_048);
 });
 
 it("parses native input and fails open for invalid input or analysis errors", async () => {

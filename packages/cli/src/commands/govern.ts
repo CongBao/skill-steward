@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import {
-  scanPortfolio,
-  standardRoots
+  activeMutableRoots,
+  buildInventoryPlan,
+  scanInventory,
+  scanInventoryPlan,
+  type PortfolioReport,
+  type SkillRoot
 } from "@skill-steward/engine";
 import {
   applyQuarantinePlan,
@@ -12,6 +16,7 @@ import {
   planRestore,
   quarantinedSkillFromTransaction,
   readGovernanceTransactions,
+  validateGovernancePlanForApply,
   type GovernancePlan
 } from "@skill-steward/governance";
 import {
@@ -83,11 +88,40 @@ function printPlan(plan: GovernancePlan, json: boolean, context: CliContext): vo
 }
 
 async function rescan(context: CliContext): Promise<void> {
-  const report = await scanPortfolio(
-    standardRoots({ home: context.home, cwd: context.cwd }),
+  const report = await scanInventory(
+    { home: context.home, cwd: context.cwd },
     context.now?.() ?? new Date()
   );
   await writeLatestReport(context.stateDir, report);
+}
+
+async function governanceLookup(
+  context: CliContext,
+  now: Date
+): Promise<{
+  report: PortfolioReport | undefined;
+  activeRoots: SkillRoot[];
+  scannedReport?: PortfolioReport;
+}> {
+  const inventoryPlan = await buildInventoryPlan({
+    home: context.home,
+    cwd: context.cwd
+  });
+  let report = await readLatestReport(context.stateDir);
+  let scannedReport: PortfolioReport | undefined;
+  if (report === undefined) {
+    report = await scanInventoryPlan({
+      home: context.home,
+      cwd: context.cwd,
+      plan: inventoryPlan
+    }, now);
+    scannedReport = report;
+  }
+  return {
+    report,
+    activeRoots: activeMutableRoots(inventoryPlan),
+    ...(scannedReport ? { scannedReport } : {})
+  };
 }
 
 interface PortfolioRefreshWarning {
@@ -163,27 +197,44 @@ export async function governQuarantineCommand(
           "Apply accepts only --plan <id> --confirm; --skill is ambiguous"
         );
       }
+      const activeRoots = activeMutableRoots(await buildInventoryPlan({
+        home: context.home,
+        cwd: context.cwd
+      }));
+      let validatedPlan: GovernancePlan | undefined;
       const envelope = await claimReviewedPlan(context.stateDir, {
         id: options.plan,
         kind: "governance",
-        now
-      });
-      const { plan, result } = await applyClaimedReviewedPlan(async () => {
-        const parsed = governancePlanSchema.safeParse(envelope.payload);
-        if (
-          !parsed.success
-          || parsed.data.kind !== "quarantine"
-          || !matchesReviewedPlanIdentity(envelope, parsed.data)
-        ) {
-          throw new GovernCommandError(
-            "REVIEWED_PLAN_INVALID",
-            "Stored governance payload is not a valid quarantine plan"
-          );
-        }
-        return {
-          plan: parsed.data,
-          result: await applyQuarantinePlan(parsed.data, {
+        now,
+        validate: async (candidate) => {
+          const parsed = governancePlanSchema.safeParse(candidate.payload);
+          if (parsed.success && !matchesReviewedPlanIdentity(candidate, parsed.data)) {
+            throw new GovernCommandError(
+              "REVIEWED_PLAN_INVALID",
+              "Stored governance payload identity does not match its envelope"
+            );
+          }
+          const plan = await validateGovernancePlanForApply(candidate.payload, {
+            kind: "quarantine",
             stateDirectory: context.stateDir,
+            activeRoots,
+            now
+          });
+          validatedPlan = plan;
+        }
+      });
+      if (!validatedPlan) {
+        throw new GovernCommandError(
+          "REVIEWED_PLAN_INVALID",
+          "Stored governance payload was not validated"
+        );
+      }
+      const plan = validatedPlan;
+      const { result } = await applyClaimedReviewedPlan(async () => {
+        return {
+          result: await applyQuarantinePlan(plan, {
+            stateDirectory: context.stateDir,
+            activeRoots,
             ...(context.now ? { now: context.now } : {})
           })
         };
@@ -216,18 +267,19 @@ export async function governQuarantineCommand(
         "Preview requires --skill <id>"
       );
     }
-    await cleanupReviewedPlans(context, now);
-    const report = await readLatestReport(context.stateDir);
+    const { report, activeRoots, scannedReport } = await governanceLookup(context, now);
     const skill = report?.skills.find(({ id }) => id === options.skill);
     if (!skill) {
       throw new GovernCommandError("SKILL_NOT_FOUND", `Skill '${options.skill}' was not found`);
     }
     const plan = await planQuarantine({
       skill,
-      activeRoots: standardRoots({ home: context.home, cwd: context.cwd }),
+      activeRoots,
       stateDirectory: context.stateDir,
       now
     });
+    await cleanupReviewedPlans(context, now);
+    if (scannedReport) await writeLatestReport(context.stateDir, scannedReport);
     await writeReviewedPlan(context.stateDir, {
       schemaVersion: 1,
       id: plan.id,
@@ -263,26 +315,44 @@ export async function governRestoreCommand(
           "Apply accepts only --plan <id> --confirm; --transaction is ambiguous"
         );
       }
+      const activeRoots = activeMutableRoots(await buildInventoryPlan({
+        home: context.home,
+        cwd: context.cwd
+      }));
+      let validatedPlan: GovernancePlan | undefined;
       const envelope = await claimReviewedPlan(context.stateDir, {
         id: options.plan,
         kind: "governance",
-        now
-      });
-      const { result } = await applyClaimedReviewedPlan(async () => {
-        const parsed = governancePlanSchema.safeParse(envelope.payload);
-        if (
-          !parsed.success
-          || parsed.data.kind !== "restore"
-          || !matchesReviewedPlanIdentity(envelope, parsed.data)
-        ) {
-          throw new GovernCommandError(
-            "REVIEWED_PLAN_INVALID",
-            "Stored governance payload is not a valid restore plan"
-          );
-        }
-        return {
-          result: await applyRestorePlan(parsed.data, {
+        now,
+        validate: async (candidate) => {
+          const parsed = governancePlanSchema.safeParse(candidate.payload);
+          if (parsed.success && !matchesReviewedPlanIdentity(candidate, parsed.data)) {
+            throw new GovernCommandError(
+              "REVIEWED_PLAN_INVALID",
+              "Stored governance payload identity does not match its envelope"
+            );
+          }
+          const plan = await validateGovernancePlanForApply(candidate.payload, {
+            kind: "restore",
             stateDirectory: context.stateDir,
+            activeRoots,
+            now
+          });
+          validatedPlan = plan;
+        }
+      });
+      if (!validatedPlan) {
+        throw new GovernCommandError(
+          "REVIEWED_PLAN_INVALID",
+          "Stored governance payload was not validated"
+        );
+      }
+      const plan = validatedPlan;
+      const { result } = await applyClaimedReviewedPlan(async () => {
+        return {
+          result: await applyRestorePlan(plan, {
+            stateDirectory: context.stateDir,
+            activeRoots,
             ...(context.now ? { now: context.now } : {})
           })
         };
@@ -315,7 +385,6 @@ export async function governRestoreCommand(
         "Preview requires --transaction <id>"
       );
     }
-    await cleanupReviewedPlans(context, now);
     const transactions = await readGovernanceTransactions(context.stateDir);
     const source = transactions.find(({ id }) => id === options.transaction);
     if (!source) {
@@ -324,12 +393,17 @@ export async function governRestoreCommand(
         `Governance transaction '${options.transaction}' was not found`
       );
     }
+    const inventoryPlan = await buildInventoryPlan({
+      home: context.home,
+      cwd: context.cwd
+    });
     const plan = await planRestore({
       quarantined: quarantinedSkillFromTransaction(source),
-      activeRoots: standardRoots({ home: context.home, cwd: context.cwd }),
+      activeRoots: activeMutableRoots(inventoryPlan),
       stateDirectory: context.stateDir,
       now
     });
+    await cleanupReviewedPlans(context, now);
     await writeReviewedPlan(context.stateDir, {
       schemaVersion: 1,
       id: plan.id,

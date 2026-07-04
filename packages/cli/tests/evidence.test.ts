@@ -107,6 +107,41 @@ async function seedEvidence(stateDir: string): Promise<void> {
   });
 }
 
+async function seedLegacyEvidence(stateDir: string): Promise<string[]> {
+  const candidateIds = ["legacy/skill", "legacy skill", "x".repeat(97)];
+  await writeFile(join(stateDir, "preflights.json"), `${JSON.stringify({
+    schemaVersion: 2,
+    records: [{
+      schemaVersion: 2,
+      id: "legacy-v2",
+      createdAt: "2026-07-02T12:00:00.000Z",
+      algorithmVersion: 2,
+      portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+      taskHash: `sha256:${"b".repeat(64)}`,
+      taskCharacterCount: 20,
+      taskTermCount: 3,
+      useCandidateIds: candidateIds.slice(0, 2),
+      installCandidateIds: candidateIds.slice(2),
+      candidates: candidateIds.map((candidateId, index) => ({
+        candidateId,
+        availability: index === 2 ? "available" : "installed",
+        relevance: 0.8,
+        uniqueCoverage: 0.3,
+        riskPenalty: 0,
+        redundancyPenalty: 0,
+        installPenalty: index === 2 ? 0.08 : 0,
+        contextTokens: 200,
+        decision: index === 2 ? "install" : "use"
+      })),
+      installedCoverage: 0.6,
+      projectedCoverage: 1,
+      selectedContextTokens: 600,
+      estimatedContextSaved: 0
+    }]
+  }, null, 2)}\n`, "utf8");
+  return candidateIds;
+}
+
 describe("evidence command", () => {
   let current: Awaited<ReturnType<typeof fixture>>;
 
@@ -480,6 +515,28 @@ describe("evidence command", () => {
     });
     expect((await readNormalizedPreflightEvidence(current.stateDir))[0]?.feedback)
       .toMatchObject({ label: "useful", candidateIds: ["testing"] });
+  });
+
+  it("auto-fills useful feedback with the complete readable legacy candidate set", async () => {
+    const candidateIds = await seedLegacyEvidence(current.stateDir);
+
+    expect(await run([
+      "evidence",
+      "feedback",
+      "--preflight",
+      "legacy-v2",
+      "--label",
+      "useful",
+      "--json"
+    ], current.context)).toBe(0);
+
+    expect(JSON.parse(current.stdout.join(""))).toMatchObject({
+      preflightId: "legacy-v2",
+      label: "useful",
+      candidateIds
+    });
+    expect((await readNormalizedPreflightEvidence(current.stateDir))[0]?.feedback)
+      .toMatchObject({ label: "useful", candidateIds });
   });
 
   it("requires a corrected candidate set for incomplete feedback", async () => {

@@ -3,16 +3,23 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   unlink,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSkill } from "@skill-steward/engine";
-import { readLatestReport, writeLatestReport } from "@skill-steward/store";
+import { isVisibilityReport, parseSkill } from "@skill-steward/engine";
+import {
+  readEvidenceEvents,
+  readLatestReport,
+  writeReviewedPlan,
+  writeLatestReport
+} from "@skill-steward/store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliContext } from "../src/context.js";
+import { installNativeCodexFixture } from "./native-inventory-fixture.js";
 
 async function run(argv: string[], context: CliContext): Promise<number> {
   vi.resetModules();
@@ -102,6 +109,219 @@ describe("govern command", () => {
     current = await fixture();
   });
 
+  it("refuses native plugin quarantine without a reviewed plan and keeps a direct duplicate eligible", async () => {
+    const directSource = await readFile(join(current.activePath, "SKILL.md"), "utf8");
+    const native = await installNativeCodexFixture(
+      current.home,
+      "review",
+      directSource
+    );
+    expect(await run(["scan", "--json"], current.context)).toBe(0);
+    const report = JSON.parse(current.stdout.splice(0).join(""));
+    const nativeSkill = report.skills.find(
+      ({ ownership }: { ownership: string }) => ownership === "native-plugin"
+    );
+    const directSkill = report.skills.find(
+      ({ path }: { path: string }) => path === current.activePath
+    );
+    expect(nativeSkill).toBeDefined();
+    expect(directSkill).toBeDefined();
+    expect(nativeSkill.fingerprint).toBe(directSkill.fingerprint);
+    const original = await readFile(join(native.skillPath, "SKILL.md"));
+    await unlink(join(current.stateDir, "latest-report.json"));
+    await writeReviewedPlan(current.stateDir, {
+      schemaVersion: 1,
+      id: "unrelated-expired",
+      kind: "governance",
+      createdAt: "2026-07-02T00:00:00.000Z",
+      expiresAt: "2026-07-02T00:01:00.000Z",
+      payload: { unrelated: true }
+    });
+
+    expect(await run([
+      "govern", "quarantine", "--skill", nativeSkill.id, "--json"
+    ], current.context)).toBe(1);
+
+    const refusal = current.stderr.splice(0).join("");
+    expect(refusal).toMatch(/NATIVE_PLUGIN_MANAGED.*Codex plugin manager/is);
+    expect(refusal).not.toContain(current.base);
+    expect(refusal).not.toContain("fixture-plugin@fixture-marketplace");
+    expect(refusal).not.toContain("1.0.0");
+    expect(await readFile(join(native.skillPath, "SKILL.md"))).toEqual(original);
+    await expect(access(join(current.stateDir, "latest-report.json")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(join(current.stateDir, "reviewed-plans")))
+      .toEqual(["unrelated-expired.json"]);
+    await expect(access(join(current.stateDir, "quarantine")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readEvidenceEvents(current.stateDir)).toEqual([]);
+
+    expect(await run([
+      "govern", "quarantine", "--skill", directSkill.id, "--json"
+    ], current.context), current.stderr.join("")).toBe(0);
+    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
+      skillId: directSkill.id,
+      activePath: current.activePath,
+      skillOwnership: { ownership: "direct" }
+    });
+  });
+
+  it("refuses a stale native plugin restore before reviewed-plan or event persistence", async () => {
+    const native = await installNativeCodexFixture(current.home);
+    expect(await run(["scan", "--json"], current.context)).toBe(0);
+    const report = JSON.parse(current.stdout.splice(0).join(""));
+    const nativeSkill = report.skills.find(
+      ({ ownership }: { ownership: string }) => ownership === "native-plugin"
+    );
+    expect(nativeSkill).toBeDefined();
+    const original = await readFile(join(native.skillPath, "SKILL.md"));
+    const transactionId = "stale-native-quarantine";
+    const vaultPath = join(
+      current.stateDir,
+      "quarantine",
+      transactionId,
+      "native-review"
+    );
+    await mkdir(vaultPath, { recursive: true });
+    await writeFile(join(vaultPath, "SKILL.md"), original);
+    const transaction = {
+      schemaVersion: 2,
+      id: transactionId,
+      action: "quarantine",
+      status: "quarantined",
+      skillId: nativeSkill.id,
+      skillName: nativeSkill.name,
+      originalPath: native.skillPath,
+      vaultPath,
+      fingerprint: nativeSkill.fingerprint,
+      visibleAliases: [],
+      skillOwnership: { ownership: "native-plugin", harness: "codex" },
+      createdAt: "2026-07-03T00:00:00.000Z"
+    };
+    const journalPath = join(current.stateDir, "governance.jsonl");
+    await writeFile(journalPath, `${JSON.stringify(transaction)}\n`);
+    const journalBefore = await readFile(journalPath);
+    await writeReviewedPlan(current.stateDir, {
+      schemaVersion: 1,
+      id: "unrelated-expired",
+      kind: "governance",
+      createdAt: "2026-07-02T00:00:00.000Z",
+      expiresAt: "2026-07-02T00:01:00.000Z",
+      payload: { unrelated: true }
+    });
+
+    expect(await run([
+      "govern", "restore", "--transaction", transactionId, "--json"
+    ], current.context)).toBe(1);
+
+    const refusal = current.stderr.splice(0).join("");
+    expect(refusal).toMatch(/NATIVE_PLUGIN_MANAGED.*Codex plugin manager/is);
+    expect(refusal).not.toContain(current.base);
+    expect(refusal).not.toContain("fixture-plugin@fixture-marketplace");
+    expect(refusal).not.toContain("1.0.0");
+    expect(await readdir(join(current.stateDir, "reviewed-plans")))
+      .toEqual(["unrelated-expired.json"]);
+    expect(await readFile(join(native.skillPath, "SKILL.md"))).toEqual(original);
+    expect(await readFile(join(vaultPath, "SKILL.md"))).toEqual(original);
+    expect(await readFile(journalPath)).toEqual(journalBefore);
+    expect(await readEvidenceEvents(current.stateDir)).toEqual([]);
+  });
+
+  it("rescans shared inventory for lookup while keeping plugin caches immutable", async () => {
+    await installNativeCodexFixture(current.home);
+    current.stdout.splice(0);
+    expect(await run(["scan", "--json"], current.context)).toBe(0);
+    const initial = JSON.parse(current.stdout.splice(0).join(""));
+    const direct = initial.skills.find(({ name }: { name: string }) => name === "review");
+    expect(direct).toBeDefined();
+    await unlink(join(current.stateDir, "latest-report.json"));
+
+    expect(await run([
+      "govern", "quarantine", "--skill", direct.id, "--json"
+    ], current.context), current.stderr.join("")).toBe(0);
+    const plan = JSON.parse(current.stdout.splice(0).join(""));
+    expect(plan.activePath).toBe(current.activePath);
+    expect(plan.activePath).not.toContain(".codex/plugins/cache");
+    expect(await readLatestReport(current.stateDir)).toMatchObject({
+      schemaVersion: 2,
+      skills: expect.arrayContaining([
+        expect.objectContaining({ name: "native-review", ownership: "native-plugin" })
+      ])
+    });
+  });
+
+  it.each([
+    ["native ownership", "NATIVE_PLUGIN_MANAGED"],
+    ["removed ownership proof", "PLAN_INVALID"],
+    ["schema downgrade", "PLAN_REVIEW_REQUIRED"]
+  ] as const)(
+    "restores a reviewed quarantine plan after rejecting %s",
+    async (variant, code) => {
+      expect(await run([
+        "govern", "quarantine", "--skill", current.parsed.id, "--json"
+      ], current.context)).toBe(0);
+      const preview = JSON.parse(current.stdout.splice(0).join(""));
+      const path = join(current.stateDir, "reviewed-plans", `${preview.planId}.json`);
+      const envelope = await storedPlan(current.stateDir, preview.planId);
+      const payload = envelope.payload as Record<string, unknown>;
+      if (variant === "native ownership") {
+        payload.schemaVersion = 2;
+        payload.skillOwnership = { ownership: "native-plugin", harness: "codex" };
+      } else if (variant === "removed ownership proof") {
+        payload.schemaVersion = 2;
+        delete payload.skillOwnership;
+      } else {
+        payload.schemaVersion = 1;
+        delete payload.skillOwnership;
+      }
+      await writeFile(path, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+      const reviewedBefore = await readFile(path);
+
+      expect(await run([
+        "govern", "quarantine", "--plan", preview.planId, "--confirm", "--json"
+      ], current.context)).toBe(1);
+
+      expect(current.stderr.splice(0).join("")).toContain(code);
+      expect(await readFile(path)).toEqual(reviewedBefore);
+      await expect(access(current.activePath)).resolves.toBeUndefined();
+      await expect(access(join(current.stateDir, "quarantine")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(join(current.stateDir, "governance.jsonl")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readEvidenceEvents(current.stateDir)).toEqual([]);
+    }
+  );
+
+  it("rebuilds mutable-root authority before claiming and applying a plan", async () => {
+    expect(await run([
+      "govern", "quarantine", "--skill", current.parsed.id, "--json"
+    ], current.context)).toBe(0);
+    const preview = JSON.parse(current.stdout.splice(0).join(""));
+    const planPath = join(
+      current.stateDir,
+      "reviewed-plans",
+      `${preview.planId}.json`
+    );
+    const originalHome = current.context.home;
+    current.context.home = join(current.base, "different-home");
+
+    expect(await run([
+      "govern", "quarantine", "--plan", preview.planId, "--confirm", "--json"
+    ], current.context)).toBe(1);
+
+    expect(current.stderr.splice(0).join(""))
+      .toContain("SOURCE_OUTSIDE_ACTIVE_ROOT");
+    await expect(access(planPath)).resolves.toBeUndefined();
+    await expect(access(current.activePath)).resolves.toBeUndefined();
+    await expect(access(join(current.stateDir, "governance.jsonl")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+
+    current.context.home = originalHome;
+    expect(await run([
+      "govern", "quarantine", "--plan", preview.planId, "--confirm", "--json"
+    ], current.context)).toBe(0);
+  });
+
   it("applies exact persisted quarantine and restore plans across separate runs", async () => {
     const quarantine = [
       "govern", "quarantine", "--skill", current.parsed.id, "--json"
@@ -169,14 +389,19 @@ describe("govern command", () => {
       "govern", "restore", "--plan", restorePlan.planId, "--confirm", "--json"
     ], current.context)).toBe(1);
     expect(current.stderr.splice(0).join(""))
-      .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
+      .toMatch(/REVIEWED_PLAN_INVALID/is);
+    await expect(access(join(
+      current.stateDir,
+      "reviewed-plans",
+      `${restorePlan.planId}.json`
+    ))).resolves.toBeUndefined();
     await expect(access(current.activePath)).rejects.toMatchObject({ code: "ENOENT" });
 
     expect(await run([
       "govern", "restore", "--plan", restorePlan.planId, "--confirm"
     ], current.context)).toBe(1);
     expect(current.stderr.splice(0).join(""))
-      .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+      .toMatch(/REVIEWED_PLAN_INVALID/is);
 
     expect(await run(restore, current.context)).toBe(0);
     const replacementRestorePlan = JSON.parse(current.stdout.splice(0).join(""));
@@ -260,13 +485,23 @@ describe("govern command", () => {
   it("escapes terminal control characters in reviewed governance output", async () => {
     const report = await readLatestReport(current.stateDir);
     if (!report) throw new Error("fixture report missing");
-    await writeLatestReport(current.stateDir, {
-      ...report,
-      skills: report.skills.map((skill) => ({
-        ...skill,
-        name: "trusted\u001b[2J\nspoof"
-      }))
-    });
+    if (isVisibilityReport(report)) {
+      await writeLatestReport(current.stateDir, {
+        ...report,
+        skills: report.skills.map((skill) => ({
+          ...skill,
+          name: "trusted\u001b[2J\nspoof"
+        }))
+      });
+    } else {
+      await writeLatestReport(current.stateDir, {
+        ...report,
+        skills: report.skills.map((skill) => ({
+          ...skill,
+          name: "trusted\u001b[2J\nspoof"
+        }))
+      });
+    }
 
     expect(await run([
       "govern", "quarantine", "--skill", current.parsed.id
@@ -331,14 +566,19 @@ describe("govern command", () => {
         "govern", "quarantine", "--plan", preview.planId, "--confirm"
       ], current.context)).toBe(1);
       expect(current.stderr.splice(0).join(""))
-        .toMatch(/REVIEWED_PLAN_INVALID.*consumed.*fresh reviewed plan/is);
+        .toMatch(/REVIEWED_PLAN_INVALID/is);
       await expect(access(current.activePath)).resolves.toBeUndefined();
+      await expect(access(join(
+        current.stateDir,
+        "reviewed-plans",
+        `${preview.planId}.json`
+      ))).resolves.toBeUndefined();
 
       expect(await run([
         "govern", "quarantine", "--plan", preview.planId, "--confirm"
       ], current.context)).toBe(1);
       expect(current.stderr.splice(0).join(""))
-        .toMatch(/REVIEWED_PLAN_NOT_FOUND.*fresh reviewed plan/is);
+        .toMatch(/REVIEWED_PLAN_INVALID/is);
     }
   });
 

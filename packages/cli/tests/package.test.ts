@@ -77,7 +77,7 @@ it("packages the built dashboard alongside the CLI binary", async () => {
 
 it("declares complete public package metadata", async () => {
   expect(await packageJson()).toMatchObject({
-    version: "0.5.0-alpha.3",
+    version: "0.5.0-alpha.4",
     description: "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
     repository: {
       type: "git",
@@ -125,6 +125,13 @@ it("builds package documentation, license, and deterministic notice coverage", a
   expect(identifiers).toEqual(
     [...identifiers].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
   );
+  expect(manifest.packages).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: "jsonc-parser", version: "3.3.1", license: "MIT" }),
+    expect.objectContaining({ name: "smol-toml", version: "1.7.0", license: "BSD-3-Clause" })
+  ]));
+  expect(manifest.packages).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: "marked" })
+  ]));
   const notices = await readFile(
     join(packageDirectory, "dist", "THIRD_PARTY_NOTICES.txt"),
     "utf8"

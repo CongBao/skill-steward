@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   access,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -16,14 +18,18 @@ import { readIntegrationRecords } from "@skill-steward/store";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  applyIntegrationPlan,
+  applyIntegrationPlan as applyIntegrationPlanPublic,
+  applyIntegrationPlanInternal,
   integrationPlanSchema,
   integrationStatus,
-  planIntegration,
+  planIntegration as planIntegrationDomain,
   removeIntegration,
   rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan
 } from "../src/config.js";
+import { companionSkillDirectory } from "../src/companion-skill.js";
+import { inspectCompanionTree } from "../src/companion-manifest.js";
+import type { CompanionSubplan } from "../src/companion-domain.js";
 
 const applyFixtureSource = fileURLToPath(
   new URL("./fixtures/integration-apply.mjs", import.meta.url)
@@ -31,8 +37,66 @@ const applyFixtureSource = fileURLToPath(
 const storeSource = fileURLToPath(
   new URL("../../store/src/index.ts", import.meta.url)
 );
+const jsoncParserEsm = createRequire(
+  new URL("../../engine/package.json", import.meta.url)
+).resolve("jsonc-parser/lib/esm/main.js");
 let fixtureDirectory = "";
 let applyFixture = "";
+const packagedCompanion = fileURLToPath(
+  new URL("../assets/skill-steward-preflight", import.meta.url)
+);
+const applyIntegrationPlan = applyIntegrationPlanInternal;
+
+function exactCompanionEvidence(companion: CompanionSubplan) {
+  if (!("fingerprint" in companion.after) || !("fingerprint" in companion.source)) {
+    throw new Error("Expected exact companion evidence");
+  }
+  return { after: companion.after, source: companion.source };
+}
+
+async function installCurrentCompanion(home: string, source = packagedCompanion): Promise<void> {
+  const destination = companionSkillDirectory(home);
+  try {
+    await access(destination);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(source, destination, { recursive: true });
+  }
+}
+
+async function planIntegration(
+  ...args: Parameters<typeof planIntegrationDomain>
+): ReturnType<typeof planIntegrationDomain> {
+  const [, options] = args;
+  const source = options.companionSourceDirectory ?? packagedCompanion;
+  await installCurrentCompanion(options.home, source);
+  const plan = await planIntegrationDomain(...args);
+  const evidence = exactCompanionEvidence(plan.companion);
+  if (
+    plan.companion.action === "conflict"
+    && plan.companion.expectedBefore.state === "exact"
+    && plan.companion.expectedBefore.fingerprint === evidence.after.fingerprint
+  ) {
+    return integrationPlanSchema.parse({
+      ...plan,
+      companion: {
+        ...plan.companion,
+        action: "none",
+        expectedBefore: {
+          state: "exact",
+          fingerprint: evidence.after.fingerprint
+        },
+        proof: {
+          kind: "recorded",
+          recordId: "fixture-current-companion",
+          installedFingerprint: evidence.after.fingerprint
+        }
+      }
+    });
+  }
+  return plan;
+}
 
 beforeAll(async () => {
   fixtureDirectory = await mkdtemp(join(tmpdir(), "steward-integration-fixtures-"));
@@ -48,7 +112,10 @@ beforeAll(async () => {
     banner: {
       js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
     },
-    alias: { "@skill-steward/store": storeSource }
+    alias: {
+      "jsonc-parser": jsoncParserEsm,
+      "@skill-steward/store": storeSource
+    }
   });
 });
 
@@ -113,6 +180,201 @@ function replaceFirstBytes(
     source.subarray(index + needle.length)
   ]);
 }
+
+describe("companion reviewed subplan", () => {
+  it("plans absent as create with all required bound fields", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-create-"));
+    const plan = await planIntegrationDomain("codex", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    });
+
+    expect(plan.companion).toMatchObject({
+      action: "create",
+      path: companionSkillDirectory(home),
+      expectedBefore: { state: "absent" },
+      source: { path: packagedCompanion },
+      proof: { kind: "new" }
+    });
+    const evidence = exactCompanionEvidence(plan.companion);
+    expect(evidence.after.fingerprint).toBe(evidence.source.fingerprint);
+  });
+
+  it("does not plan none from exact package equality without ownership proof", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-none-"));
+    const destination = companionSkillDirectory(home);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(packagedCompanion, destination, { recursive: true });
+
+    const plan = await planIntegrationDomain("claude-code", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    });
+    expect(plan.companion).toMatchObject({
+      action: "conflict",
+      expectedBefore: { state: "exact" },
+      proof: { kind: "conflict", reason: "COMPANION_UNMANAGED_TREE" }
+    });
+  });
+
+  it("accepts none only in an explicit matching recorded-proof fixture", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-recorded-none-"));
+    const destination = companionSkillDirectory(home);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(packagedCompanion, destination, { recursive: true });
+    const unowned = await planIntegrationDomain("codex", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    });
+    const fingerprint = exactCompanionEvidence(unowned.companion).after.fingerprint;
+    const plan = integrationPlanSchema.parse({
+      ...unowned,
+      companion: {
+        ...unowned.companion,
+        action: "none",
+        expectedBefore: { state: "exact", fingerprint },
+        proof: {
+          kind: "recorded",
+          recordId: "record-current",
+          installedFingerprint: fingerprint
+        }
+      }
+    });
+    expect(plan.companion).toMatchObject({
+      action: "none",
+      expectedBefore: { state: "exact", fingerprint },
+      proof: { kind: "recorded", recordId: "record-current" }
+    });
+  });
+
+  it("plans a readable differing destination as conflict, never upgrade", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-conflict-"));
+    const destination = companionSkillDirectory(home);
+    await mkdir(destination, { recursive: true });
+    await writeFile(join(destination, "SKILL.md"), "user modified\n", "utf8");
+
+    const plan = await planIntegrationDomain("github-copilot", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    });
+    expect(plan.companion).toMatchObject({
+      action: "conflict",
+      expectedBefore: { state: "exact" },
+      proof: { kind: "conflict", reason: "COMPANION_UNMANAGED_TREE" }
+    });
+  });
+
+  it.each(["path", "expectedBefore", "after", "source", "proof"] as const)(
+    "strictly rejects a plan missing companion %s",
+    async (field) => {
+      const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-strict-"));
+      const plan = await planIntegrationDomain("codex", {
+        home,
+        stateDirectory: join(home, "state"),
+        companionSourceDirectory: packagedCompanion
+      });
+      const companion = { ...plan.companion } as Record<string, unknown>;
+      delete companion[field];
+      expect(integrationPlanSchema.safeParse({ ...plan, companion }).success).toBe(false);
+    }
+  );
+
+  it("refuses create without mutating companion or Harness configuration", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-readonly-"));
+    const options = {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const plan = await planIntegrationDomain("codex", options);
+    await expect(applyIntegrationPlanPublic(plan, options)).rejects.toMatchObject({
+      code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+    });
+    await expect(access(companionSkillDirectory(home))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses upgrade and conflict subplans before writing", async () => {
+    const upgradeHome = await mkdtemp(join(tmpdir(), "steward-companion-apply-upgrade-"));
+    const upgradeOptions = {
+      home: upgradeHome,
+      stateDirectory: join(upgradeHome, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const createPlan = await planIntegrationDomain("codex", upgradeOptions);
+    const installedFingerprint = `sha256:${"b".repeat(64)}`;
+    const upgradePlan = integrationPlanSchema.parse({
+      ...createPlan,
+      companion: {
+        ...createPlan.companion,
+        action: "upgrade",
+        expectedBefore: { state: "exact", fingerprint: installedFingerprint },
+        proof: {
+          kind: "recorded",
+          recordId: "recorded-old-companion",
+          installedFingerprint
+        }
+      }
+    });
+
+    const conflictHome = await mkdtemp(join(tmpdir(), "steward-companion-apply-conflict-"));
+    const conflictDestination = companionSkillDirectory(conflictHome);
+    await mkdir(conflictDestination, { recursive: true });
+    await writeFile(join(conflictDestination, "SKILL.md"), "modified\n", "utf8");
+    const conflictOptions = {
+      home: conflictHome,
+      stateDirectory: join(conflictHome, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const conflictPlan = await planIntegrationDomain("codex", conflictOptions);
+
+    for (const [plan, options] of [
+      [upgradePlan, upgradeOptions],
+      [conflictPlan, conflictOptions]
+    ] as const) {
+      await expect(applyIntegrationPlanPublic(plan, options)).rejects.toMatchObject({
+        code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+      });
+      await expect(access(target(options.home, "codex")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("rejects a stored forged none plan and leaves the Harness Hook unwritten", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-forged-none-"));
+    const options = {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const createPlan = await planIntegrationDomain("codex", options);
+    await mkdir(dirname(companionSkillDirectory(home)), { recursive: true });
+    await cp(packagedCompanion, companionSkillDirectory(home), { recursive: true });
+    const fingerprint = exactCompanionEvidence(createPlan.companion).after.fingerprint;
+    const storedPlan = JSON.parse(JSON.stringify(integrationPlanSchema.parse({
+      ...createPlan,
+      companion: {
+        ...createPlan.companion,
+        action: "none",
+        expectedBefore: { state: "exact", fingerprint },
+        proof: {
+          kind: "recorded",
+          recordId: "forged-plan-record",
+          installedFingerprint: fingerprint
+        }
+      }
+    })));
+
+    await expect(applyIntegrationPlanPublic(storedPlan, options)).rejects.toMatchObject({
+      code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+    });
+    await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
 
 describe.each(["codex", "claude-code"] as const)("%s integration config", (harness) => {
   it("plans, backs up, applies, reports status, and removes without replacing unrelated settings", async () => {
@@ -767,12 +1029,25 @@ it("keeps concurrent cross-Harness apply journals removable", async () => {
   const readyCodex = join(home, "ready-codex");
   const readyClaude = join(home, "ready-claude");
   const count = 10;
+  await installCurrentCompanion(home);
   const workers = [
     integrationWorker([
-      home, stateDirectory, "codex", readyCodex, barrier, String(count)
+      home,
+      stateDirectory,
+      "codex",
+      readyCodex,
+      barrier,
+      String(count),
+      packagedCompanion
     ]),
     integrationWorker([
-      home, stateDirectory, "claude-code", readyClaude, barrier, String(count)
+      home,
+      stateDirectory,
+      "claude-code",
+      readyClaude,
+      barrier,
+      String(count),
+      packagedCompanion
     ])
   ];
   await Promise.all([waitForFile(readyCodex), waitForFile(readyClaude)]);

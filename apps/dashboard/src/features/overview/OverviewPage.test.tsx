@@ -18,6 +18,7 @@ const snapshot = {
     { id: "installed-skills", value: 4, status: "neutral" },
     { id: "estimated-context", value: 1500, status: "neutral" },
     { id: "harness-coverage", value: 3, status: "neutral" },
+    { id: "inventory-coverage", value: { verified: 2, total: 3 }, status: "attention" },
     { id: "bundle-size", value: 3800, status: "neutral" }
   ],
   skills: [
@@ -66,14 +67,15 @@ beforeEach(() => {
   })));
 });
 
-it("renders the five recommended KPIs and priority findings", async () => {
+it("renders the six recommended KPIs and priority findings", async () => {
   render(<OverviewPage />, { wrapper: wrapper() });
 
   expect(await screen.findByRole("article", { name: /Health score: 83/ })).toBeVisible();
   expect(screen.getByRole("article", { name: /Open findings: 2/ })).toBeVisible();
   expect(screen.getByRole("article", { name: /Installed Skills: 4/ })).toBeVisible();
   expect(screen.getByRole("article", { name: /Estimated context: 1.5K/ })).toBeVisible();
-  expect(screen.getByRole("article", { name: /Active Harnesses: 3/ })).toBeVisible();
+  expect(screen.getByRole("article", { name: /Harnesses with active Skills: 3/ })).toBeVisible();
+  expect(screen.getByRole("article", { name: /Verified inventory coverage: 2\/3/ })).toBeVisible();
   expect(screen.queryByRole("article", { name: /Bundle size/ })).not.toBeInTheDocument();
   expect(screen.getByText("Broken relative reference")).toBeVisible();
   expect(screen.getByText("Release steward")).toBeVisible();

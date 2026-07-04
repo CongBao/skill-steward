@@ -30,7 +30,11 @@ function sendError(reply: FastifyReply, error: unknown) {
       || error.code === "GOVERNANCE_TRANSACTION_NOT_FOUND"
       ? 404
       : 409;
-    return reply.code(status).send(apiFailure(error.code, error.message));
+    return reply.code(status).send(apiFailure(
+      error.code,
+      error.message,
+      error instanceof GovernanceError ? error.data : undefined
+    ));
   }
   throw error;
 }

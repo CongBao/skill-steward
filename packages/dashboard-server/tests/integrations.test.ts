@@ -1,21 +1,43 @@
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { scanPortfolio, standardRoots } from "@skill-steward/engine";
 import {
-  applyIntegrationPlan,
+  integrationPlanSchema,
   IntegrationError,
+  planIntegration,
   removeIntegration,
-  removeManagedCompanionSkill,
-  rollbackIntegrationPlan
+  rollbackIntegrationPlan,
+  type IntegrationConfigOptions
 } from "@skill-steward/integrations";
-import { readLatestReport, writeLatestReport } from "@skill-steward/store";
+import {
+  readLatestReport,
+  writeLatestReport,
+  type IntegrationRecord
+} from "@skill-steward/store";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDashboardApp } from "../src/app.js";
 import { createIntegrationServices } from "../src/integration-services.js";
+import { createDashboardServices } from "../src/services.js";
+import { installNativeCodexFixture } from "./native-inventory-fixture.js";
 
 const apps: Array<ReturnType<typeof createDashboardApp>["app"]> = [];
+
+async function applyIntegrationPlanInternal(
+  plan: unknown,
+  options: IntegrationConfigOptions,
+  dependencyOverrides?: unknown
+): Promise<IntegrationRecord> {
+  const modulePath = ["../../integrations/src", "config.js"].join("/");
+  const internal = await import(modulePath) as {
+    applyIntegrationPlanInternal(
+      input: unknown,
+      config: IntegrationConfigOptions,
+      dependencies?: unknown
+    ): Promise<IntegrationRecord>;
+  };
+  return internal.applyIntegrationPlanInternal(plan, options, dependencyOverrides);
+}
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
@@ -44,13 +66,15 @@ async function fixture(ids: string[] = ["integration-record"]) {
   await mkdir(companionSkillDirectory, { recursive: true });
   await writeFile(join(home, ".codex", "hooks.json"), '{"unrelated":true}\n');
   await writeFile(join(companionSkillDirectory, "SKILL.md"), "---\nname: skill-steward-preflight\ndescription: Preflight tasks\n---\nRun preflight.\n");
+  const installedCompanion = join(home, ".agents", "skills", "skill-steward-preflight");
+  await mkdir(join(home, ".agents", "skills"), { recursive: true });
+  await cp(companionSkillDirectory, installedCompanion, { recursive: true });
   let readinessFailure: (() => Promise<void>) | undefined;
   let readinessSequence: Array<(() => Promise<void>) | undefined> = [];
   let domainFailureAfterCommit: Error | undefined;
   let uncertainJournalCommit = false;
   let rollbackJournalFailure = false;
   let removalJournalDrift = false;
-  let companionCleanupFailure = false;
   let readinessCalls = 0;
   let idIndex = 0;
   let currentTime = new Date("2026-07-03T00:00:00.000Z");
@@ -64,15 +88,42 @@ async function fixture(ids: string[] = ["integration-record"]) {
       const sequenced = readinessSequence.shift();
       if (sequenced) await sequenced();
       else if (readinessSequence.length === 0 && readinessFailure) await readinessFailure();
-      const report = await scanPortfolio(standardRoots({ home, cwd: home }));
-      await writeLatestReport(stateDirectory, report);
+      await createDashboardServices({
+        stateDirectory,
+        home,
+        cwd: home,
+        now: () => currentTime
+      }).scan([]);
     },
     now: () => currentTime,
     id: () => ids[idIndex++] ?? `integration-record-${idIndex}`
   }, {
+    plan: async (harness, options) => {
+      const unowned = await planIntegration(harness, options);
+      if (
+        !("fingerprint" in unowned.companion.after)
+        || !("fingerprint" in unowned.companion.source)
+        || unowned.companion.expectedBefore.state !== "exact"
+        || unowned.companion.expectedBefore.fingerprint !== unowned.companion.after.fingerprint
+      ) return unowned;
+      const fingerprint = unowned.companion.after.fingerprint;
+      return integrationPlanSchema.parse({
+        ...unowned,
+        companion: {
+          ...unowned.companion,
+          action: "none",
+          expectedBefore: { state: "exact", fingerprint },
+          proof: {
+            kind: "recorded",
+            recordId: "fixture-current-companion",
+            installedFingerprint: fingerprint
+          }
+        }
+      });
+    },
     applyPlan: async (plan, options) => {
       appliedPlanIds.push((plan as { id: string }).id);
-      const record = await applyIntegrationPlan(plan, options, uncertainJournalCommit
+      const record = await applyIntegrationPlanInternal(plan, options, uncertainJournalCommit
         ? {
             appendRecord: async () => {
               throw Object.assign(new Error("journal commit cannot be proven"), {
@@ -113,10 +164,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
             }
           }
         : {}
-    ),
-    removeCompanion: async (options) => companionCleanupFailure
-      ? false
-      : removeManagedCompanionSkill(options)
+    )
   });
   const created = createDashboardApp({ mutationToken: "token", integrationServices });
   apps.push(created.app);
@@ -150,9 +198,6 @@ async function fixture(ids: string[] = ["integration-record"]) {
     driftRemovalJournal() {
       removalJournalDrift = true;
     },
-    failCompanionCleanup() {
-      companionCleanupFailure = true;
-    },
     readinessCalls: () => readinessCalls,
     setNow(value: string) {
       currentTime = new Date(value);
@@ -161,6 +206,53 @@ async function fixture(ids: string[] = ["integration-record"]) {
 }
 
 describe("Harness integration routes", () => {
+  it("keeps Phase 1 services free of legacy companion mutators", async () => {
+    const source = await readFile(
+      new URL("../src/integration-services.ts", import.meta.url),
+      "utf8"
+    );
+    expect(source).not.toContain("installCompanionSkill");
+    expect(source).not.toContain("removeManagedCompanionSkill");
+  });
+
+  it("fails closed without installing a missing companion", async () => {
+    const instance = await fixture(["missing-companion"]);
+    const companion = join(
+      instance.home,
+      ".agents",
+      "skills",
+      "skill-steward-preflight"
+    );
+    const config = join(instance.home, ".codex", "hooks.json");
+    const before = await readFile(config, "utf8");
+    await rm(companion, { recursive: true, force: true });
+    const plan = await instance.integrationServices.plan("codex");
+
+    await expect(instance.integrationServices.apply("codex", plan.id)).rejects.toMatchObject({
+      code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+    });
+    await expect(access(companion)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(config, "utf8")).toBe(before);
+  });
+
+  it("runs readiness through the same native dashboard inventory", async () => {
+    const instance = await fixture(["native-ready"]);
+    await installNativeCodexFixture(instance.home);
+    const plan = await instance.integrationServices.plan("codex");
+
+    await expect(instance.integrationServices.apply("codex", plan.id)).resolves.toBeDefined();
+    expect(await readLatestReport(instance.stateDirectory)).toMatchObject({
+      schemaVersion: 2,
+      skills: expect.arrayContaining([
+        expect.objectContaining({ name: "native-review", ownership: "native-plugin" })
+      ]),
+      inventory: {
+        harnesses: expect.arrayContaining([
+          expect.objectContaining({ harness: "codex", status: "verified" })
+        ])
+      }
+    });
+  });
   it("requires a strict planId apply body", async () => {
     const headers = { "x-skill-steward-token": "token" };
     for (const body of [undefined, {}, { planId: "plan-a", extra: true }]) {
@@ -372,9 +464,14 @@ describe("Harness integration routes", () => {
       headers
     });
     expect(removed.statusCode).toBe(200);
-    expect(removed.json().data).toMatchObject({ harness: "codex", status: "not-installed" });
+    expect(removed.json().data).toMatchObject({
+      harness: "codex",
+      status: "not-installed",
+      message: "Shared companion retained pending reviewed consumer-aware removal"
+    });
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
-    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight"))).rejects.toThrow();
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .resolves.toBeUndefined();
   });
 
   it("reports failed readiness and rolls back only this apply", async () => {
@@ -397,7 +494,7 @@ describe("Harness integration routes", () => {
     expect(await readFile(configPath, "utf8")).toBe(before);
     await expect(access(backupPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
-      .rejects.toMatchObject({ code: "ENOENT" });
+      .resolves.toBeUndefined();
   });
 
   it("preserves readiness and rollback causes for service callers", async () => {
@@ -510,7 +607,7 @@ describe("Harness integration routes", () => {
       .resolves.toBeUndefined();
   });
 
-  it("removes a new companion when the domain restores a failed journal commit", async () => {
+  it("retains the companion when the domain restores a failed journal commit", async () => {
     const { app, home, stateDirectory } = await fixture();
     const headers = { "x-skill-steward-token": "token" };
     const configPath = join(home, ".codex", "hooks.json");
@@ -527,10 +624,10 @@ describe("Harness integration routes", () => {
     expect(failed.statusCode).toBe(500);
     expect(await readFile(configPath, "utf8")).toBe(before);
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
-      .rejects.toMatchObject({ code: "ENOENT" });
+      .resolves.toBeUndefined();
   });
 
-  it("rolls back config and companion when the legacy journal is malformed", async () => {
+  it("rolls back config and retains companion when the legacy journal is malformed", async () => {
     const { app, home, stateDirectory } = await fixture();
     const headers = { "x-skill-steward-token": "token" };
     const configPath = join(home, ".codex", "hooks.json");
@@ -547,7 +644,7 @@ describe("Harness integration routes", () => {
     expect(failed.statusCode).toBe(500);
     expect(await readFile(configPath, "utf8")).toBe(before);
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
-      .rejects.toMatchObject({ code: "ENOENT" });
+      .resolves.toBeUndefined();
   });
 
   it("preserves a new companion when domain rollback is incomplete", async () => {
@@ -640,22 +737,39 @@ describe("Harness integration routes", () => {
       .resolves.toBeUndefined();
   });
 
-  it("reports typed rollback failure when post-domain companion cleanup fails", async () => {
-    const { app, home, stateDirectory, failCompanionCleanup } = await fixture();
-    const headers = { "x-skill-steward-token": "token" };
-    expect((await app.inject({
-      method: "POST",
-      url: "/api/v1/integrations/codex/plan",
-      headers
-    })).statusCode).toBe(200);
-    await mkdir(stateDirectory, { recursive: true });
-    await writeFile(join(stateDirectory, "integration-records"), "blocked", "utf8");
-    failCompanionCleanup();
-
-    const failed = await applyRequest(app, "codex", "integration-record", headers);
-    expect(failed.statusCode).toBe(409);
-    expect(failed.json().error).toMatchObject({ code: "INTEGRATION_ROLLBACK_FAILED" });
-    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
-      .resolves.toBeUndefined();
+  it("retains modified and unreadable companions during Hook removal", async () => {
+    for (const mode of ["modified", "unreadable"] as const) {
+      const { app, home } = await fixture([`retained-${mode}`]);
+      const headers = { "x-skill-steward-token": "token" };
+      const companion = join(home, ".agents", "skills", "skill-steward-preflight");
+      const skill = join(companion, "SKILL.md");
+      const planned = await app.inject({
+        method: "POST",
+        url: "/api/v1/integrations/codex/plan",
+        headers
+      });
+      expect((await applyRequest(
+        app,
+        "codex",
+        planned.json().data.id,
+        headers
+      )).statusCode).toBe(200);
+      if (mode === "modified") await writeFile(skill, "user modified\n", "utf8");
+      else await chmod(companion, 0o000);
+      try {
+        const removed = await app.inject({
+          method: "DELETE",
+          url: "/api/v1/integrations/codex",
+          headers
+        });
+        expect(removed.statusCode).toBe(200);
+        expect(removed.json().data.message)
+          .toBe("Shared companion retained pending reviewed consumer-aware removal");
+        await expect(access(companion)).resolves.toBeUndefined();
+      } finally {
+        if (mode === "unreadable") await chmod(companion, 0o700);
+      }
+      if (mode === "modified") expect(await readFile(skill, "utf8")).toBe("user modified\n");
+    }
   });
 });

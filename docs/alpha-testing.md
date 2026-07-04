@@ -2,15 +2,18 @@
 
 Use anonymous or synthetic Skills unless the participant has reviewed what will be visible. Do not upload reports, prompts, or state files.
 
-Target build: `0.5.0-alpha.3`. This is still an Alpha protocol for a local Harness companion, not a Harness or a claim of complete native plugin coverage.
+Target build: `0.5.0-alpha.4`. This is still an Alpha protocol for a local Harness companion, not a Harness. Native semantics are tested only on the documented core adapter surfaces below.
 
-## Alpha.3 test matrix
+## Alpha.4 test matrix
 
 Run each row from a clean checkout. Manual mutation journeys must use a disposable `HOME`, workspace, and `SKILL_STEWARD_HOME`.
 
 | Area | Executable check | Expected result |
 |---|---|---|
-| Public contract and CLI version | `CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts` | Both READMEs use `--plan <id> --confirm`, help exposes the same syntax, and the binary reports `0.5.0-alpha.3`. |
+| Public contract and CLI version | `CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts` | Both READMEs state the bounded native/compact contracts, help exposes reviewed-plan syntax, and the binary reports `0.5.0-alpha.4`. |
+| Native adapter coverage and current-workspace snapshot limitation | `CI=true pnpm --filter @skill-steward/engine exec vitest run tests/codex-inventory.test.ts tests/claude-inventory.test.ts tests/copilot-inventory.test.ts tests/inventory-workspace.test.ts tests/visibility-resolution.test.ts` | Documented local sources reach exact terminal statuses; Harness coverage and Skill exposure resolve separately; scans cover the chosen workspace ancestors and user scopes without crawling unrelated workspaces. |
+| Compact handoff output and bilingual concept matching | `CI=true pnpm --filter @skill-steward/preflight exec vitest run tests/analyze.test.ts tests/tokenize.test.ts tests/compact.test.ts` | Algorithm v7/schema v4 preserves visibility and recommendation decisions, canonicalizes positive gap-only evidence before bounding it, leaves low-confidence two-character fragments empty, and emits deterministic compact output within 4,096 UTF-8 bytes. |
+| Native governance refusal | `CI=true pnpm --filter skill-steward exec vitest run tests/govern.test.ts tests/preflight.test.ts` | Native plugin-managed Skills remain visible but cannot enter quarantine/restore plans; direct Skills remain eligible; compact CLI output stays bounded. |
 | Exact reviewed plans | `CI=true pnpm --filter skill-steward exec vitest run tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts` | Plans survive a new process, apply the inspected payload once, stop on drift, and require a fresh preview after claim. |
 | Integration readiness and serialization | `CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts` | Apply writes an initial cached portfolio; a failed readiness scan rolls back safe new artifacts; a busy caller does not consume its plan. |
 | Package trust | `CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs` | Package `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and the locked `runtime-audit.json` agree; real npm and pnpm tarballs pass exact-tree verification. |
@@ -18,9 +21,29 @@ Run each row from a clean checkout. Manual mutation journeys must use a disposab
 
 ## Build and first run
 
-Before judging repository behavior through a global install, compare `skill-steward --version` with `packages/cli/package.json`; both must report `0.5.0-alpha.3`. Repack and reinstall if they differ. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
+Before judging repository behavior through a global install, compare `skill-steward --version` with `packages/cli/package.json`; both must report `0.5.0-alpha.4`. Repack and reinstall if they differ. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
 
 Scan an empty set of Skill roots. The result must be unscored and actionable: it must not report health 100. KPI settings must use the current dashboard snapshot and must not present example values as current measurements.
+
+## Native inventory boundaries
+
+- **Source statuses:** `scanned`, `missing`, `unreadable`, `invalid`, `disabled`, `stale`, `ambiguous`, `truncated`
+- **Harness coverage:** `verified`, `partial`, `unavailable`, `convention-only`
+- **Skill exposure:** `effective`, `shadowed`, `inactive`, `ambiguous`
+
+Run the native adapter coverage and current-workspace snapshot limitation check from the matrix. For Codex, Claude Code, and GitHub Copilot CLI, inspect the report or Dashboard and confirm each value belongs to the correct taxonomy. Directory count alone is not activation evidence.
+
+Start the scan inside a nested disposable workspace. Confirm the adapter includes that workspace's documented ancestors and user scopes, but not a sibling project that was never selected. For Copilot, remove local runtime or MDM proof and confirm Copilot Harness coverage becomes `partial`. Remove local precedence or activation proof and confirm the affected source or Skill exposure becomes `ambiguous` instead of being guessed active.
+
+Across the total 30 Harnesses, confirm coverage outside the three core adapters is `convention-only` directory inventory/install coverage rather than verified native semantics.
+
+Create one direct Skill and one plugin-managed duplicate. Confirm the plugin instance is read-only: the native governance refusal check must reject quarantine and restore before a plan or event is written, while the direct instance remains eligible. Manage plugin instances through their owning Harness.
+
+## Compact and bilingual Preflight
+
+Run the compact handoff output and bilingual concept matching check from the matrix. Use equivalent Simplified- and Traditional-Chinese tasks about a long session, evolving requirements, context compaction, and preserving intent. Algorithm v7/schema v4 must select the same relevant concept, keep gap-only aliases out of ranking, and avoid claiming general cross-language semantic understanding. Confirm low-confidence two-character fragments produce an empty route, no name match, and no standalone gap. Confirm negative usage clauses neither corroborate nor cover a gap, while positive candidate aliases and inflections share the task's canonical gap concept. Generic exact names must produce an empty gap list unless they also meet the specific multi-concept evidence gate; specialized single-token and multiword exact names remain valid controls.
+
+Pipe one synthetic task through `skill-steward preflight --stdin --compact-json`. Confirm stdout contains exactly one JSON line, is no more than 4,096 UTF-8 bytes, and carries selected use/install recommendations but no raw task. Repeat with `--json`: it must return the complete `PreflightResult`, including candidate reasons and inventory warnings and catalog `source` metadata for available catalog candidates, but not native inventory ownership, plugin, source, or exposure records. Confirm reports and the dashboard preserve those native records, while Preflight expresses resolved visibility through reason codes and inventory warnings. Companion Hook output remains limited to 2,048 bytes.
 
 ## Portfolio audit
 
@@ -35,9 +58,9 @@ Scan an empty set of Skill roots. The result must be unscored and actionable: it
 1. Keep all catalog sources disabled and run an installed-only baseline.
 2. Let the participant choose a public source, then enable and refresh it explicitly.
 3. Run the same task with available candidates enabled.
-4. Ask whether **Use now**, **Consider installing**, and **Capability gaps** changed the next action they would take.
+4. Ask whether **Use now**, **Consider installing**, and **Capability gaps** changed the next action they would take. Confirm every gap is a plausible Skill search hint, repeated inflections or translations appear once, and low-confidence context produces an empty list without changing the recommendation.
 5. For one available candidate, open the installation inspection but do not confirm it. Record whether source, revision, scripts, findings, destination, and exact changes are sufficient for a decision.
-6. Run a PDF task against PDF and docx candidates, including a docx description that explicitly excludes PDF work. Algorithm v4 must not recommend docx for that task.
+6. Run a PDF task against PDF and docx candidates, including a docx description that explicitly excludes PDF work. Algorithm v7 must not recommend docx for that task.
 7. Run a generic one-term match against a project-scoped Skill. It must remain excluded unless stronger task evidence or a name match exists.
 8. Inspect normal CLI output for a run ID, readable reasons, a bounded excluded section, and a direct feedback command. Keep complete reason codes in `--json` output.
 
@@ -145,7 +168,7 @@ node packages/cli/tests/verify-packed-artifact.mjs artifacts/npm/skill-steward-*
 node packages/cli/tests/verify-packed-artifact.mjs artifacts/pnpm/skill-steward-*.tgz
 ```
 
-Inspect the file list for package `README.md`, `LICENSE`, `dist/THIRD_PARTY_NOTICES.txt`, and `dist/third-party-manifest.json`. Confirm every bundled package in the source-controlled `packages/cli/runtime-audit.json` has matching notice coverage and that neither notices nor manifests contain local paths or credentials. Do not update the audit during a normal build.
+Inspect the file list for package `README.md`, `LICENSE`, `dist/THIRD_PARTY_NOTICES.txt`, and `dist/third-party-manifest.json`. Confirm every bundled package in the source-controlled `packages/cli/runtime-audit.json` has matching notice coverage and that neither notices nor manifests contain local paths or credentials. The runtime audit must include `jsonc-parser@3.3.1` as MIT and `smol-toml@1.7.0` as BSD-3-Clause; report-only development dependency `marked` must remain absent. Do not update the audit during a normal build.
 
 ## Risk boundary
 
@@ -153,7 +176,8 @@ Inspect the file list for package `README.md`, `LICENSE`, `dist/THIRD_PARTY_NOTI
 - A plan is intentionally single-use after claim. A crash or validation failure can require a fresh preview even when no domain mutation committed.
 - A rollback-incomplete error means Skill Steward retained state because it could not prove that removing or overwriting it was safe. Inspect the named files before retrying.
 - Catalog metadata and known publisher labels are not endorsements. Installation still reinspects the recorded revision.
-- Inventory support for 30 root conventions does not imply complete native plugin inventory or prompt-Hook support. The capability matrix remains the integration boundary.
+- Native semantics are verified only for documented local Codex, Claude Code, and GitHub Copilot CLI surfaces. Copilot Harness coverage may remain `partial` when runtime or MDM proof is unavailable. An affected source or Skill exposure may remain `ambiguous` when activation or precedence is unproven. A scan is a current-workspace snapshot plus user scopes.
+- Across the total 30 Harnesses, inventory/install coverage outside the three core adapters is `convention-only`; it does not imply native plugin or prompt-Hook semantics. The capability matrix remains the integration boundary.
 
 ## Advancement criteria
 

@@ -12,7 +12,8 @@ const dashboard = {
     { id: "health-score", value: 81, status: "attention" },
     { id: "installed-skills", value: 4, status: "neutral" },
     { id: "estimated-context", value: 1_500, status: "neutral" },
-    { id: "harness-coverage", value: 2, status: "positive" }
+    { id: "harness-coverage", value: 2, status: "positive" },
+    { id: "inventory-coverage", value: { verified: 2, total: 3 }, status: "attention" }
   ],
   skills: [],
   priorityFindings: [],
@@ -47,7 +48,8 @@ it("previews live dashboard KPI values with the Overview formatting", async () =
   expect(await screen.findByRole("article", { name: "Health score: 81" })).toBeVisible();
   expect(screen.getByRole("article", { name: "Open findings: —" })).toBeVisible();
   expect(screen.getByRole("article", { name: "Estimated context: 1.5K" })).toBeVisible();
-  expect(screen.getByRole("article", { name: "Active Harnesses: 2" })).toBeVisible();
+  expect(screen.getByRole("article", { name: "Harnesses with active Skills: 2" })).toBeVisible();
+  expect(screen.getByRole("article", { name: "Verified inventory coverage: 2/3" })).toBeVisible();
 });
 
 it("treats health as unscored when the latest scan found no Skills", async () => {
@@ -116,7 +118,7 @@ it("configures KPI count and catalog, then restores recommendations", async () =
     </QueryClientProvider>
   );
 
-  expect(screen.getByRole("spinbutton", { name: "Visible KPI count" })).toHaveValue(5);
+  expect(screen.getByRole("spinbutton", { name: "Visible KPI count" })).toHaveValue(6);
   expect(screen.getByRole("checkbox", { name: "Bundle size" })).not.toBeChecked();
   await user.click(screen.getByRole("checkbox", { name: "Bundle size" }));
   await user.clear(screen.getByRole("spinbutton", { name: "Visible KPI count" }));
@@ -124,6 +126,6 @@ it("configures KPI count and catalog, then restores recommendations", async () =
   expect(screen.getByRole("checkbox", { name: "Bundle size" })).toBeChecked();
 
   await user.click(screen.getByRole("button", { name: "Restore recommended" }));
-  expect(screen.getByRole("spinbutton", { name: "Visible KPI count" })).toHaveValue(5);
+  expect(screen.getByRole("spinbutton", { name: "Visible KPI count" })).toHaveValue(6);
   expect(screen.getByRole("checkbox", { name: "Bundle size" })).not.toBeChecked();
 });

@@ -1,18 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import { scanInventory } from "@skill-steward/engine";
 import {
   applyIntegrationPlan,
   CompanionSkillError,
   companionSkillDirectory,
-  installCompanionSkill,
   integrationHarnessSchema,
   integrationPlanSchema,
   integrationStatus,
   planIntegration,
-  removeManagedCompanionSkill,
   removeIntegration,
-  rethrowAfterIntegrationApplyFailure,
   rollbackIntegrationPlan,
   type IntegrationConfigOptions,
   type IntegrationHarness,
@@ -46,14 +43,12 @@ export interface IntegrateApplyOptions {
 export interface IntegrateApplyDependencies {
   applyPlan: typeof applyIntegrationPlan;
   rollbackPlan: typeof rollbackIntegrationPlan;
-  removeCompanion: typeof removeManagedCompanionSkill;
   withLease: typeof withIntegrationMutationLease;
 }
 
 const integrateApplyDefaults: IntegrateApplyDependencies = {
   applyPlan: applyIntegrationPlan,
   rollbackPlan: rollbackIntegrationPlan,
-  removeCompanion: removeManagedCompanionSkill,
   withLease: withIntegrationMutationLease
 };
 
@@ -85,26 +80,9 @@ function configOptions(context: CliContext): IntegrationConfigOptions {
   return {
     home: context.home,
     stateDirectory: context.stateDir,
+    companionSourceDirectory: packagedSkillDirectory(),
     ...(context.now ? { now: context.now } : {})
   };
-}
-
-async function installSharedSkill(context: CliContext): Promise<{ created: boolean; path: string }> {
-  return installCompanionSkill({
-    home: context.home,
-    sourceDirectory: packagedSkillDirectory()
-  });
-}
-
-async function removeSharedSkillIfUnused(context: CliContext): Promise<void> {
-  const active = await Promise.all(
-    allHarnesses.map((harness) => integrationStatus(harness, configOptions(context)))
-  );
-  if (active.some(({ status }) => status === "installed" || status === "needs-trust")) return;
-  await removeManagedCompanionSkill({
-    home: context.home,
-    sourceDirectory: packagedSkillDirectory()
-  });
 }
 
 function printPlan(plan: IntegrationPlan, context: CliContext, json: boolean): void {
@@ -154,8 +132,8 @@ function parseStoredPlan(envelope: ReviewedPlanEnvelope<unknown>): IntegrationPl
 }
 
 async function initialReadinessScan(context: CliContext): Promise<void> {
-  const report = await scanPortfolio(
-    standardRoots({ home: context.home, cwd: context.cwd }),
+  const report = await scanInventory(
+    { home: context.home, cwd: context.cwd },
     context.now?.() ?? new Date()
   );
   await writeLatestReport(context.stateDir, report);
@@ -163,7 +141,6 @@ async function initialReadinessScan(context: CliContext): Promise<void> {
 
 async function rollbackFailedReadiness(
   plan: IntegrationPlan,
-  installed: { created: boolean; path: string },
   context: CliContext,
   readinessError: unknown,
   dependencies: IntegrateApplyDependencies
@@ -174,17 +151,6 @@ async function rollbackFailedReadiness(
       await dependencies.rollbackPlan(plan, configOptions(context));
     } catch (error) {
       failures.push(`configuration: ${errorText(error)}`);
-    }
-  }
-  if (installed.created && failures.length === 0) {
-    try {
-      const removed = await dependencies.removeCompanion({
-        home: context.home,
-        sourceDirectory: packagedSkillDirectory()
-      });
-      if (!removed) failures.push("companion Skill changed before rollback");
-    } catch (error) {
-      failures.push(`companion Skill: ${errorText(error)}`);
     }
   }
   if (failures.length > 0) {
@@ -261,28 +227,14 @@ export async function integrateApplyCommand(
       });
       const result = await applyClaimedReviewedPlan(async () => {
         const plan = parseStoredPlan(envelope);
-        const installed = await installSharedSkill(context);
-        let applied = false;
+        const record = await dependencies.applyPlan(plan, configOptions(context));
         try {
-          const record = await dependencies.applyPlan(plan, configOptions(context));
-          applied = true;
-          try {
-            await initialReadinessScan(context);
-          } catch (error) {
-            return rollbackFailedReadiness(plan, installed, context, error, dependencies);
-          }
-          await integrationStatus(plan.harness, configOptions(context));
-          return { plan, record };
+          await initialReadinessScan(context);
         } catch (error) {
-          return rethrowAfterIntegrationApplyFailure({
-            error,
-            companionCreated: !applied && installed.created,
-            removeCompanion: () => dependencies.removeCompanion({
-                home: context.home,
-                sourceDirectory: packagedSkillDirectory()
-            })
-          });
+          return rollbackFailedReadiness(plan, context, error, dependencies);
         }
+        await integrationStatus(plan.harness, configOptions(context));
+        return { plan, record };
       });
       return { envelope, result };
     });
@@ -338,11 +290,14 @@ export async function integrateRemoveCommand(
     const harness = integrationHarnessSchema.parse(inputHarness);
     const record = await dependencies.withLease(context.stateDir, async () => {
       const removed = await dependencies.remove(harness, configOptions(context));
-      await removeSharedSkillIfUnused(context);
       await integrationStatus(harness, configOptions(context));
       return removed;
     });
-    context.stdout(`Removed ${harness} integration (${record.id}).\n`);
+    context.stdout([
+      `Removed ${harness} integration (${record.id}).`,
+      "Shared companion Skill retained pending reviewed consumer-aware removal.",
+      ""
+    ].join("\n"));
     return 0;
   } catch (error) {
     context.stderr(`${errorText(error)}\n`);

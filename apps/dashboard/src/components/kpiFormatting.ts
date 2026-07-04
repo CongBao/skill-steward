@@ -13,6 +13,9 @@ export function formatKpiValue(kpi: KpiResult | undefined, locale: string): stri
   if ("available" in kpi.value && "total" in kpi.value) {
     return `${kpi.value.available}/${kpi.value.total}`;
   }
+  if ("verified" in kpi.value && "total" in kpi.value) {
+    return `${kpi.value.verified}/${kpi.value.total}`;
+  }
   if ("tokens" in kpi.value) {
     return new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }).format(
       kpi.value.tokens ?? 0

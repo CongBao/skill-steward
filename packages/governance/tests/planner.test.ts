@@ -1,11 +1,16 @@
-import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { SkillRecord, SkillRoot } from "@skill-steward/engine";
+import type {
+  HarnessId,
+  SkillRecord,
+  SkillRecordV2,
+  SkillRoot
+} from "@skill-steward/engine";
 import { fingerprintDirectory } from "@skill-steward/installer";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   planQuarantine,
   planRestore,
@@ -47,6 +52,144 @@ async function fixture() {
 }
 
 describe("governance planner", () => {
+  it.each([
+    ["codex", "codex-plugin-manager"],
+    ["claude", "claude-code-plugin-manager"],
+    ["github-copilot", "github-copilot-cli-plugin-manager"]
+  ] as const)(
+    "refuses a %s native plugin Skill before quarantine planning side effects",
+    async (harness, lifecycleSurface) => {
+      const current = await fixture();
+      const sourceId = `native-${harness}`;
+      const nativeSkill: SkillRecordV2 = {
+        ...current.skill,
+        ownership: "native-plugin",
+        sourceIds: [sourceId],
+        exposures: [{
+          harness,
+          effectiveName: current.skill.name,
+          state: "effective",
+          sourceId,
+          reason: "NATIVE_PLUGIN_VISIBLE"
+        }],
+        plugin: {
+          harness,
+          id: "private-plugin-id",
+          version: "private-cache-version"
+        }
+      };
+      const original = await readFile(join(current.source, "SKILL.md"));
+      const id = vi.fn(() => "tx-native");
+
+      const error = await planQuarantine({
+        skill: nativeSkill,
+        activeRoots: current.roots,
+        stateDirectory: current.stateDirectory,
+        id
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({
+        code: "NATIVE_PLUGIN_MANAGED",
+        data: { harness, lifecycleSurface }
+      });
+      expect(String(error)).not.toContain(current.base);
+      expect(String(error)).not.toContain("private-plugin-id");
+      expect(String(error)).not.toContain("private-cache-version");
+      expect(id).not.toHaveBeenCalled();
+      expect(await readFile(join(current.source, "SKILL.md"))).toEqual(original);
+      await expect(access(join(
+        current.stateDirectory,
+        "quarantine",
+        "tx-native"
+      ))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(join(
+        current.activeRoot,
+        ".review.skill-steward-quarantine-tx-native.rollback"
+      ))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  );
+
+  it("refuses a stale native plugin restore before inspecting or creating paths", async () => {
+    const current = await fixture();
+    const originalPath = join(current.base, "private-native-cache", "review");
+    const vaultPath = join(
+      current.stateDirectory,
+      "quarantine",
+      "tx-native-old",
+      "review"
+    );
+    const quarantined = {
+      schemaVersion: 2 as const,
+      transactionId: "tx-native-old",
+      skillId: current.skill.id,
+      originalPath,
+      vaultPath,
+      fingerprint: current.fingerprint,
+      visibleAliases: [],
+      skillOwnership: {
+        ownership: "native-plugin" as const,
+        harness: "codex" as HarnessId
+      }
+    } as QuarantinedSkill & {
+      skillOwnership: {
+        ownership: "native-plugin";
+        harness: HarnessId;
+      };
+    };
+    const id = vi.fn(() => "restore-native");
+
+    const error = await planRestore({
+      quarantined,
+      activeRoots: current.roots,
+      stateDirectory: current.stateDirectory,
+      id
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "NATIVE_PLUGIN_MANAGED",
+      data: {
+        harness: "codex",
+        lifecycleSurface: "codex-plugin-manager"
+      }
+    });
+    expect(String(error)).not.toContain(current.base);
+    expect(id).not.toHaveBeenCalled();
+    await expect(access(originalPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(vaultPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps a direct v2 instance eligible when native content has the same fingerprint", async () => {
+    const current = await fixture();
+    const sourceId = "direct-source";
+    const directSkill: SkillRecordV2 = {
+      ...current.skill,
+      ownership: "direct",
+      sourceIds: [sourceId],
+      exposures: [{
+        harness: "codex",
+        effectiveName: current.skill.name,
+        state: "effective",
+        sourceId,
+        reason: "DIRECT_SKILL_VISIBLE"
+      }]
+    };
+
+    const plan = await planQuarantine({
+      skill: directSkill,
+      activeRoots: current.roots,
+      stateDirectory: current.stateDirectory,
+      id: () => "tx-direct-duplicate"
+    });
+
+    expect(plan).toMatchObject({
+      schemaVersion: 2,
+      id: "tx-direct-duplicate",
+      skillId: current.skill.id,
+      activePath: current.source,
+      skillOwnership: { ownership: "direct" }
+    });
+  });
+
   it("creates an exact ten-minute quarantine plan", async () => {
     const current = await fixture();
     const plan = await planQuarantine({
@@ -57,10 +200,11 @@ describe("governance planner", () => {
       now: new Date("2026-07-03T00:00:00.000Z")
     });
     expect(plan).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "tx-1",
       kind: "quarantine",
       skillId: "skill-review",
+      skillOwnership: { ownership: "direct" },
       activePath: current.source,
       sourceFingerprint: current.fingerprint,
       vaultPath: join(current.stateDirectory, "quarantine", "tx-1", "review"),
@@ -81,6 +225,63 @@ describe("governance planner", () => {
       "append-journal",
       "cleanup-rollback"
     ]);
+  });
+
+  it("uses exclusions consistently across multiple reordered alias roots", async () => {
+    const current = await fixture();
+    const outerRoot: SkillRoot & { excludedPaths: string[] } = {
+      path: current.base,
+      scope: "global",
+      visibleTo: ["agents"],
+      excludedPaths: [join(current.base, "unrelated")]
+    };
+    const excludedInner: SkillRoot & { excludedPaths: string[] } = {
+      ...current.roots[0]!,
+      excludedPaths: [current.source]
+    };
+    const forward = await planQuarantine({
+      skill: current.skill,
+      activeRoots: [excludedInner, outerRoot],
+      stateDirectory: current.stateDirectory,
+      id: () => "tx-alias-forward"
+    });
+    const reverse = await planQuarantine({
+      skill: current.skill,
+      activeRoots: [outerRoot, excludedInner],
+      stateDirectory: current.stateDirectory,
+      id: () => "tx-alias-reverse"
+    });
+
+    expect(forward.visibleAliases).toEqual([{
+      harness: "agents",
+      scope: "global",
+      rootPath: current.base
+    }]);
+    expect(reverse.visibleAliases).toEqual(forward.visibleAliases);
+  });
+
+  it("does not upgrade an excluded legacy direct restore record", async () => {
+    const current = await fixture();
+    const originalPath = join(current.activeRoot, "excluded-restore");
+    const vaultPath = join(current.stateDirectory, "quarantine", "tx-excluded", "review");
+    await mkdir(vaultPath, { recursive: true });
+    await writeFile(join(vaultPath, "SKILL.md"), await readFile(join(current.source, "SKILL.md")));
+    const quarantined: QuarantinedSkill = {
+      schemaVersion: 1,
+      transactionId: "tx-excluded",
+      skillId: current.skill.id,
+      originalPath,
+      vaultPath,
+      fingerprint: await fingerprintDirectory(vaultPath),
+      visibleAliases: []
+    };
+
+    await expect(planRestore({
+      quarantined,
+      activeRoots: [{ ...current.roots[0]!, excludedPaths: [originalPath] }],
+      stateDirectory: current.stateDirectory,
+      id: () => "restore-excluded"
+    })).rejects.toMatchObject({ code: "SOURCE_OUTSIDE_ACTIVE_ROOT" });
   });
 
   it("preserves a scanned Skill display name without introducing a new length limit", async () => {
@@ -165,6 +366,7 @@ describe("governance planner", () => {
       await writeFile(join(vaultPath, "SKILL.md"), await readFile(join(current.source, "SKILL.md")));
     })();
     const quarantined: QuarantinedSkill = {
+      schemaVersion: 1,
       transactionId: "tx-old",
       skillId: current.skill.id,
       originalPath: join(current.activeRoot, "restored-review"),
@@ -180,12 +382,14 @@ describe("governance planner", () => {
       now: new Date("2026-07-03T01:00:00.000Z")
     });
     expect(plan).toMatchObject({
+      schemaVersion: 2,
       kind: "restore",
       id: "restore-1",
       activePath: quarantined.originalPath,
       vaultPath,
       sourceFingerprint: quarantined.fingerprint,
-      expectedDestinationFingerprint: null
+      expectedDestinationFingerprint: null,
+      skillOwnership: { ownership: "direct" }
     });
     expect(plan.operations.map(({ operation }) => operation)).toEqual([
       "copy-to-staging",

@@ -23,7 +23,7 @@ afterEach(async () => {
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T01:00:00.000Z",
@@ -61,6 +61,7 @@ function result(): PreflightResult {
       reasons: [{ code: "TASK_TERM_MATCH", detail: "review, change" }]
     }],
     conflicts: report.findings,
+    inventoryWarnings: [],
     capabilityGaps: [],
     installedCoverage: 0.5,
     projectedCoverage: 0.5,
@@ -92,7 +93,7 @@ describe("preflight services", () => {
 
     expect(currentPortfolio).toHaveBeenCalledOnce();
     expect(catalogState).toHaveBeenCalledOnce();
-    expect(output).toMatchObject({ id: "run-1", schemaVersion: 3 });
+    expect(output).toMatchObject({ id: "run-1", schemaVersion: 4 });
     expect(await readPreflightEvidence(stateDirectory)).toEqual([
       expect.objectContaining({
         harness: "claude-code",
@@ -105,7 +106,7 @@ describe("preflight services", () => {
 });
 
 describe("preflight routes", () => {
-  it("requires the mutation token and returns a version-3 result", async () => {
+  it("requires the mutation token and returns a version-4 result", async () => {
     const services: PreflightServices = {
       run: vi.fn(async () => result()),
       feedback: vi.fn(async () => undefined)
@@ -142,7 +143,7 @@ describe("preflight routes", () => {
       includeAvailable: true
     });
     expect(response.json()).toMatchObject({
-      data: { id: "run-1", schemaVersion: 3, useCandidateIds: ["skill-1"] },
+      data: { id: "run-1", schemaVersion: 4, useCandidateIds: ["skill-1"] },
       error: null
     });
     expect(response.body).not.toContain("Review security and missing tests");
@@ -201,5 +202,31 @@ describe("preflight routes", () => {
     });
     expect(missing.statusCode).toBe(404);
     expect(missing.json()).toMatchObject({ error: { code: "PREFLIGHT_NOT_FOUND" } });
+  });
+
+  it("passes readable legacy candidate IDs through the feedback route", async () => {
+    const candidateIds = ["legacy/skill", "legacy skill", "x".repeat(97)];
+    const services: PreflightServices = {
+      run: vi.fn(async () => result()),
+      feedback: vi.fn(async () => undefined)
+    };
+    const { app } = createDashboardApp({
+      mutationToken: "test-token",
+      preflightServices: services
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/preflights/legacy-v2/feedback",
+      headers: { "x-skill-steward-token": "test-token" },
+      payload: { label: "incomplete", candidateIds }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(services.feedback).toHaveBeenCalledWith("legacy-v2", {
+      label: "incomplete",
+      candidateIds
+    });
   });
 });

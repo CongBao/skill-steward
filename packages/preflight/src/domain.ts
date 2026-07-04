@@ -7,7 +7,7 @@ import {
 } from "@skill-steward/engine";
 import { z } from "zod";
 
-export const PREFLIGHT_SCHEMA_VERSION = 3 as const;
+export const PREFLIGHT_SCHEMA_VERSION = 4 as const;
 
 export interface IntlRuntimeVersions {
   cldr: string | undefined;
@@ -23,10 +23,10 @@ export function algorithmVersionForIntlRuntime(runtime: IntlRuntimeVersions): nu
     `icu=${runtime.icu ?? "unknown"}`,
     `unicode=${runtime.unicode ?? "unknown"}`
   ].join(";");
-  if (fingerprint === REFERENCE_INTL_RUNTIME) return 4;
+  if (fingerprint === REFERENCE_INTL_RUNTIME) return 7;
 
   const runtimeHash = sha256(fingerprint).slice("sha256:".length, "sha256:".length + 12);
-  return 4_000_000_000_000 + Number.parseInt(runtimeHash, 16);
+  return 7_000_000_000_000 + Number.parseInt(runtimeHash, 16);
 }
 
 export const PREFLIGHT_ALGORITHM_VERSION = algorithmVersionForIntlRuntime({
@@ -46,16 +46,42 @@ export const preflightReasonCodeSchema = z.enum([
   "INSTALL_REQUIRED",
   "CRITICAL_RISK",
   "HARNESS_INCOMPATIBLE",
+  "HARNESS_SHADOWED",
+  "HARNESS_INACTIVE",
+  "HARNESS_AMBIGUOUS",
+  "INVENTORY_RESCAN_REQUIRED",
   "NEGATIVE_TRIGGER"
 ]);
 
 export const preflightReasonSchema = z.object({
   code: preflightReasonCodeSchema,
-  detail: z.string().min(1)
+  detail: z.string().min(1).max(200)
 });
+
+export const inventoryWarningSchema = z.object({
+  code: z.literal("HARNESS_AMBIGUOUS"),
+  harness: harnessIdSchema,
+  detail: z.string().min(1).max(200).refine(
+    (value) => !/[\\/]/u.test(value),
+    "Inventory warnings cannot contain paths"
+  )
+}).strict();
+
+export class PreflightError extends Error {
+  constructor(
+    public readonly code: "INVENTORY_RESCAN_REQUIRED"
+  ) {
+    super(code);
+    this.name = "PreflightError";
+  }
+}
 
 export const candidateAvailabilitySchema = z.enum(["installed", "available"]);
 export const candidateDecisionSchema = z.enum(["use", "install", "excluded"]);
+export const preflightIdentifierSchema = z.string().regex(
+  /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,95}$/u,
+  "Preflight identifiers must be safe ASCII and at most 96 characters"
+);
 
 export const preflightCandidateFeatureSchema = z.object({
   taskCoverage: z.number().min(0).max(1),
@@ -73,10 +99,10 @@ const candidateSourceSchema = z.object({
 });
 
 export const preflightCandidateSchema = z.object({
-  candidateId: z.string().min(1),
+  candidateId: preflightIdentifierSchema,
   availability: candidateAvailabilitySchema,
-  installedSkillId: z.string().min(1).optional(),
-  catalogSkillId: z.string().min(1).optional(),
+  installedSkillId: preflightIdentifierSchema.optional(),
+  catalogSkillId: preflightIdentifierSchema.optional(),
   name: z.string().min(1),
   description: z.string(),
   scope: skillScopeSchema,
@@ -94,7 +120,7 @@ export const preflightCandidateSchema = z.object({
   features: preflightCandidateFeatureSchema,
   decision: candidateDecisionSchema,
   source: candidateSourceSchema.optional(),
-  reasons: z.array(preflightReasonSchema).min(1)
+  reasons: z.array(preflightReasonSchema).min(1).max(12)
 }).superRefine((candidate, context) => {
   if (candidate.availability === "installed") {
     if (candidate.installedSkillId !== candidate.candidateId) {
@@ -149,16 +175,17 @@ export const preflightFeedbackSchema = z.object({
 export const preflightResultSchema = z.object({
   schemaVersion: z.literal(PREFLIGHT_SCHEMA_VERSION),
   algorithmVersion: z.literal(PREFLIGHT_ALGORITHM_VERSION),
-  id: z.string().min(1),
+  id: preflightIdentifierSchema,
   generatedAt: z.string().datetime(),
   portfolioFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   taskHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   taskCharacterCount: z.number().int().nonnegative(),
   taskTermCount: z.number().int().nonnegative(),
-  useCandidateIds: z.array(z.string().min(1)).max(5),
-  installCandidateIds: z.array(z.string().min(1)).max(3),
+  useCandidateIds: z.array(preflightIdentifierSchema).max(5),
+  installCandidateIds: z.array(preflightIdentifierSchema).max(3),
   candidates: z.array(preflightCandidateSchema),
   conflicts: z.array(findingSchema),
+  inventoryWarnings: z.array(inventoryWarningSchema).max(3),
   capabilityGaps: z.array(z.string().min(1)).max(6),
   installedCoverage: z.number().min(0).max(1),
   projectedCoverage: z.number().min(0).max(1),
@@ -205,6 +232,7 @@ export type CandidateAvailability = z.infer<typeof candidateAvailabilitySchema>;
 export type CandidateDecision = z.infer<typeof candidateDecisionSchema>;
 export type PreflightReasonCode = z.infer<typeof preflightReasonCodeSchema>;
 export type PreflightReason = z.infer<typeof preflightReasonSchema>;
+export type InventoryWarning = z.infer<typeof inventoryWarningSchema>;
 export type PreflightCandidateFeature = z.infer<typeof preflightCandidateFeatureSchema>;
 export type PreflightRequest = z.infer<typeof preflightRequestSchema>;
 export type PreflightFeedback = z.infer<typeof preflightFeedbackSchema>;

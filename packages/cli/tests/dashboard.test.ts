@@ -7,7 +7,10 @@ import {
   dashboardCommand,
   dashboardPort
 } from "../src/commands/dashboard.js";
+import { PREFLIGHT_SCHEMA_VERSION } from "@skill-steward/preflight";
 import type { CliContext } from "../src/context.js";
+import { readLatestReport } from "@skill-steward/store";
+import { installNativeCodexFixture } from "./native-inventory-fixture.js";
 
 function context(): CliContext & { output: string[] } {
   const output: string[] = [];
@@ -71,7 +74,7 @@ it("wires fresh task preflight into the dashboard application", async () => {
   expect(response.statusCode).toBe(200);
   expect(response.json()).toMatchObject({
     data: {
-      schemaVersion: 3,
+      schemaVersion: PREFLIGHT_SCHEMA_VERSION,
       useCandidateIds: expect.arrayContaining([expect.any(String)])
     }
   });
@@ -86,5 +89,42 @@ it("wires fresh task preflight into the dashboard application", async () => {
     expect.objectContaining({ harness: "codex", status: "not-installed" }),
     expect.objectContaining({ harness: "claude-code", status: "not-installed" })
   ]));
+  await app.close();
+});
+
+it("routes dashboard scans through shared native inventory", async () => {
+  const base = await mkdtemp(join(tmpdir(), "steward-dashboard-native-"));
+  const home = join(base, "home");
+  const stateDir = join(base, "state");
+  await installNativeCodexFixture(home);
+  const cli: CliContext = {
+    cwd: base,
+    home,
+    stateDir,
+    stdout: vi.fn(),
+    stderr: vi.fn()
+  };
+  const { app, mutationToken } = createDashboardApplication(cli);
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/scans",
+    headers: { "x-skill-steward-token": mutationToken },
+    payload: { roots: [] }
+  });
+
+  expect(response.statusCode).toBe(200);
+  expect(await readLatestReport(stateDir)).toMatchObject({
+    schemaVersion: 2,
+    skills: [expect.objectContaining({
+      name: "native-review",
+      ownership: "native-plugin"
+    })],
+    inventory: {
+      harnesses: expect.arrayContaining([
+        expect.objectContaining({ harness: "codex", status: "verified" })
+      ])
+    }
+  });
   await app.close();
 });

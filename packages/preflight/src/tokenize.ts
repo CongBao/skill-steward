@@ -51,11 +51,16 @@ const CJK_STOP_WORDS = new Set([
   "但",
   "当前",
   "當前",
+  "持续",
+  "持續",
   "的",
   "对",
   "對",
   "而",
   "完成",
+  "工作",
+  "处理",
+  "處理",
   "该",
   "該",
   "和",
@@ -79,6 +84,10 @@ const CJK_STOP_WORDS = new Set([
   "您",
   "请",
   "請",
+  "帮",
+  "幫",
+  "帮忙",
+  "幫忙",
   "让",
   "讓",
   "然后",
@@ -95,6 +104,8 @@ const CJK_STOP_WORDS = new Set([
   "它們",
   "推进",
   "推進",
+  "任务",
+  "任務",
   "为",
   "為",
   "问题",
@@ -102,6 +113,14 @@ const CJK_STOP_WORDS = new Set([
   "我",
   "我们",
   "希望",
+  "相关",
+  "相關",
+  "麻烦",
+  "麻煩",
+  "协助",
+  "協助",
+  "一下",
+  "我想",
   "想要",
   "需要",
   "也",
@@ -120,6 +139,54 @@ const CJK_STOP_WORDS = new Set([
 ]);
 
 const CJK_SEGMENTER = new Intl.Segmenter("zh-CN", { granularity: "word" });
+
+const CONCEPT_PHRASES = Object.freeze([
+  ["长对话", "long session"],
+  ["長對話", "long session"],
+  ["长会话", "long session"],
+  ["長會話", "long session"],
+  ["工作阶段", "session"],
+  ["工作階段", "session"]
+] as const);
+
+const CONCEPT_TERMS = new Map<string, string>([
+  ["maintain", "maintain"],
+  ["maintained", "maintain"],
+  ["maintenance", "maintain"],
+  ["维护", "maintain"],
+  ["維護", "maintain"],
+  ["long", "long"],
+  ["长期", "long"],
+  ["長期", "long"],
+  ["session", "session"],
+  ["对话", "session"],
+  ["對話", "session"],
+  ["会话", "session"],
+  ["會話", "session"],
+  ["requirement", "requirement"],
+  ["需求", "requirement"],
+  ["要求", "requirement"],
+  ["evolv", "evolve"],
+  ["evolution", "evolve"],
+  ["evolve", "evolve"],
+  ["演进", "evolve"],
+  ["演進", "evolve"],
+  ["变化", "evolve"],
+  ["變化", "evolve"],
+  ["context", "context"],
+  ["上下文", "context"],
+  ["compact", "compaction"],
+  ["compaction", "compaction"],
+  ["压缩", "compaction"],
+  ["壓縮", "compaction"],
+  ["preservation", "preserve"],
+  ["preserve", "preserve"],
+  ["保留", "preserve"],
+  ["保存", "preserve"],
+  ["intent", "intent"],
+  ["意图", "intent"],
+  ["意圖", "intent"]
+]);
 
 const INFLECTION_DOUBLED_CONSONANTS = new Set([
   "b",
@@ -146,6 +213,10 @@ export interface TokenizedText {
 
 export function normalizeTask(value: string): string {
   return value.normalize("NFKC").trim();
+}
+
+function canonicalConcept(term: string): string {
+  return CONCEPT_TERMS.get(term) ?? term;
 }
 
 function normalizeLatin(value: string): string {
@@ -201,7 +272,10 @@ function segmentCjk(value: string): string[] {
 }
 
 export function tokenize(value: string): TokenizedText {
-  const normalized = normalizeTask(value).toLowerCase();
+  let normalized = normalizeTask(value).toLowerCase();
+  for (const [phrase, concept] of CONCEPT_PHRASES) {
+    normalized = normalized.replaceAll(phrase, ` ${concept} `);
+  }
   const terms: string[] = [];
   const counts: Record<string, number> = {};
   const emit = (term: string) => {
@@ -216,11 +290,11 @@ export function tokenize(value: string): TokenizedText {
     const segment = match[0];
     if (/^[a-z0-9]+$/u.test(segment)) {
       const term = normalizeLatin(segment);
-      if (term.length >= 2) emit(term);
+      if (term.length >= 2) emit(canonicalConcept(term));
       continue;
     }
 
-    segmentCjk(segment).forEach(emit);
+    segmentCjk(segment).map(canonicalConcept).forEach(emit);
   }
 
   return { terms, counts };

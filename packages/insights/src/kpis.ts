@@ -4,6 +4,7 @@ import type {
   PortfolioReport,
   SkillScope
 } from "@skill-steward/engine";
+import { isVisibilityReport } from "@skill-steward/engine";
 import { calculateHealth } from "./health.js";
 
 export const KPI_IDS = [
@@ -12,6 +13,7 @@ export const KPI_IDS = [
   "installed-skills",
   "estimated-context",
   "harness-coverage",
+  "inventory-coverage",
   "bundle-size",
   "tracked-files",
   "broken-references",
@@ -32,13 +34,16 @@ export const RECOMMENDED_KPI_IDS: KpiId[] = [
   "open-findings",
   "installed-skills",
   "estimated-context",
-  "harness-coverage"
+  "harness-coverage",
+  "inventory-coverage"
 ];
 
 export type KpiStatus = "neutral" | "positive" | "attention" | "risk";
 
 export interface RootStatus {
+  /** @deprecated Use visibleTo for the complete Harness alias set. */
   harness: HarnessId;
+  visibleTo: HarnessId[];
   scope: SkillScope;
   path: string;
   available: boolean;
@@ -127,6 +132,15 @@ export function buildKpis({
     : 100;
   const availableRoots = roots.filter(({ available, readable }) => available && readable).length;
   const findingStatus = statusForFindings(latest.findings);
+  const verifiedCoreHarnesses = isVisibilityReport(latest)
+    ? latest.inventory.harnesses.filter(({ harness, status }) =>
+        status === "verified" && (
+          harness === "codex" ||
+          harness === "claude" ||
+          harness === "github-copilot"
+        )
+      ).length
+    : 0;
 
   return [
     {
@@ -138,6 +152,15 @@ export function buildKpis({
     { id: "installed-skills", value: latest.skills.length, status: "neutral" },
     { id: "estimated-context", value: tokens, status: "neutral" },
     { id: "harness-coverage", value: visibleHarnesses.size, status: "neutral" },
+    {
+      id: "inventory-coverage",
+      value: { verified: verifiedCoreHarnesses, total: 3 },
+      status: verifiedCoreHarnesses === 3
+        ? "positive"
+        : verifiedCoreHarnesses === 0
+          ? "risk"
+          : "attention"
+    },
     { id: "bundle-size", value: bytes, status: "neutral" },
     { id: "tracked-files", value: files, status: "neutral" },
     {

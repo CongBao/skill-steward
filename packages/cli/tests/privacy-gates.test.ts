@@ -41,9 +41,13 @@ it("keeps every Harness response valid and every adversarial content canary out 
   await mkdir(stateDir);
   await mkdir(workspace);
   await writeLatestReport(stateDir, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: "2026-07-03T00:00:00.000Z",
     portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+    workspace: {
+      path: workspace,
+      identity: `sha256:${"c".repeat(64)}`
+    },
     skills: [{
       id: "review-skill",
       name: "review-skill",
@@ -51,12 +55,49 @@ it("keeps every Harness response valid and every adversarial content canary out 
       path: join(home, ".agents", "skills", "review-skill"),
       root: "review-skill",
       scope: "global",
-      visibleTo: ["codex", "claude", "github-copilot"],
+      visibleTo: ["codex", "claude"],
       fingerprint: `sha256:${"b".repeat(64)}`,
       files: [],
-      estimatedTokens: 80
+      estimatedTokens: 80,
+      ownership: "direct",
+      sourceIds: ["codex:privacy", "claude:privacy"],
+      exposures: [
+        {
+          harness: "codex",
+          effectiveName: "review-skill",
+          state: "effective",
+          sourceId: "codex:privacy",
+          reason: "TEST_EFFECTIVE"
+        },
+        {
+          harness: "claude",
+          effectiveName: "review-skill",
+          state: "effective",
+          sourceId: "claude:privacy",
+          reason: "TEST_EFFECTIVE"
+        }
+      ]
     }],
-    findings: []
+    findings: [],
+    inventory: {
+      sources: ["codex", "claude"].map((harness) => ({
+        id: `${harness}:privacy`,
+        harness: harness as "codex" | "claude",
+        scope: "global" as const,
+        kind: "direct-root" as const,
+        path: join(home, `.${harness}`, "skills"),
+        status: "scanned" as const,
+        skillCount: 1,
+        effectiveSkillCount: 1
+      })),
+      harnesses: ["codex", "claude"].map((harness) => ({
+        harness: harness as "codex" | "claude",
+        status: "verified" as const,
+        sourceIds: [`${harness}:privacy`],
+        skillCount: 1,
+        effectiveSkillCount: 1
+      }))
+    }
   });
   const policyPlan = await planEvidencePolicyChange(stateDir, {
     mode: "learning",

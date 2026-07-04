@@ -73,6 +73,17 @@ describe("preferences", () => {
     expect(parsePreferences({ version: 99, theme: "neon" })).toEqual(DEFAULT_PREFERENCES);
   });
 
+  it("preserves existing KPI selections and visible-count preferences", () => {
+    const stored = {
+      ...DEFAULT_PREFERENCES,
+      kpiCount: 5,
+      kpiOrder: ["health-score", "open-findings", "harness-coverage"],
+      enabledKpis: ["health-score", "harness-coverage"]
+    };
+
+    expect(parsePreferences(stored)).toEqual(stored);
+  });
+
   it("resolves system, light, and dark modes", () => {
     expect(resolveTheme("light", true)).toBe("light");
     expect(resolveTheme("dark", false)).toBe("dark");

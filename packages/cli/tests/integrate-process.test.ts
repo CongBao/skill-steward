@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,9 @@ const storeSource = fileURLToPath(new URL("../../store/src/index.ts", import.met
 const companionAssets = fileURLToPath(
   new URL("../../integrations/assets", import.meta.url)
 );
+const jsoncParserEsm = createRequire(
+  new URL("../../engine/package.json", import.meta.url)
+).resolve("jsonc-parser/lib/esm/main.js");
 let fixtureDirectory = "";
 let binary = "";
 
@@ -42,6 +46,7 @@ beforeAll(async () => {
       js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
     },
     alias: {
+      "jsonc-parser": jsoncParserEsm,
       "@skill-steward/integrations": integrationsSource,
       "@skill-steward/installer": installerSource,
       "@skill-steward/store": storeSource
@@ -134,14 +139,40 @@ async function writeReplacementPlan(input: {
   return id;
 }
 
+async function authorizeRecordedCompanion(stateDirectory: string, planId: string): Promise<void> {
+  const path = join(stateDirectory, "reviewed-plans", `${planId}.json`);
+  const envelope = JSON.parse(await readFile(path, "utf8"));
+  const companion = envelope.payload.companion;
+  if (
+    companion.expectedBefore?.state !== "exact"
+    || companion.expectedBefore.fingerprint !== companion.after.fingerprint
+  ) throw new Error("Expected an exact unowned companion fixture");
+  envelope.payload.companion = {
+    ...companion,
+    action: "none",
+    proof: {
+      kind: "recorded",
+      recordId: "fixture-current-companion",
+      installedFingerprint: companion.after.fingerprint
+    }
+  };
+  await writeFile(path, `${JSON.stringify(envelope)}\n`, "utf8");
+}
+
 describe("integration CLI source processes", () => {
-  it("serializes different exact plans before claim and domain revalidation", async () => {
+  it("serializes different exact plans and fails both closed before Hook mutation", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-cli-lease-process-"));
     const home = join(base, "home");
     const state = join(base, "state");
     const workspace = join(base, "workspace");
     await mkdir(home, { recursive: true });
     await mkdir(workspace, { recursive: true });
+    await mkdir(join(home, ".agents", "skills"), { recursive: true });
+    await cp(
+      join(fixtureDirectory, "integrations", "skill-steward-preflight"),
+      join(home, ".agents", "skills", "skill-steward-preflight"),
+      { recursive: true }
+    );
     const options = {
       cwd: workspace,
       env: { ...process.env, HOME: home, SKILL_STEWARD_HOME: state }
@@ -151,21 +182,25 @@ describe("integration CLI source processes", () => {
     ], options);
     expect(firstPreview.code, firstPreview.stderr).toBe(0);
     const firstPlan = JSON.parse(firstPreview.stdout) as { id: string };
+    await authorizeRecordedCompanion(state, firstPlan.id);
     const secondPreview = await runCli([
       "integrate", "plan", "--harness", "codex", "--json"
     ], options);
     expect(secondPreview.code, secondPreview.stderr).toBe(0);
     const secondPlan = JSON.parse(secondPreview.stdout) as { id: string };
+    await authorizeRecordedCompanion(state, secondPlan.id);
 
     const results = await Promise.all([
       runCli(["integrate", "apply", "--plan", firstPlan.id, "--confirm"], options),
       runCli(["integrate", "apply", "--plan", secondPlan.id, "--confirm"], options)
     ]);
 
-    expect(results.map(({ code }) => code).sort()).toEqual([0, 1]);
-    expect(results.find(({ code }) => code === 1)?.stderr).toContain("INTEGRATION_DRIFTED");
-    expect(await readFile(join(home, ".codex", "hooks.json"), "utf8"))
-      .toContain("skill-steward hook prompt --harness codex");
+    expect(results.map(({ code }) => code)).toEqual([1, 1]);
+    expect(results.every(({ stderr }) =>
+      stderr.includes("INTEGRATION_COMPANION_ACTION_UNAVAILABLE")
+    )).toBe(true);
+    await expect(readFile(join(home, ".codex", "hooks.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("serializes reviewed replacements before claim and destination revalidation", async () => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import packageMetadata from "../package.json" with { type: "json" };
@@ -67,7 +67,11 @@ export async function run(
     .name("skill-steward")
     .description("Inspect and improve local Agent Skills portfolios")
     .version(packageMetadata.version)
-    .exitOverride();
+    .exitOverride()
+    .configureOutput({
+      writeOut: (value) => context.stdout(value),
+      writeErr: (value) => context.stderr(value)
+    });
 
   const catalog = program
     .command("catalog")
@@ -462,6 +466,10 @@ export async function run(
     .option("--include-available", "include locally indexed catalog candidates", true)
     .option("--installed-only", "exclude not-yet-installed candidates", false)
     .option("--json", "JSON output", false)
+    .addOption(new Option(
+      "--compact-json",
+      "compact Harness-facing JSON output"
+    ).conflicts("json"))
     .action(
       async (options: {
         task?: string;
@@ -472,6 +480,7 @@ export async function run(
         includeAvailable: boolean;
         installedOnly: boolean;
         json: boolean;
+        compactJson: boolean;
       }) => {
         exitCode = await preflightCommand(
           {
@@ -481,7 +490,8 @@ export async function run(
             maxSkills: Number(options.maxSkills),
             ...(options.harness ? { harness: options.harness } : {}),
             includeAvailable: options.installedOnly ? false : options.includeAvailable,
-            json: options.json
+            json: options.json,
+            compactJson: options.compactJson
           },
           context
         );
@@ -499,12 +509,14 @@ export async function run(
     await program.parseAsync(["node", "skill-steward", ...argv]);
     return exitCode;
   } catch (error) {
-    if (
-      error instanceof CommanderError &&
-      (error.code === "commander.version" ||
-        error.code === "commander.helpDisplayed")
-    ) {
-      return exitCode;
+    if (error instanceof CommanderError) {
+      if (
+        error.code === "commander.version" ||
+        error.code === "commander.helpDisplayed"
+      ) {
+        return exitCode;
+      }
+      return 1;
     }
     context.stderr(
       `${error instanceof Error ? error.message : String(error)}\n`

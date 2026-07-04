@@ -24,6 +24,20 @@ Inspect the source revision and exact filesystem plan before installation. Confi
 
 The ranking is deterministic and local; it does not require an LLM. Your Harness still decides whether and how to use a recommended Skill.
 
+## Native inventory visibility
+
+Finding a directory does not prove the Harness can use the Skill. Core native inventory adapters for Codex, Claude Code, and GitHub Copilot CLI inspect documented local direct and plugin Skill surfaces, then the report and UI show three separate kinds of state:
+
+- **Source statuses:** `scanned`, `missing`, `unreadable`, `invalid`, `disabled`, `stale`, `ambiguous`, `truncated`
+- **Harness coverage:** `verified`, `partial`, `unavailable`, `convention-only`
+- **Skill exposure:** `effective`, `shadowed`, `inactive`, `ambiguous`
+
+Copilot Harness coverage can remain `partial` when local runtime or MDM evidence is incomplete. An affected source or Skill exposure can remain `ambiguous` when local files do not prove activation or precedence.
+
+Native plugin-managed Skills are read-only in Skill Steward governance; manage them through the owning Harness. Skill Steward quarantine and restore apply only to directly managed Skills. Across the total 30 Harnesses, coverage outside the three core adapters is convention-only directory inventory/install coverage where native semantics have not been verified.
+
+A scan is a current-workspace snapshot plus user scopes; it does not crawl every project or workspace.
+
 ## Screenshots
 
 These views use local example data to show populated states; the scores and evidence counts are not project usage results.
@@ -117,11 +131,13 @@ Task Preflight answers two questions before work starts:
 
 ```bash
 skill-steward preflight --task-file ./task.txt --max-skills 3
-printf '%s' "Review this pull request" | skill-steward preflight --stdin --json
+printf '%s' "Review this pull request" | skill-steward preflight --stdin --compact-json
 skill-steward preflight --task "Review this pull request" --installed-only
 ```
 
-Installed candidates rank ahead of otherwise similar catalog candidates. An available candidate is excluded when it is critically risky, incompatible with the target Harness, or duplicates installed content. Algorithm v4 recognizes narrow English routing clauses such as `do not use this skill for PDFs`, requires at least two shared task terms unless the Skill name itself matches, and routes Chinese tasks by words instead of common single-character overlap. Results include relevance, unique coverage, risk, redundancy, context estimates, source revision, compatibility, readable reasons, and human-readable gap labels for Chinese as well as Latin-script tasks.
+Installed candidates rank ahead of otherwise similar catalog candidates. An available candidate is excluded when it is critically risky, incompatible with the target Harness, or duplicates installed content. Algorithm v7 and result schema v4 retain narrow English routing clauses, the two-term minimum for non-name matches, and deterministic bounded Simplified/Traditional Chinese concept canonicalization for long-session, evolving-requirements, and context-compaction intent. Capability gaps are high-confidence Skill search hints: candidate metadata must pass either a name match that contributes a specific capability concept or the minimum specific multi-term relevance gate; generic single-token names do not corroborate a hint by name alone. Concise tasks without credible candidates use a conservative non-generic fallback. Gap-only projection puts task display aliases, positive candidate metadata, and selected positive coverage in one canonical namespace; negative `do not use` clauses neither corroborate nor cover a hint. Canonical deduplication happens before the six-hint bound. Unsegmented two-character fragments made only of generic Han characters are low confidence and create neither routing/name matches nor standalone gaps. These display rules do not alter recommendation scoring. This is still lexical routing, not general cross-language semantic understanding. Results include relevance, unique coverage, risk, redundancy, context estimates, source revision, compatibility, and readable reasons.
+
+Use `--compact-json` for Harness or companion-Skill handoff. It emits one line and at most 4,096 UTF-8 bytes, with selected use/install recommendations and stable warning codes but no raw task. `--json` returns the complete `PreflightResult`: candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage. Available catalog candidates may include catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. The portfolio reports and dashboard preserve those records; Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain capped at 2,048 bytes.
 
 Human CLI output includes the Preflight run ID and a direct feedback command. Full candidate and reason details remain available with `--json`.
 
@@ -216,7 +232,7 @@ All three adapters are tested with temporary-HOME fixtures and preserve unrelate
 
 The root catalog covers 30 Harnesses: Amazon Q, Antigravity, Auggie, Bob, Claude Code, Cline, CodeBuddy, Codex, ForgeCode, Continue, CoStrict, Crush, Cursor, Factory, Gemini CLI, GitHub Copilot, iFlow, Junie, Kilo Code, Kimi, Kiro, Lingma, Vibe, OpenCode, Pi, Qoder, Qwen Code, RooCode, Trae, and Windsurf.
 
-This means Skill Steward can inventory and install to their known Skill directories. Native workflow integration is narrower and is described exactly in the capability matrix above.
+Across the total 30 Harnesses, coverage outside the three core adapters provides convention-only directory inventory and installation. Native workflow integration is narrower still and is described exactly in the capability matrix.
 
 ## How safe installation works
 
@@ -287,11 +303,13 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 
 ## Current limitations
 
-- Task scoring is a deterministic lexical baseline. Algorithm v4 improves observed English-boundary and Chinese single-character errors but does not provide cross-language semantic understanding or measure actual task success.
+- Task scoring is a deterministic lexical baseline. Algorithm v7 canonicalizes a bounded set of Simplified/Traditional Chinese concepts and high-confidence capability-gap hints but does not provide general cross-language semantic understanding or measure actual task success.
 - Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
 - GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.
-- Local inventory follows known Skill roots and does not yet enumerate every Skill nested inside a natively installed plugin.
-- Native workflow integration is limited to the three adapters in the capability matrix; inventory support for a Harness does not imply Hook or plugin integration.
+- Native inventory is limited to documented local surfaces for Codex, Claude Code, and GitHub Copilot CLI. Copilot Harness coverage can remain `partial` when local runtime or MDM proof is unavailable; an affected source or Skill exposure can remain `ambiguous`.
+- Each scan covers the current workspace and user scopes, not every project or workspace on the machine.
+- Across the total 30 Harnesses, coverage outside the three core adapters follows directory conventions; inventory support for a Harness does not imply verified native plugin or Hook semantics.
+- Native plugin-managed Skills are reported but read-only in governance. Manage them through their owning Harness; Skill Steward quarantine and restore remain direct-Skill operations.
 - A reviewed plan is intentionally consumed after it is claimed, including when later validation detects drift; create a new preview before retrying.
 - Skill Steward protects against detected filesystem drift and unsafe paths, but it is not an isolation boundary from another malicious process running as the same operating-system user.
 - Catalog refresh supports public credential-free HTTPS Git sources, not private repositories or SSH.
@@ -300,12 +318,12 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 
 ## Roadmap
 
-1. Close native-plugin inventory gaps and validate more native adapters only where lifecycle and trust behavior can be tested.
+1. Validate additional native adapters only where local precedence, activation, lifecycle, and trust behavior can be tested.
 2. Evaluate reviewed ranking calibration only after the published evidence thresholds are met.
 3. Add scope migration and broader policy baselines on top of the reversible governance journal.
 4. Add signed release artifacts and supply-chain attestations.
 
-See [CHANGELOG.md](CHANGELOG.md) for released behavior and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for the current Alpha.3 verdict, hands-on evidence, historical baseline, and priorities.
+See [CHANGELOG.md](CHANGELOG.md) for released behavior and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for the historical Alpha.3 verdict, hands-on evidence, baseline, and priorities.
 
 ## Contributing
 

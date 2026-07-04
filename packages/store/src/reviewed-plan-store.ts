@@ -335,8 +335,16 @@ export async function writeReviewedPlan<TPayload>(
 
 export async function claimReviewedPlan(
   stateDirectory: string,
-  input: { id: string; kind: ReviewedPlanKind; now?: Date }
+  input: {
+    id: string;
+    kind: ReviewedPlanKind;
+    now?: Date;
+    validate?: (
+      envelope: ReviewedPlanEnvelope<unknown>
+    ) => void | Promise<void>;
+  }
 ): Promise<ReviewedPlanEnvelope<unknown>> {
+  let rejectedByValidator = false;
   try {
     const id = parseId(input.id);
     const kind = parseKind(input.kind);
@@ -362,6 +370,7 @@ export async function claimReviewedPlan(
       throw error;
     }
 
+    let consumeClaimed = true;
     try {
       let envelope: ReviewedPlanEnvelope;
       try {
@@ -382,11 +391,22 @@ export async function claimReviewedPlan(
       if (Date.parse(envelope.expiresAt) <= now) {
         throw storeError("REVIEWED_PLAN_EXPIRED", "Reviewed plan has expired");
       }
+      if (input.validate) {
+        try {
+          await input.validate(envelope);
+        } catch (error) {
+          consumeClaimed = false;
+          await restoreOwnedPlan(claimed, pending);
+          rejectedByValidator = true;
+          throw error;
+        }
+      }
       return envelope;
     } finally {
-      await removeFile(claimed);
+      if (consumeClaimed) await removeFile(claimed);
     }
   } catch (error) {
+    if (rejectedByValidator) throw error;
     throw normalizeStoreError(error, "claim");
   }
 }

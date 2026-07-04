@@ -5,7 +5,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   fetchDashboard,
   fetchGovernanceTransactions,
-  type InspectionResult
+  type HarnessExposure,
+  type InspectionResult,
+  type SkillSummary
 } from "../../api/client.js";
 import { Dialog } from "../../components/Dialog.js";
 import { PageHeader } from "../../components/PageHeader.js";
@@ -17,6 +19,68 @@ import "./skills.css";
 
 function pathName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function interpolate(template: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replace(`{${key}}`, value),
+    template
+  );
+}
+
+function harnessName(harness: string, t: (key: TranslationKey) => string): string {
+  const keys: Record<string, TranslationKey> = {
+    codex: "harness.codex",
+    claude: "harness.claude",
+    "github-copilot": "harness.github-copilot",
+    agents: "harness.agents"
+  };
+  const key = keys[harness];
+  return key ? t(key) : harness;
+}
+
+function exposureCopy(
+  exposure: HarnessExposure,
+  skillById: ReadonlyMap<string, SkillSummary>,
+  t: (key: TranslationKey) => string
+): string {
+  const harness = harnessName(exposure.harness, t);
+  const key = `skills.exposure.${exposure.state}` as TranslationKey;
+  return interpolate(t(key), {
+    harness,
+    skill: exposure.shadowedBy
+      ? skillById.get(exposure.shadowedBy)?.name ?? t("skills.exposure.fallback")
+      : t("skills.exposure.fallback")
+  });
+}
+
+function exposureIdentity(exposure: HarnessExposure): string {
+  return JSON.stringify([
+    exposure.harness,
+    exposure.sourceId,
+    exposure.effectiveName
+  ]);
+}
+
+function SkillProvenance({ skill }: { skill: SkillSummary }) {
+  const { t } = useI18n();
+  if (!skill.ownership) return null;
+  const sourceCount = skill.sourceIds?.length ?? 0;
+  return (
+    <div className="skill-provenance">
+      <span data-ownership={skill.ownership}>
+        {t(`skills.provenance.${skill.ownership}` as TranslationKey)}
+      </span>
+      {sourceCount > 0 ? (
+        <span title={skill.sourceIds?.join("\n")}>
+          {interpolate(t(sourceCount === 1 ? "skills.sourceCount" : "skills.sourceCountPlural"), { count: String(sourceCount) })}
+        </span>
+      ) : null}
+      {skill.ownership === "native-plugin" && skill.plugin ? (
+        <code>{skill.plugin.id}{skill.plugin.version ? ` · v${skill.plugin.version}` : ""}</code>
+      ) : null}
+    </div>
+  );
 }
 
 export function SkillsPage() {
@@ -32,6 +96,10 @@ export function SkillsPage() {
   const skills = useMemo(
     () => (dashboard.data?.skills ?? []).filter((skill) => `${skill.name} ${skill.description} ${skill.visibleTo.join(" ")}`.toLowerCase().includes(search.toLowerCase())),
     [dashboard.data?.skills, search]
+  );
+  const skillById = useMemo(
+    () => new Map((dashboard.data?.skills ?? []).map((skill) => [skill.id, skill])),
+    [dashboard.data?.skills]
   );
   const quarantinedInventory = useMemo(() => {
     const transactions = governance.data ?? [];
@@ -71,7 +139,7 @@ export function SkillsPage() {
         <div className="skill-state-stack">
           <section className="skill-state-section" role="region" aria-label={t("skills.active")}>
             <header><div><h2>{t("skills.active")}</h2><p>{t("skills.activeCopy")}</p></div><span>{skills.length}</span></header>
-            {skills.length ? <div className="skills-table" role="table"><div className="skills-row head" role="row"><span>{t("skills.name")}</span><span>{t("skills.scope")}</span><span>{t("skills.harnesses")}</span><span>{t("skills.context")}</span><span>{t("skills.action")}</span></div>{skills.map((skill) => <article className="skills-row" role="row" key={skill.id}><div><strong>{skill.name}</strong><p>{skill.description}</p></div><span className="scope-pill">{t(`scope.${skill.scope}` as TranslationKey)}</span><span className="harness-list">{skill.visibleTo.join(", ")}</span><strong className="numeric">{new Intl.NumberFormat(locale, { notation: "compact" }).format(skill.estimatedTokens)}</strong><button className="button governance-button" aria-label={`${t("governance.quarantine")} ${skill.name}`} onClick={() => setGovernanceAction({ kind: "quarantine", skill })}><Archive size={15} />{t("governance.quarantine")}</button></article>)}</div> : <div className="skill-state-empty">{search ? t("skills.noActiveSearch") : t("skills.noActive")}</div>}
+            {skills.length ? <div className="skills-table" role="table"><div className="skills-row head" role="row"><span>{t("skills.name")}</span><span>{t("skills.scope")}</span><span>{t("skills.harnesses")}</span><span>{t("skills.context")}</span><span>{t("skills.action")}</span></div>{skills.map((skill) => <article className="skills-row" role="row" aria-label={skill.name} key={skill.id}><div className="skill-identity"><strong>{skill.name}</strong><p>{skill.description}</p><SkillProvenance skill={skill} /></div><span className="scope-pill">{t(`scope.${skill.scope}` as TranslationKey)}</span><div className="harness-list">{skill.exposures?.length ? skill.exposures.map((exposure) => <span key={exposureIdentity(exposure)} data-state={exposure.state}>{exposureCopy(exposure, skillById, t)}</span>) : <span>{skill.visibleTo.map((harness) => harnessName(harness, t)).join(", ")}</span>}</div><strong className="numeric">{new Intl.NumberFormat(locale, { notation: "compact" }).format(skill.estimatedTokens)}</strong>{skill.ownership === "native-plugin" && skill.plugin ? <p className="plugin-manager-guidance">{interpolate(t("skills.pluginManager"), { harness: harnessName(skill.plugin.harness, t) })}</p> : <button className="button governance-button" aria-label={`${t("governance.quarantine")} ${skill.name}`} onClick={() => setGovernanceAction({ kind: "quarantine", skill })}><Archive size={15} />{t("governance.quarantine")}</button>}</article>)}</div> : <div className="skill-state-empty">{search ? t("skills.noActiveSearch") : t("skills.noActive")}</div>}
           </section>
 
           <section className="skill-state-section quarantined-section" role="region" aria-label={t("skills.quarantined")}>

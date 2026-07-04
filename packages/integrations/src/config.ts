@@ -10,6 +10,7 @@ import {
   writeFile
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   appendIntegrationRecord,
@@ -21,8 +22,11 @@ import {
   type IntegrationHarness
 } from "./domain.js";
 import { copilotHookConfig, copilotHookTarget } from "./config-adapters.js";
+import { companionSubplanSchema } from "./companion-domain.js";
+import { inspectCompanionSkill } from "./companion-skill.js";
 
 export type IntegrationErrorCode =
+  | "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
   | "INTEGRATION_CONFIG_INVALID"
   | "INTEGRATION_DUPLICATE"
   | "INTEGRATION_DRIFTED"
@@ -161,6 +165,7 @@ export const integrationPlanSchema = z.object({
   ),
   afterFingerprint: fingerprintSchema,
   installedEntryFingerprint: fingerprintSchema,
+  companion: companionSubplanSchema,
   changes: z.array(integrationChangeSchema).max(2),
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime()
@@ -218,6 +223,7 @@ export interface IntegrationStatus {
 export interface IntegrationConfigOptions {
   home: string;
   stateDirectory: string;
+  companionSourceDirectory?: string;
   now?: () => Date;
   id?: () => string;
 }
@@ -229,6 +235,14 @@ export interface IntegrationConfigDependencies {
 const integrationConfigDefaults: IntegrationConfigDependencies = {
   appendRecord: appendIntegrationRecord
 };
+
+const defaultCompanionSourceDirectory = fileURLToPath(
+  new URL("../assets/skill-steward-preflight", import.meta.url)
+);
+
+function companionSourceDirectory(options: IntegrationConfigOptions): string {
+  return resolve(options.companionSourceDirectory ?? defaultCompanionSourceDirectory);
+}
 
 function hash(value: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -628,6 +642,10 @@ export async function planIntegration(
   const targetPath = integrationTarget(harness, options.home);
   await assertSafeTarget(targetPath, options.home);
   const before = await readConfig(targetPath);
+  const companion = (await inspectCompanionSkill({
+    home: options.home,
+    sourceDirectory: companionSourceDirectory(options)
+  })).subplan;
   if (harness === "github-copilot") {
     const afterConfig = copilotHookConfig();
     const afterSource = stableJson(afterConfig);
@@ -647,6 +665,7 @@ export async function planIntegration(
       afterConfig,
       afterFingerprint,
       installedEntryFingerprint: afterFingerprint,
+      companion,
       changes: before.exists ? [] : [{ operation: "write", path: targetPath }],
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + INTEGRATION_PLAN_TTL_MS).toISOString()
@@ -693,6 +712,7 @@ export async function planIntegration(
     afterConfig,
     afterFingerprint: hash(afterSource),
     installedEntryFingerprint: bundleFingerprint(managedBundle(harness)),
+    companion,
     changes: fullyInstalled
       ? []
       : [
@@ -705,6 +725,58 @@ export async function planIntegration(
 }
 
 export async function applyIntegrationPlan(
+  inputPlan: unknown,
+  options: IntegrationConfigOptions
+): Promise<IntegrationRecord> {
+  const parsedPlan = integrationPlanSchema.safeParse(inputPlan);
+  if (!parsedPlan.success) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_INVALID",
+      "Integration plan failed strict domain validation"
+    );
+  }
+  const plan = parsedPlan.data;
+  const now = options.now?.() ?? new Date();
+  if (now.getTime() >= Date.parse(plan.expiresAt)) {
+    throw new IntegrationError(
+      "INTEGRATION_PLAN_EXPIRED",
+      "Integration plan has expired"
+    );
+  }
+  const harness = integrationHarnessSchema.parse(plan.harness);
+  const expectedCompanionPath = resolve(
+    options.home,
+    ".agents",
+    "skills",
+    "skill-steward-preflight"
+  );
+  if (
+    plan.companion.path !== expectedCompanionPath
+    || plan.companion.source.path !== companionSourceDirectory(options)
+  ) {
+    throw new IntegrationError(
+      "INTEGRATION_UNSAFE_PATH",
+      "Integration plan companion target or source is invalid"
+    );
+  }
+  if (plan.targetPath !== integrationTarget(harness, options.home)) {
+    throw new IntegrationError("INTEGRATION_UNSAFE_PATH", "Integration plan target is invalid");
+  }
+
+  // Phase 1 deliberately has no trusted ownership-record loader. Reinspect from
+  // disk without accepting plan-carried proof, then fail closed before any Hook
+  // or companion mutation. Phase 2 may authorize reviewed lifecycle actions.
+  await inspectCompanionSkill({
+    home: options.home,
+    sourceDirectory: companionSourceDirectory(options)
+  });
+  throw new IntegrationError(
+    "INTEGRATION_COMPANION_ACTION_UNAVAILABLE",
+    "Companion lifecycle apply is not available in Phase 1; no changes were made. Create a fresh plan after reviewed lifecycle transactions are enabled."
+  );
+}
+
+export async function applyIntegrationPlanInternal(
   inputPlan: unknown,
   options: IntegrationConfigOptions,
   dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
@@ -726,6 +798,27 @@ export async function applyIntegrationPlan(
     );
   }
   const harness = integrationHarnessSchema.parse(plan.harness);
+  const expectedCompanionPath = resolve(
+    options.home,
+    ".agents",
+    "skills",
+    "skill-steward-preflight"
+  );
+  if (
+    plan.companion.path !== expectedCompanionPath
+    || plan.companion.source.path !== companionSourceDirectory(options)
+  ) {
+    throw new IntegrationError(
+      "INTEGRATION_UNSAFE_PATH",
+      "Integration plan companion target or source is invalid"
+    );
+  }
+  if (plan.companion.action !== "none") {
+    throw new IntegrationError(
+      "INTEGRATION_COMPANION_ACTION_UNAVAILABLE",
+      "This companion action requires the reviewed lifecycle transaction, which is not available yet; no changes were made. Resolve any conflict and create a fresh plan after lifecycle transactions are enabled."
+    );
+  }
   const expectedTarget = integrationTarget(harness, options.home);
   if (plan.targetPath !== expectedTarget) {
     throw new IntegrationError("INTEGRATION_UNSAFE_PATH", "Integration plan target is invalid");

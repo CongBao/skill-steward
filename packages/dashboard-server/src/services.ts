@@ -2,6 +2,7 @@ import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import {
   discoverSkills,
+  scanInventory,
   scanPortfolio,
   standardRoots,
   type FindingLabel,
@@ -71,6 +72,7 @@ async function inspectRoot(root: SkillRoot): Promise<RootStatus> {
   const skills = readable ? await discoverSkills([root]) : [];
   return {
     harness: root.visibleTo[0] ?? "unknown",
+    visibleTo: [...root.visibleTo],
     scope: root.scope,
     path: root.path,
     available,
@@ -100,14 +102,13 @@ export function createDashboardServices(
     dashboard,
     latestReport: () => readLatestReport(options.stateDirectory),
     async scan(paths) {
-      const selectedRoots: SkillRoot[] = paths.length
-        ? paths.map((path) => ({
+      const report = paths.length
+        ? await scanPortfolio(paths.map((path): SkillRoot => ({
             path,
             scope: "unknown",
             visibleTo: ["unknown"]
-          }))
-        : standard();
-      const report = await scanPortfolio(selectedRoots, now());
+          })), now())
+        : await scanInventory({ home: options.home, cwd: options.cwd }, now());
       await writeLatestReport(options.stateDirectory, report);
       return dashboard();
     },

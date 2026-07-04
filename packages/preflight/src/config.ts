@@ -12,6 +12,7 @@ export const PREFLIGHT_CONFIG = Object.freeze({
   projectedCoverageTarget: 0.85,
   maxAvailableSkills: 3,
   maxCapabilityGaps: 6,
+  maxStandaloneCapabilityTerms: 3,
   redundancyWeight: 0.35,
   riskWeights: Object.freeze({
     critical: 0.4,

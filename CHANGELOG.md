@@ -4,6 +4,36 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+## [0.5.0-alpha.4] - 2026-07-04
+
+### Added
+
+- Core native inventory adapters inspect documented local direct and plugin Skill surfaces for Codex, Claude Code, and GitHub Copilot CLI. Reports and the dashboard separate source status, Harness coverage, and Skill exposure instead of treating directory presence as proof of availability.
+- **Source statuses:** `scanned`, `missing`, `unreadable`, `invalid`, `disabled`, `stale`, `ambiguous`, `truncated`
+- **Harness coverage:** `verified`, `partial`, `unavailable`, `convention-only`
+- **Skill exposure:** `effective`, `shadowed`, `inactive`, `ambiguous`
+- `skill-steward preflight --stdin --compact-json` provides a deterministic one-line Harness/Skill handoff of at most 4,096 UTF-8 bytes with selected use/install recommendations; companion Hook output remains capped at 2,048 bytes.
+
+### Changed
+
+- Preflight algorithm v7 and result schema v4 add recommendation-neutral, high-confidence capability-gap search hints with candidate relevance corroboration, a gap-only canonical namespace for task aliases and positive candidate coverage, exclusion of negative usage clauses from corroboration and coverage, canonical deduplication before the six-item bound, and a conservative no-credible-candidate fallback. Generic single-token names cannot corroborate a hint by exact name alone; specialized exact names and thresholded specific multi-concept evidence remain eligible. Shared routing retains its bounded Simplified/Traditional Chinese lexical behavior and does not recover low-confidence unsegmented two-character fragments.
+- Reports and the dashboard preserve native source, ownership, plugin, and exposure records. Preflight consumes resolved visibility, excludes shadowed or inactive Skills, and expresses relevant outcomes through reason codes and inventory warnings.
+
+### Safety and privacy
+
+- Native plugin-managed Skills are read-only in Skill Steward governance and are refused before quarantine/restore plan or evidence persistence; directly managed Skills retain reviewed quarantine and restore.
+- Compact Preflight omits raw task text, full candidate features, and readable reasons. Full `--json` returns the complete `PreflightResult`, including catalog `source` metadata for available catalog candidates, but does not embed native inventory ownership, plugin, source, or exposure records. Stored evidence remains privacy-reduced.
+
+### Distribution
+
+- The CLI version is `0.5.0-alpha.4`. The locked runtime audit records `jsonc-parser@3.3.1` under MIT and `smol-toml@1.7.0` under BSD-3-Clause; report-only development dependency `marked` is not part of the runtime audit.
+
+### Limitations
+
+- Native semantics are verified only for documented local Codex, Claude Code, and GitHub Copilot CLI surfaces. GitHub Copilot Harness coverage can remain `partial`; an affected source or Skill exposure can remain `ambiguous` when local proof is unavailable.
+- A scan is a current-workspace snapshot plus user scopes, not a crawl of every project or workspace. Across the total 30 Harnesses, coverage outside the three core adapters remains `convention-only` directory inventory/install coverage where native semantics are not verified.
+- This remains an active Alpha. Plugin management and Hook support stop at the documented adapters, routing remains lexical, and lifecycle evidence does not measure task success.
+
 ## [0.5.0-alpha.3] - 2026-07-03
 
 ### Added

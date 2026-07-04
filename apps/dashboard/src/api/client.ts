@@ -1,6 +1,6 @@
 export interface ApiEnvelope<T> {
   data: T | null;
-  error: null | { code: string; message: string };
+  error: null | { code: string; message: string; data?: unknown };
   meta: { apiVersion: number };
 }
 
@@ -23,6 +23,41 @@ export interface SkillSummary {
   fingerprint: string;
   files: Array<{ relativePath: string; bytes: number; sha256: string }>;
   estimatedTokens: number;
+  ownership?: "direct" | "native-plugin";
+  sourceIds?: string[];
+  plugin?: { harness: string; id: string; version?: string };
+  exposures?: HarnessExposure[];
+}
+
+export interface HarnessExposure {
+  harness: string;
+  effectiveName: string;
+  state: "effective" | "shadowed" | "inactive" | "ambiguous";
+  sourceId: string;
+  shadowedBy?: string;
+  reason: string;
+}
+
+export interface InventorySource {
+  id: string;
+  harness: string;
+  scope: "global" | "project" | "unknown";
+  kind: "direct-root" | "inherited-root" | "admin-root" | "native-plugin" | "skills-directory-plugin" | "convention-root";
+  path: string;
+  manifestPath?: string;
+  plugin?: { id: string; version?: string };
+  status: "scanned" | "missing" | "unreadable" | "invalid" | "disabled" | "stale" | "ambiguous" | "truncated";
+  skillCount: number;
+  effectiveSkillCount: number;
+  diagnostic?: { code: string; message: string };
+}
+
+export interface HarnessCoverage {
+  harness: string;
+  status: "verified" | "partial" | "unavailable" | "convention-only";
+  sourceIds: string[];
+  skillCount: number;
+  effectiveSkillCount: number;
 }
 
 export interface FindingSummary {
@@ -55,13 +90,19 @@ export interface DashboardSnapshot {
     estimatedTokens: number;
   }>;
   roots: Array<{
+    /** @deprecated Use visibleTo for the complete Harness alias set. */
     harness: string;
+    visibleTo: string[];
     scope: string;
     path: string;
     available: boolean;
     readable: boolean;
     skillCount: number;
   }>;
+  inventory: null | {
+    sources: InventorySource[];
+    harnesses: HarnessCoverage[];
+  };
 }
 
 function mutationToken(): string {
@@ -79,6 +120,11 @@ export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
+  if (import.meta.env.DEV) {
+    const { inventoryCoverageFixtureResponse } = await import("./inventoryCoverageFixture.js");
+    const fixture = inventoryCoverageFixtureResponse(path);
+    if (fixture.found) return fixture.data as T;
+  }
   const method = init.method ?? "GET";
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -160,7 +206,11 @@ export type PreflightReasonCode =
   | "INSTALL_REQUIRED"
   | "CRITICAL_RISK"
   | "NEGATIVE_TRIGGER"
-  | "HARNESS_INCOMPATIBLE";
+  | "HARNESS_INCOMPATIBLE"
+  | "HARNESS_SHADOWED"
+  | "HARNESS_INACTIVE"
+  | "HARNESS_AMBIGUOUS"
+  | "INVENTORY_RESCAN_REQUIRED";
 
 export interface PreflightCandidate {
   candidateId: string;
@@ -199,7 +249,7 @@ export interface PreflightCandidate {
 }
 
 export interface PreflightResult {
-  schemaVersion: 3;
+  schemaVersion: 4;
   algorithmVersion: number;
   id: string;
   generatedAt: string;
@@ -211,6 +261,11 @@ export interface PreflightResult {
   installCandidateIds: string[];
   candidates: PreflightCandidate[];
   conflicts: FindingSummary[];
+  inventoryWarnings: Array<{
+    code: "HARNESS_AMBIGUOUS";
+    harness: string;
+    detail: string;
+  }>;
   capabilityGaps: string[];
   installedCoverage: number;
   projectedCoverage: number;
@@ -542,6 +597,10 @@ export interface GovernanceAlias {
   rootPath: string;
 }
 
+export type GovernanceSkillOwnership =
+  | { ownership: "direct" }
+  | { ownership: "native-plugin"; harness: string };
+
 export type GovernanceOperation =
   | { operation: "copy-to-staging"; from: string; to: string }
   | { operation: "verify-staging"; path: string; fingerprint: string }
@@ -552,8 +611,7 @@ export type GovernanceOperation =
   | { operation: "cleanup-rollback"; path: string }
   | { operation: "cleanup-vault"; path: string };
 
-export interface GovernancePlan {
-  schemaVersion: 1;
+interface GovernancePlanBase {
   id: string;
   kind: "quarantine" | "restore";
   sourceTransactionId?: string;
@@ -571,8 +629,12 @@ export interface GovernancePlan {
   expiresAt: string;
 }
 
-export interface GovernanceTransaction {
-  schemaVersion: 1;
+export type GovernancePlan = GovernancePlanBase & (
+  | { schemaVersion: 1; skillOwnership?: never }
+  | { schemaVersion: 2; skillOwnership: GovernanceSkillOwnership }
+);
+
+interface GovernanceTransactionBase {
   id: string;
   sourceTransactionId?: string;
   action: "quarantine" | "restore";
@@ -587,10 +649,19 @@ export interface GovernanceTransaction {
   failureBoundary?: "copy" | "verify" | "move" | "vault" | "journal" | "restore";
 }
 
+export type GovernanceTransaction = GovernanceTransactionBase & (
+  | { schemaVersion: 1; skillOwnership?: never }
+  | { schemaVersion: 2; skillOwnership: GovernanceSkillOwnership }
+);
+
 export interface GovernanceApplyResult {
   transaction: GovernanceTransaction;
   rescanRequired: true;
   cleanupPending: boolean;
+  postCommitWarnings?: Array<{
+    code: "GOVERNANCE_REFRESH_FAILED" | "GOVERNANCE_EVIDENCE_FAILED";
+    message: string;
+  }>;
 }
 
 export type GovernancePlanRequest =

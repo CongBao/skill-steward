@@ -1,6 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, normalize, relative } from "node:path";
-import { scanPortfolio, standardRoots } from "@skill-steward/engine";
+import { scanInventory } from "@skill-steward/engine";
 import {
   catalogCandidateSource,
   verifyCatalogCandidateInspection
@@ -219,8 +219,8 @@ async function refreshAfterCommit(
   context: CliContext
 ): Promise<PortfolioRefreshResult> {
   try {
-    const report = await scanPortfolio(
-      standardRoots({ home: context.home, cwd: workspace }),
+    const report = await scanInventory(
+      { home: context.home, cwd: workspace },
       context.now?.() ?? new Date()
     );
     await writeLatestReport(context.stateDir, report);

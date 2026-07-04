@@ -6,13 +6,18 @@ import {
   stat
 } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { z } from "zod";
 import {
-  skillRecordSchema,
+  skillRecordV1Schema,
+  skillRecordV2Schema,
+  mutableRootAuthorizes,
   type SkillRecord,
+  type SkillRecordV2,
   type SkillRoot
 } from "@skill-steward/engine";
 import { fingerprintDirectory } from "@skill-steward/installer";
 import {
+  assertMutableSkillOwnership,
   GovernanceError,
   governancePlanIdSchema,
   governancePlanSchema,
@@ -23,6 +28,11 @@ import {
 } from "./domain.js";
 
 const PLAN_TTL_MS = 10 * 60_000;
+type GovernanceMutableRoot = SkillRoot & { excludedPaths?: string[] };
+const governableSkillSchema = z.union([
+  skillRecordV1Schema,
+  skillRecordV2Schema
+]);
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -83,7 +93,10 @@ async function physicalDirectory(path: string, code: "SOURCE_UNSAFE" | "UNSAFE_D
   }
 }
 
-async function aliasesFor(sourcePath: string, roots: SkillRoot[]): Promise<GovernanceAlias[]> {
+async function aliasesFor(
+  sourcePath: string,
+  roots: GovernanceMutableRoot[]
+): Promise<GovernanceAlias[]> {
   const aliases: GovernanceAlias[] = [];
   for (const root of roots) {
     let physicalRoot: string;
@@ -92,7 +105,13 @@ async function aliasesFor(sourcePath: string, roots: SkillRoot[]): Promise<Gover
     } catch {
       continue;
     }
-    if (!isWithin(physicalRoot, sourcePath)) continue;
+    const excludedPaths = await Promise.all((root.excludedPaths ?? []).map(async (path) =>
+      realpath(resolve(path)).catch(() => resolve(path))
+    ));
+    if (!mutableRootAuthorizes(
+      { ...root, path: physicalRoot, excludedPaths },
+      sourcePath
+    )) continue;
     for (const harness of root.visibleTo) {
       aliases.push({ harness, scope: root.scope, rootPath: physicalRoot });
     }
@@ -138,15 +157,21 @@ function planId(input: string): string {
 }
 
 export interface PlanQuarantineInput {
-  skill: SkillRecord;
-  activeRoots: SkillRoot[];
+  skill: SkillRecord | SkillRecordV2;
+  activeRoots: GovernanceMutableRoot[];
   stateDirectory: string;
   now?: Date;
   id?: () => string;
 }
 
 export async function planQuarantine(input: PlanQuarantineInput): Promise<GovernancePlan> {
-  const skill = skillRecordSchema.parse(input.skill);
+  const skill = governableSkillSchema.parse(input.skill);
+  const skillOwnership = "ownership" in skill
+    ? skill.ownership === "native-plugin"
+      ? { ownership: skill.ownership, harness: skill.plugin.harness } as const
+      : { ownership: skill.ownership } as const
+    : { ownership: "direct" } as const;
+  assertMutableSkillOwnership(skillOwnership);
   const activePath = resolve(skill.path);
   const metadata = await lstat(activePath).catch((error) => {
     throw new GovernanceError("SOURCE_UNSAFE", `Active Skill is unavailable: ${String(error)}`);
@@ -196,11 +221,12 @@ export async function planQuarantine(input: PlanQuarantineInput): Promise<Govern
 
   const now = input.now ?? new Date();
   return governancePlanSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     kind: "quarantine",
     skillId: skill.id,
     skillName: skill.name,
+    skillOwnership,
     activePath: physicalSource,
     vaultPath,
     stagingPath,
@@ -223,7 +249,7 @@ export async function planQuarantine(input: PlanQuarantineInput): Promise<Govern
 
 export interface PlanRestoreInput {
   quarantined: QuarantinedSkill;
-  activeRoots: SkillRoot[];
+  activeRoots: GovernanceMutableRoot[];
   stateDirectory: string;
   now?: Date;
   id?: () => string;
@@ -231,6 +257,10 @@ export interface PlanRestoreInput {
 
 export async function planRestore(input: PlanRestoreInput): Promise<GovernancePlan> {
   const quarantined = quarantinedSkillSchema.parse(input.quarantined);
+  const skillOwnership = quarantined.schemaVersion === 2
+    ? quarantined.skillOwnership
+    : { ownership: "direct" } as const;
+  assertMutableSkillOwnership(skillOwnership);
   const physicalState = await physicalDirectory(input.stateDirectory, "UNSAFE_DESTINATION");
   await assertManagedQuarantineContainer(physicalState);
   const expectedTransactionRoot = join(physicalState, "quarantine", quarantined.transactionId);
@@ -267,12 +297,13 @@ export async function planRestore(input: PlanRestoreInput): Promise<GovernancePl
   await assertAbsent(stagingPath);
   const now = input.now ?? new Date();
   return governancePlanSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     kind: "restore",
     sourceTransactionId: quarantined.transactionId,
     skillId: quarantined.skillId,
     ...(quarantined.skillName ? { skillName: quarantined.skillName } : {}),
+    skillOwnership,
     activePath,
     vaultPath,
     stagingPath,

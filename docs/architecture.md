@@ -12,12 +12,14 @@ flowchart LR
   Hook --> Services
   Observe --> Services
   Server --> Services
-  Services --> Preflight[Preflight algorithm v4 / schema v3]
+  Services --> Inventory[Native inventory and visibility]
+  Services --> Preflight[Preflight algorithm v7 / schema v4]
   Services --> Catalog[Cached catalog metadata]
   Services --> Installer[Reviewed installer]
   Services --> Evidence[Privacy-safe evidence]
   Services --> Governance[Quarantine / restore]
   Services --> Insights[Portfolio insights]
+  Inventory --> Store
   Preflight --> Store[Validated local state]
   Catalog --> Store
   Installer --> Journal[Transactions and backups]
@@ -29,10 +31,10 @@ flowchart LR
 
 ## Package boundaries
 
-- `packages/engine` owns root discovery, parsing, fingerprints, findings, overlap analysis, and the shared Harness root catalog.
+- `packages/engine` owns root discovery, parsing, fingerprints, findings, overlap analysis, the shared Harness root catalog, and core native inventory adapters for documented Codex, Claude Code, and GitHub Copilot CLI surfaces.
 - `packages/insights` converts reports into deterministic health and KPI presentation models.
 - `packages/catalog` defines source metadata, disabled presets, Git refresh, last-known-good behavior, candidate identity, and installation reinspection. It does not persist data itself.
-- `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English `do not use ... for/when ...` routing clauses, and installation penalties. Algorithm v4 requires at least two shared task terms for non-name matches and uses word-level Chinese routing instead of isolated-character overlap. It has no filesystem or network I/O.
+- `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English `do not use ... for/when ...` routing clauses, and installation penalties. Algorithm v7 requires at least two shared task terms for non-name matches, deterministically canonicalizes a bounded set of Simplified/Traditional Chinese routing concepts, and derives recommendation-neutral capability-gap hints through a separate display path. In that path, a name match must contribute a specific canonical concept; generic single-token names still need the normal specific multi-concept relevance evidence. Task aliases, positive candidate metadata, and selected positive coverage project into one canonical namespace; negative usage clauses neither corroborate nor cover a hint. Shared routing does not recover low-confidence unsegmented two-character fragments. It remains lexical rather than general cross-language semantic understanding and has no filesystem or network I/O.
 - `packages/evidence` defines strict content-free evidence, policy, lifecycle, metric, breakdown, and readiness schemas plus pure aggregation.
 - `packages/integrations` defines compact Hook protocols, the shared capability matrix, transactional Codex/Claude/Copilot configuration, readiness rollback, trust status, and companion-Skill file operations.
 - `packages/store` owns validated atomic reports, private reviewed-plan envelopes, catalog metadata, bounded history, labels, fragment-based integration records, the shared portfolio mutation lease, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
@@ -42,13 +44,29 @@ flowchart LR
 - `apps/dashboard` is a dashboard and configuration client. It does not contain a second analysis or mutation implementation. Presentation code resolves affected Skill names, treats an empty scanned portfolio as unscored, and formats KPI values from the current snapshot rather than example numbers.
 - `packages/cli` exposes the same services headlessly and bundles the dashboard plus companion Skill. Its human Preflight output is bounded and readable; the explicit CLI feedback command writes labels through the existing evidence store.
 
+## Native inventory and visibility
+
+Finding a directory does not prove the Harness can use the Skill. The native inventory and visibility resolver plans documented local direct and plugin Skill sources for Codex, Claude Code, and GitHub Copilot CLI, then keeps three taxonomies separate:
+
+- **Source statuses:** `scanned`, `missing`, `unreadable`, `invalid`, `disabled`, `stale`, `ambiguous`, `truncated`
+- **Harness coverage:** `verified`, `partial`, `unavailable`, `convention-only`
+- **Skill exposure:** `effective`, `shadowed`, `inactive`, `ambiguous`
+
+Reports keep source status, Harness coverage, and Skill exposure records instead of treating every directory as an active Skill count. Copilot Harness coverage can be `partial` when local runtime or MDM evidence is incomplete. An affected source or Skill exposure can be `ambiguous` when local files do not prove activation or precedence.
+
+Native plugin-managed Skills are read-only to Skill Steward governance and remain the owning Harness's responsibility. Quarantine and restore accept directly managed Skills only. Across the total 30 Harnesses, coverage outside the three core adapters is convention-only directory inventory/install coverage where native semantics are not verified.
+
+Every scan is a current-workspace snapshot plus user scopes. It walks ancestors for that workspace but does not crawl every project or workspace on the machine.
+
 ## Task-time data flow
 
-The Codex and Claude Code adapters run `skill-steward hook prompt` when a user submits a prompt. The command reads the latest installed-portfolio report and cached catalog index, calls deterministic Preflight algorithm v4, and emits at most 2,048 bytes of additional context. Algorithm v4 uses word-level Chinese Han segmentation and removes common Simplified- and Traditional-Chinese workflow terms so isolated characters cannot create relevance. Because word boundaries come from Node's ICU/CLDR data, a non-reference ICU/CLDR/Unicode combination receives a distinct numeric algorithm identity and is separated in evidence. Japanese kana and Korean Hangul are not currently tokenized. Their completion Hooks record content-free turn/session reasons only in opt-in learning mode. Invalid input, missing state, timeout, HMAC failure, or evidence-write failure returns protocol-valid non-blocking JSON so the Harness continues normally.
+The Codex and Claude Code adapters run `skill-steward hook prompt` when a user submits a prompt. The command reads the latest installed-portfolio report and cached catalog index, calls deterministic Preflight algorithm v7 with result schema v4, and emits at most 2,048 bytes of additional context. The algorithm combines word-level Han segmentation with bounded Simplified/Traditional concept canonicalization; a non-reference ICU/CLDR/Unicode combination receives a distinct numeric algorithm identity and is separated in evidence. Japanese kana and Korean Hangul are not currently tokenized. Candidate-corroborated capability-gap search hints use a separate display-only normalization path and require either an exact name containing a specific canonical concept or thresholded multi-concept relevance. Generic and broad concepts do not satisfy either evidence count. The path places task display aliases, strong positive route concepts, and selected positive coverage in one canonical namespace. Negative usage clauses are removed from both candidate corroboration and selected coverage, while scoring route terms remain unchanged. Canonical concepts, including bounded `-ing`/`-ed` and plural families, deduplicate before the six-item bound and never feed recommendation scoring. A conservative fallback emits only a small non-generic concept set when no candidate provides credible evidence; low-confidence unsegmented two-character Han fragments remain empty. Completion Hooks record content-free turn/session reasons only in opt-in learning mode. Invalid input, missing state, timeout, HMAC failure, or evidence-write failure returns protocol-valid non-blocking JSON so the Harness continues normally.
+
+`skill-steward preflight --stdin --compact-json` is the Harness/Skill handoff contract. It emits one JSON line within 4,096 UTF-8 bytes and carries selected use/install recommendations, stable warning codes, coverage, context, and a feedback command. Raw task text, full candidate features, and readable reasons stay out of this compact payload. The full `--json` output is the complete `PreflightResult`: candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage; available catalog candidates may retain catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. Portfolio reports and the dashboard preserve those records. Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain separately capped at 2,048 bytes. Both paths use the same privacy-reduced evidence boundary and never persist raw task text.
 
 GitHub Copilot CLI uses a separate observe-only adapter. Its dedicated `~/.copilot/hooks/skill-steward.json` file observes `userPromptSubmitted` and `sessionEnd`, always returns `{}`, and never injects recommendation context. The companion Skill or explicit CLI remains its recommendation surface. This distinction is encoded in the capability model instead of inferred by the UI.
 
-Task-time analysis never refreshes catalogs. Network access occurs only when a user explicitly runs `catalog refresh` or confirms the equivalent dashboard action. A refresh stages enabled public HTTPS Git sources with repository Hooks and submodules disabled, validates every candidate, and atomically replaces the metadata index. Failed sources retain last-known-good records and receive a stale/error status.
+Task-time analysis never refreshes catalogs. Network access occurs only when a user explicitly runs `catalog refresh` or confirms the equivalent dashboard action. A refresh stages enabled public HTTPS Git sources with repository Hooks and submodules disabled, validates every candidate, and atomically replaces the metadata index. This is a separate catalog taxonomy: a failed refresh with last-known-good records receives catalog source status `stale`; without prior records, its catalog source status is `error`.
 
 ## Trust boundaries
 
@@ -60,7 +78,7 @@ Codex and Claude Code integration changes are structural JSON merges. Copilot ow
 
 Evidence defaults to `minimal`. A fingerprint-bound, expiring plan is required before enabling `learning`, which adds numeric candidate features and HMAC-pseudonymous lifecycle events. Raw prompts, terms, paths, Harness IDs, transcripts, assistant content, and tool data are not valid evidence schema fields. The 32-byte salt is private, is never exported, and is removed only by an exact evidence-erase plan.
 
-Governance mutations also require exact ten-minute plans. Quarantine verifies a private staging copy before moving the active Skill, commits a vault copy, journals the transaction, and only then cleans rollback data. Restore refuses destination conflicts and vault drift. Failure recovery preserves at least one fingerprint-verified copy at every injected boundary. There is no permanent-delete operation in the governance package, CLI, API, or dashboard.
+Governance mutations also require exact ten-minute plans. Quarantine verifies a private staging copy before moving a directly managed active Skill, commits a vault copy, journals the transaction, and only then cleans rollback data. Restore refuses destination conflicts and vault drift. Native plugin-managed Skills are refused before plan creation or event persistence and must be managed through their owning Harness. Failure recovery preserves at least one fingerprint-verified copy at every injected boundary. There is no permanent-delete operation in the governance package, CLI, API, or dashboard.
 
 ## Reviewed mutation flow
 

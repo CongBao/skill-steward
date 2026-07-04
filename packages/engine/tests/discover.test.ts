@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -46,5 +46,39 @@ describe("discoverSkills", () => {
     await expect(discoverSkills([
       { path: join(tmpdir(), "definitely-missing-skill-root"), scope: "unknown", visibleTo: ["unknown"] }
     ])).resolves.toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("preserves compatibility for a symlinked custom root", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-root-alias-"));
+    const physicalRoot = join(base, "physical-root");
+    const skill = join(physicalRoot, "review");
+    const rootAlias = join(base, "root-alias");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review code\n---\n");
+    await symlink(physicalRoot, rootAlias, "dir");
+
+    const skills = await discoverSkills([
+      { path: rootAlias, scope: "project", visibleTo: ["agents"] }
+    ]);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.roots[0]?.path).toBe(rootAlias);
+  });
+
+  it.skipIf(process.platform === "win32")("preserves compatibility for a readable symlinked SKILL.md", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-marker-alias-"));
+    const root = join(base, "skills");
+    const skill = join(root, "review");
+    const marker = join(base, "shared-SKILL.md");
+    await mkdir(skill, { recursive: true });
+    await writeFile(marker, "---\nname: review\ndescription: Review code\n---\n");
+    await symlink(marker, join(skill, "SKILL.md"), "file");
+
+    const skills = await discoverSkills([
+      { path: root, scope: "project", visibleTo: ["agents"] }
+    ]);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.path).toBe(await realpath(skill));
   });
 });

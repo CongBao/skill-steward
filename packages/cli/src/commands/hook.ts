@@ -6,7 +6,7 @@ import {
   runPromptHook,
   type PromptInjectionHarness
 } from "@skill-steward/integrations";
-import { analyzePreflight } from "@skill-steward/preflight";
+import { analyzePreflight, PreflightError } from "@skill-steward/preflight";
 import {
   appendPreflightEvidence,
   appendEvidenceEvent,
@@ -82,6 +82,11 @@ export async function hookPromptCommand(
           readCatalogSnapshot(context.stateDir)
         ]);
         if (!report) throw new Error("No cached portfolio report is available");
+        if (report.schemaVersion !== 2) {
+          const error = new PreflightError("INVENTORY_RESCAN_REQUIRED");
+          debug(context, error);
+          throw error;
+        }
         const result = analyzePreflight({
           task,
           report,
