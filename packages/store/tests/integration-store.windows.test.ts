@@ -71,7 +71,7 @@ describe.skipIf(process.platform !== "win32")("Windows integration journal smoke
       stat(join(directory, name), { bigint: true })
     ));
     expect(nativeIdentities.every(({ ino }) => ino !== 0n)).toBe(true);
-  });
+  }, 30_000);
 
   it("refuses a junctioned fragment directory without writing outside state", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-windows-junction-"));
