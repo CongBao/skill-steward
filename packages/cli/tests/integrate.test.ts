@@ -119,7 +119,9 @@ describe("integrate command", () => {
       id: string;
       expiresAt: string;
       changes: Array<{ operation: string; path: string }>;
-      applyCommand: string;
+      applyAvailable: boolean;
+      applyCommand: string | null;
+      applyUnavailableReason: string;
       companion: { action: string; proof: { kind: string } };
     };
     await authorizeRecordedCompanion(current.context.stateDir, plan.id);
@@ -136,7 +138,7 @@ describe("integrate command", () => {
     return code;
   }
 
-  it("fails closed without installing a missing companion in the read-only phase", async () => {
+  it("fails closed without installing a missing companion before transactions are enabled", async () => {
     const fresh = await fixture();
     expect(await run([
       "integrate", "plan", "--harness", "codex", "--json"
@@ -152,9 +154,14 @@ describe("integrate command", () => {
       .toContain("INTEGRATION_COMPANION_ACTION_UNAVAILABLE");
     expect(await exists(skill)).toBe(false);
     expect(await exists(config)).toBe(false);
+    expect(await run([
+      "integrate", "apply", "--plan", plan.id, "--confirm"
+    ], fresh.context)).toBe(1);
+    expect(fresh.stderr.splice(0).join(""))
+      .toContain("REVIEWED_PLAN_NOT_FOUND");
   });
 
-  it("keeps Phase 1 apply and remove free of legacy companion mutators", async () => {
+  it("keeps lifecycle apply and remove free of legacy companion mutators", async () => {
     const source = await readFile(
       new URL("../src/commands/integrate.ts", import.meta.url),
       "utf8"
@@ -169,7 +176,9 @@ describe("integrate command", () => {
     const plan = await preview("codex");
     expect(plan).toMatchObject({
       changes: expect.arrayContaining([expect.objectContaining({ operation: "write" })]),
-      applyCommand: `skill-steward integrate apply --plan ${plan.id} --confirm`,
+      applyAvailable: false,
+      applyCommand: null,
+      applyUnavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED",
       companion: {
         action: "conflict",
         proof: { kind: "conflict" }
@@ -198,7 +207,13 @@ describe("integrate command", () => {
     expect(await run([
       "integrate", "status", "--harness", "codex", "--json"
     ], current.context)).toBe(0);
-    expect(JSON.parse(current.stdout.join(""))).toMatchObject({ status: "needs-trust" });
+    expect(JSON.parse(current.stdout.join(""))).toMatchObject({
+      status: "needs-trust",
+      companion: {
+        status: "conflict",
+        reason: "COMPANION_LEGACY_TREE_NOT_ALLOWLISTED"
+      }
+    });
   });
 
   it("uses shared native inventory for the initial readiness scan", async () => {
@@ -248,7 +263,7 @@ describe("integrate command", () => {
     expect(await apply(plan.id)).toBe(0);
   });
 
-  it("retains the shared Skill after every Phase 1 Hook removal", async () => {
+  it("retains the shared Skill before consumer-aware removal is enabled", async () => {
     for (const harness of ["codex", "claude-code", "github-copilot"]) {
       expect(await apply((await preview(harness)).id)).toBe(0);
     }

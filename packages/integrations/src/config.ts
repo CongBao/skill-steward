@@ -23,7 +23,8 @@ import {
 } from "./domain.js";
 import { copilotHookConfig, copilotHookTarget } from "./config-adapters.js";
 import { companionSubplanSchema } from "./companion-domain.js";
-import { inspectCompanionSkill } from "./companion-skill.js";
+import { inspectCompanionSkillWithProof } from "./companion-inspector-internal.js";
+import type { CompanionSkillStatus } from "./companion-shared.js";
 
 export type IntegrationErrorCode =
   | "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
@@ -218,7 +219,14 @@ export interface IntegrationStatus {
   targetPath: string;
   lastChangedAt?: string;
   message?: string;
+  companion: {
+    status: CompanionSkillStatus;
+    reason: string;
+    path: string;
+  };
 }
+
+type HookIntegrationStatus = Omit<IntegrationStatus, "companion">;
 
 export interface IntegrationConfigOptions {
   home: string;
@@ -263,6 +271,25 @@ function canonicalJson(value: unknown): string {
     return entry;
   };
   return JSON.stringify(canonicalize(value));
+}
+
+async function revalidateCompanionSubplan(
+  plan: IntegrationPlan,
+  options: IntegrationConfigOptions,
+  harness: IntegrationHarness
+): Promise<void> {
+  const current = await inspectCompanionSkillWithProof({
+    home: options.home,
+    sourceDirectory: companionSourceDirectory(options),
+    stateDirectory: options.stateDirectory,
+    harness
+  });
+  if (canonicalJson(current.subplan) !== canonicalJson(plan.companion)) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Companion Skill state changed after this plan was reviewed; the plan was consumed without making changes"
+    );
+  }
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -642,9 +669,11 @@ export async function planIntegration(
   const targetPath = integrationTarget(harness, options.home);
   await assertSafeTarget(targetPath, options.home);
   const before = await readConfig(targetPath);
-  const companion = (await inspectCompanionSkill({
+  const companion = (await inspectCompanionSkillWithProof({
     home: options.home,
-    sourceDirectory: companionSourceDirectory(options)
+    sourceDirectory: companionSourceDirectory(options),
+    stateDirectory: options.stateDirectory,
+    harness
   })).subplan;
   if (harness === "github-copilot") {
     const afterConfig = copilotHookConfig();
@@ -763,16 +792,18 @@ export async function applyIntegrationPlan(
     throw new IntegrationError("INTEGRATION_UNSAFE_PATH", "Integration plan target is invalid");
   }
 
-  // Phase 1 deliberately has no trusted ownership-record loader. Reinspect from
-  // disk without accepting plan-carried proof, then fail closed before any Hook
-  // or companion mutation. Phase 2 may authorize reviewed lifecycle actions.
-  await inspectCompanionSkill({
-    home: options.home,
-    sourceDirectory: companionSourceDirectory(options)
-  });
+  await assertSafeTarget(plan.targetPath, options.home);
+  const currentConfig = await readConfig(plan.targetPath);
+  if (currentConfig.fingerprint !== plan.expectedBeforeFingerprint) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Harness configuration changed after this plan was reviewed; the plan was consumed without making changes"
+    );
+  }
+  await revalidateCompanionSubplan(plan, options, harness);
   throw new IntegrationError(
     "INTEGRATION_COMPANION_ACTION_UNAVAILABLE",
-    "Companion lifecycle apply is not available in Phase 1; no changes were made. Create a fresh plan after reviewed lifecycle transactions are enabled."
+    "Companion lifecycle apply remains read-only in this release; the reviewed plan was revalidated and no changes were made. Apply becomes available with the transaction-safe lifecycle phase."
   );
 }
 
@@ -1008,13 +1039,18 @@ export async function rollbackIntegrationPlan(
   return record;
 }
 
-export async function integrationStatus(
+async function integrationHookStatus(
   inputHarness: IntegrationHarness,
   options: IntegrationConfigOptions
-): Promise<IntegrationStatus> {
+): Promise<HookIntegrationStatus> {
   const harness = integrationHarnessSchema.parse(inputHarness);
   const targetPath = integrationTarget(harness, options.home);
-  const latest = await latestIntegrationRecord(options.stateDirectory, harness);
+  let latest: IntegrationRecord | null = null;
+  try {
+    latest = await latestIntegrationRecord(options.stateDirectory, harness);
+  } catch {
+    latest = null;
+  }
   try {
     await assertSafeTarget(targetPath, options.home);
     const current = await readConfig(targetPath);
@@ -1114,6 +1150,34 @@ export async function integrationStatus(
     }
     throw error;
   }
+}
+
+export async function integrationStatus(
+  inputHarness: IntegrationHarness,
+  options: IntegrationConfigOptions
+): Promise<IntegrationStatus> {
+  const harness = integrationHarnessSchema.parse(inputHarness);
+  const [hook, companionInspection] = await Promise.all([
+    integrationHookStatus(harness, options),
+    inspectCompanionSkillWithProof({
+      home: options.home,
+      sourceDirectory: companionSourceDirectory(options),
+      stateDirectory: options.stateDirectory,
+      harness
+    }).catch(() => ({
+      status: "unknown" as const,
+      reason: "COMPANION_INSPECTION_UNAVAILABLE",
+      path: resolve(options.home, ".agents", "skills", "skill-steward-preflight")
+    }))
+  ]);
+  return {
+    ...hook,
+    companion: {
+      status: companionInspection.status,
+      reason: companionInspection.reason,
+      path: companionInspection.path
+    }
+  };
 }
 
 export async function removeIntegration(

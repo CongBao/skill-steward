@@ -12,17 +12,17 @@ Run each row from a clean checkout. Manual mutation journeys must use a disposab
 |---|---|---|
 | Public contract and CLI version | `CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts` | Both READMEs state the bounded native/compact contracts, help exposes reviewed-plan syntax, and the binary reports `0.5.0-alpha.4`. |
 | Native adapter coverage and current-workspace snapshot limitation | `CI=true pnpm --filter @skill-steward/engine exec vitest run tests/codex-inventory.test.ts tests/claude-inventory.test.ts tests/copilot-inventory.test.ts tests/inventory-workspace.test.ts tests/visibility-resolution.test.ts` | Documented local sources reach exact terminal statuses; Harness coverage and Skill exposure resolve separately; scans cover the chosen workspace ancestors and user scopes without crawling unrelated workspaces. |
-| Compact handoff output and bilingual concept matching | `CI=true pnpm --filter @skill-steward/preflight exec vitest run tests/analyze.test.ts tests/tokenize.test.ts tests/compact.test.ts` | Algorithm v8/result schema v4 preserves visibility and recommendation decisions, compact schema v2 stays within 4,096 UTF-8 bytes, the bounded pre-merge review profile resists generic names and negation, and low-confidence two-character fragments remain empty. |
+| Compact handoff output and bilingual concept matching | `CI=true pnpm --filter @skill-steward/preflight exec vitest run tests/analyze.test.ts tests/tokenize.test.ts tests/compact.test.ts` | Algorithm v8/result schema v4 preserves visibility and recommendation decisions, compact schema v3 stays within 4,096 UTF-8 bytes and nulls unavailable feedback, the bounded pre-merge review profile resists generic names and negation, and low-confidence two-character fragments remain empty. |
 | Native governance refusal | `CI=true pnpm --filter skill-steward exec vitest run tests/govern.test.ts tests/preflight.test.ts` | Native plugin-managed Skills remain visible but cannot enter quarantine/restore plans; direct Skills remain eligible; compact CLI output stays bounded. |
 | Exact reviewed plans | `CI=true pnpm --filter skill-steward exec vitest run tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts` | Plans survive a new process, apply the inspected payload once, stop on drift, and require a fresh preview after claim. |
-| Integration readiness and serialization | `CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts` | Apply writes an initial cached portfolio; a failed readiness scan rolls back safe new artifacts; a busy caller does not consume its plan. |
+| Integration review-only boundary | `CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts && CI=true pnpm --filter @skill-steward/dashboard-server exec vitest run tests/integrations.test.ts` | Plans bind exact Hook, companion, source, proof, record-head, and consumer evidence; public apply is refused, consumes the single-use plan, and writes neither Harness configuration nor a companion tree. |
 | Lifecycle journal snapshot races | `CI=true pnpm --filter @skill-steward/store exec vitest run tests/integration-store.test.ts` | Concurrent cleanup retries only after immediate path absence is proven; same-name replacement still fails closed; real readers remain healthy while writers publish and clean beyond 100 fragments. |
 | Package trust | `CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs` | Package `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and the locked `runtime-audit.json` agree; real npm and pnpm tarballs pass exact-tree verification. |
 | Full repository | `CI=true pnpm check` | Every workspace builds, typechecks, and passes its test suite without writing private task content. |
 
 ## Build and first run
 
-Before judging repository behavior through a global install, compare `skill-steward --version` with `packages/cli/package.json`; both must report `0.5.0-alpha.4`. Repack and reinstall if they differ. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
+Before judging repository behavior through a global install, rebuild, repack, and reinstall the current checkout even when `skill-steward --version` already matches `packages/cli/package.json`; two different Alpha builds can share a version before release. Both must report `0.5.0-alpha.4`, but version equality alone is not freshness proof. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
 
 Scan an empty set of Skill roots. The result must be unscored and actionable: it must not report health 100. KPI settings must use the current dashboard snapshot and must not present example values as current measurements.
 
@@ -44,7 +44,7 @@ Create one direct Skill and one plugin-managed duplicate. Confirm the plugin ins
 
 Run the compact handoff output and bilingual concept matching check from the matrix. Use equivalent Simplified- and Traditional-Chinese tasks about a long session, evolving requirements, context compaction, and preserving intent. Algorithm v8/result schema v4 must select the same relevant concept, keep gap-only aliases out of ranking, and avoid claiming general cross-language semantic understanding. Confirm low-confidence two-character fragments produce an empty route, no name match, and no standalone gap. Confirm negative usage clauses neither corroborate nor cover a gap, while positive candidate aliases and inflections share the task's canonical gap concept. Generic exact names must produce an empty gap list unless they also meet the specific multi-concept evidence gate; specialized single-token and multiword exact names remain valid controls.
 
-Run the exact Phase 2 pre-merge review task. In the unrelated-control fixture, installed `requesting-code-review` must be the only recommendation and must charge exactly its declared 729 context tokens. Add `phase-checklist` and `documentation-review` controls that also say `before merge`; neither may be selected. Repeat with `before. Merge`, `before / merge`, `before — merge`, bounded task `avoid`/`without`, straight and curly `don't`, candidate `Never use`/`Do not invoke`/`Avoid using`, and a task that says `Do not review before merge`; none may create a positive lifecycle trigger, and negated task/routing text must not affect ordinary matching, gap corroboration, or gap coverage. Keep comma/colon lists, hyphens, slashes, em dashes, symbols, and emoji inside negated text; separately prove `, but create ...` and `: create ...` retain explicit positive contrasts. Confirm `Whenever reviewing ... before merge` remains positive, a semicolon-delimited request remains visible, negative code review is not overridden by positive documentation review, positive code review survives a different negative object, and negative route terms cannot push gap evidence over its relevance gate. In a separate fixture, add genuinely relevant `api-privacy-review`; both complementary Skills may be selected and must charge their combined declared context rather than forcing the single-Skill expectation. Human CLI and both dashboard locales must render the lifecycle-trigger reason. Compact schema v2 must expose only the reason code, never the readable detail or task text.
+Run the exact Phase 2 pre-merge review task. In the unrelated-control fixture, installed `requesting-code-review` must be the only recommendation and must charge exactly its declared 729 context tokens. Add `phase-checklist` and `documentation-review` controls that also say `before merge`; neither may be selected. Repeat with `before. Merge`, `before / merge`, `before — merge`, bounded task `avoid`/`without`, straight and curly `don't`, candidate `Never use`/`Do not invoke`/`Avoid using`, and a task that says `Do not review before merge`; none may create a positive lifecycle trigger, and negated task/routing text must not affect ordinary matching, gap corroboration, or gap coverage. Keep comma/colon lists, hyphens, slashes, em dashes, symbols, and emoji inside negated text; separately prove `, but create ...` and `: create ...` retain explicit positive contrasts. Confirm `Whenever reviewing ... before merge` remains positive, a semicolon-delimited request remains visible, negative code review is not overridden by positive documentation review, positive code review survives a different negative object, and negative route terms cannot push gap evidence over its relevance gate. In a separate fixture, add genuinely relevant `api-privacy-review`; both complementary Skills may be selected and must charge their combined declared context rather than forcing the single-Skill expectation. Human CLI and both dashboard locales must render the lifecycle-trigger reason. Compact schema v3 must expose only the reason code, never the readable detail or task text, and must null feedback when evidence cannot be saved.
 
 For the mixed-object negative case, include both `requesting-code-review` and `receiving-code-review`. Negated code review plus positive documentation review must exclude both code-review workflows, while negated documentation review plus positive code review must leave the requesting workflow eligible. Repeat the inverse in candidate routing: positive documentation routing plus negative code routing must remain excluded with `NEGATIVE_TRIGGER`. Action-named colon lists such as `Do not use: Run, Test, or Build skills`, `Run, and/or Test tools`, `Run/Test/Build skills`, and `Run & Test tools` must remain wholly negative. `Run instead of Build`, `Run and Test instead of Build`, and `Run tools, instead of Build tools` must also stay negative. The single-action PDF-to-DOCX contrast and a standalone-`instead` multi-action DOCX contrast must stay positive.
 
@@ -75,31 +75,24 @@ In a disposable HOME, create two different replacement plans for the same instal
 
 ## Harness bridge
 
-Always review the plan before apply:
+Inspect status and create a read-only plan:
 
 ```bash
 skill-steward integrate status
 skill-steward integrate plan --harness codex --json
-skill-steward integrate apply --plan <id> --confirm
 ```
 
-Use the `id` emitted by the plan command. Confirm that apply writes `latest-report.json` before it reports ready, then submit one synthetic task in the Harness. The first Hook must return quickly from that cached portfolio without a separate manual scan. The Harness must continue if Skill Steward state later becomes missing, and the recommendation may contain installed/available names but not raw task text or source URLs.
+Confirm status reports the Hook and companion separately. The plan must include the exact target, packaged source, expected companion tree, proof category, record head, and consumer evidence. JSON must report `applyAvailable: false`, `applyCommand: null`, and `COMPANION_TRANSACTION_NOT_ENABLED`. The Dashboard must show the same domains and must not render Apply or Remove controls.
 
-Force the initial report write to fail in a disposable state directory. The readiness scan failure must roll back configuration and a companion Skill created by this apply when safe. If another process holds the integration mutation lease, the second call must report busy and does not consume the plan; after the lease is released, the same plan remains applicable. Run two same-Harness apply processes with different plans and confirm exactly one succeeds while the stale plan stops on drift.
+As a negative contract test in a disposable HOME, invoke `skill-steward integrate apply --plan <id> --confirm` with the reviewed ID. Apply must be refused with `INTEGRATION_COMPANION_ACTION_UNAVAILABLE`; the single-use plan must be consumed; and no Harness configuration or companion tree is written. A second call with the same ID must report that the reviewed plan is unavailable. Repeat after changing the source, destination, Harness config, record head, or consumer set and confirm drift is refused before any write.
 
-Repeat against the declared capability matrix:
+Exercise the cached Hook protocols only through the temporary-HOME fixtures until lifecycle apply is enabled:
 
 - Codex: `UserPromptSubmit` returns recommendation context; `Stop` returns valid non-blocking JSON.
 - Claude Code: `UserPromptSubmit` returns recommendation context; `Stop` and `SessionEnd` return valid non-blocking JSON.
 - GitHub Copilot CLI: `userPromptSubmitted` and `sessionEnd` both return `{}`; recommendations are tested separately through the companion Skill or CLI.
 
-Remove only the managed entry:
-
-```bash
-skill-steward integrate remove --harness codex --confirm
-```
-
-Confirm unrelated Hook configuration remains. If cleanup is needed, remove the companion Skill only when it still matches the packaged fingerprint; the normal remove command already performs this check.
+For migration coverage, seed a Hook installed by an earlier Alpha and run the narrow cleanup path in a disposable HOME. It may remove only a provably managed Hook entry, must preserve unrelated configuration, and must retain the shared companion Skill. Do not treat this as consumer-aware companion removal or as part of new setup.
 
 ## Evidence and privacy
 
@@ -159,7 +152,7 @@ CI=true pnpm --filter @skill-steward/dashboard-server build
 CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts
 ```
 
-It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, applies all three integration adapters, verifies the shared Skill and configuration, checks drift refusal, and removes managed entries while preserving unrelated configuration.
+It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, reviews all three integration adapters, verifies that public apply fails closed with zero Hook/companion writes, and checks legacy cleanup only in explicitly injected migration fixtures.
 
 ## Package trust review
 

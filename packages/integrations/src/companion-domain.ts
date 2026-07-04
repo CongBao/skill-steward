@@ -177,7 +177,10 @@ const expectedBeforeSchema = z.discriminatedUnion("state", [
 ]);
 
 const proofSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("new") }).strict(),
+  z.object({
+    kind: z.literal("new"),
+    lifecycleRecordId: z.string().min(1).optional()
+  }).strict(),
   z.object({
     kind: z.literal("recorded"),
     recordId: z.string().min(1),

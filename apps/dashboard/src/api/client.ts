@@ -368,6 +368,7 @@ export function inspectCatalogCandidate(
 
 export type IntegrationHarness = "codex" | "claude-code" | "github-copilot";
 export type IntegrationStatusValue = "not-installed" | "installed" | "needs-trust" | "drifted" | "invalid";
+export type CompanionSkillStatus = "current" | "upgrade-available" | "missing" | "conflict" | "unknown";
 
 export interface IntegrationStatus {
   harness: IntegrationHarness;
@@ -375,6 +376,11 @@ export interface IntegrationStatus {
   targetPath: string;
   lastChangedAt?: string;
   message?: string;
+  companion: {
+    status: CompanionSkillStatus;
+    reason: string;
+    path: string;
+  };
 }
 
 export interface IntegrationPlan {
@@ -383,6 +389,13 @@ export interface IntegrationPlan {
   targetPath: string;
   backupPath?: string;
   changes: Array<{ operation: "backup" | "write"; path: string }>;
+  companion: {
+    action: "none" | "create" | "upgrade" | "conflict";
+    path: string;
+  };
+  applyAvailable: false;
+  applyCommand: null;
+  applyUnavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED";
 }
 
 export function fetchIntegrations(): Promise<IntegrationStatus[]> {
@@ -408,20 +421,6 @@ export function fetchIntegrationCapabilities(): Promise<IntegrationCapability[]>
 
 export function planHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationPlan> {
   return apiRequest(`/api/v1/integrations/${harness}/plan`, { method: "POST" });
-}
-
-export function applyHarnessIntegration(
-  harness: IntegrationHarness,
-  planId: string
-): Promise<IntegrationStatus> {
-  return apiRequest(`/api/v1/integrations/${harness}/apply`, {
-    method: "POST",
-    body: JSON.stringify({ planId })
-  });
-}
-
-export function removeHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationStatus> {
-  return apiRequest(`/api/v1/integrations/${harness}`, { method: "DELETE" });
 }
 
 export function inspectInstallation(payload: unknown): Promise<InspectionResult> {

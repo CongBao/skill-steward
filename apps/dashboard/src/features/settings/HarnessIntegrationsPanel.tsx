@@ -1,12 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cable, Check, ShieldAlert, Unplug } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Cable, Check, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import {
-  applyHarnessIntegration,
   fetchIntegrationCapabilities,
   fetchIntegrations,
   planHarnessIntegration,
-  removeHarnessIntegration,
   type IntegrationHarness,
   type IntegrationPlan
 } from "../../api/client.js";
@@ -17,34 +15,12 @@ const harnessName = (harness: IntegrationHarness) => harness === "codex" ? "Code
 
 export function HarnessIntegrationsPanel() {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
   const [plan, setPlan] = useState<IntegrationPlan | null>(null);
   const integrations = useQuery({ queryKey: ["integrations"], queryFn: fetchIntegrations });
   const capabilities = useQuery({ queryKey: ["integrations", "capabilities"], queryFn: fetchIntegrationCapabilities });
   const review = useMutation({
     mutationFn: planHarnessIntegration,
     onSuccess: setPlan
-  });
-  const apply = useMutation({
-    mutationFn: async ({ harness, planId }: {
-      harness: IntegrationHarness;
-      planId: string;
-    }) => {
-      if (!window.confirm(t("settings.integrations.applyConfirm").replace("{harness}", harnessName(harness)))) return null;
-      return applyHarnessIntegration(harness, planId);
-    },
-    onSuccess: async (result) => {
-      if (!result) return;
-      setPlan(null);
-      await queryClient.invalidateQueries({ queryKey: ["integrations"] });
-    }
-  });
-  const remove = useMutation({
-    mutationFn: async (harness: IntegrationHarness) => {
-      if (!window.confirm(t("settings.integrations.removeConfirm").replace("{harness}", harnessName(harness)))) return null;
-      return removeHarnessIntegration(harness);
-    },
-    onSuccess: (result) => result && queryClient.invalidateQueries({ queryKey: ["integrations"] })
   });
   const statuses = Array.isArray(integrations.data) ? integrations.data : [];
 
@@ -55,13 +31,23 @@ export function HarnessIntegrationsPanel() {
         {harnesses.map((harness) => {
           const status = statuses.find((item) => item.harness === harness);
           const capability = capabilities.data?.find((item) => item.harness === harness);
-          const value = status?.status ?? "not-installed";
+          const statusFallback = integrations.isPending ? "loading" : "unavailable";
+          const value = status?.status;
+          const companionValue = status?.companion?.status;
+          const renderedStatus = value ?? statusFallback;
+          const renderedCompanionStatus = companionValue ?? statusFallback;
           const name = capability?.displayName ?? harnessName(harness);
           return (
-            <article className="integration-row" key={harness} data-status={value} aria-label={`${name} integration`}>
+            <article className="integration-row" key={harness} data-status={renderedStatus} aria-label={`${name} integration`}>
               <div className="integration-identity">
                 <span>{value === "installed" ? <Check size={17} /> : value === "needs-trust" ? <ShieldAlert size={17} /> : <Cable size={17} />}</span>
-                <div><strong>{name}</strong><p>{t(`settings.integrations.status.${value}` as TranslationKey)}</p></div>
+                <div>
+                  <strong>{name}</strong>
+                  <div className="integration-domain-status">
+                    <p>{`${t("settings.integrations.hook")}: ${t(`settings.integrations.status.${renderedStatus}` as TranslationKey)}`}</p>
+                    <p data-companion-status={renderedCompanionStatus}>{`${t("settings.integrations.companion")}: ${t(`settings.integrations.companionStatus.${renderedCompanionStatus}` as TranslationKey)}`}</p>
+                  </div>
+                </div>
               </div>
               <div className="integration-capabilities">
                 <span data-mode={capability?.mode ?? "unknown"}>{capability?.mode === "observe-only" ? t("settings.integrations.observeOnly") : t("settings.integrations.recommendObserve")}</span>
@@ -70,7 +56,6 @@ export function HarnessIntegrationsPanel() {
               </div>
               <div className="integration-actions">
                 <button className="button" aria-label={`${t("settings.integrations.review")} ${name} integration`} onClick={() => review.mutate(harness)}>{t("settings.integrations.review")}</button>
-                {value !== "not-installed" ? <button className="icon-button" aria-label={`${t("settings.integrations.remove")} ${name} integration`} onClick={() => remove.mutate(harness)}><Unplug size={15} /></button> : null}
               </div>
             </article>
           );
@@ -81,11 +66,12 @@ export function HarnessIntegrationsPanel() {
           <header><strong>{t("settings.integrations.plan")}</strong><span>{harnessName(plan.harness)}</span></header>
           <code>{plan.targetPath}</code>
           <ul>{plan.changes.map((change, index) => <li key={`${change.operation}:${index}`}><span>{change.operation}</span>{change.path !== plan.targetPath ? <code>{change.path}</code> : null}</li>)}</ul>
-          <p>{plan.harness === "codex" ? t("settings.integrations.codexTrust") : t("settings.integrations.reviewNotice")}</p>
-          <button className="button primary" aria-label={`${t("settings.integrations.apply")} ${harnessName(plan.harness)} integration`} disabled={apply.isPending} onClick={() => apply.mutate({ harness: plan.harness, planId: plan.id })}>{t("settings.integrations.apply")}</button>
+          <p>{`${t("settings.integrations.companionAction")}: ${t(`settings.integrations.companionAction.${plan.companion.action}` as TranslationKey)}`}</p>
+          <code>{plan.companion.path}</code>
+          <p className="integration-readonly-note">{t("settings.integrations.applyUnavailable")}</p>
         </section>
       ) : null}
-      {(integrations.error || capabilities.error || review.error || apply.error || remove.error) ? <p className="form-error" role="alert">{String(integrations.error ?? capabilities.error ?? review.error ?? apply.error ?? remove.error)}</p> : null}
+      {(integrations.error || capabilities.error || review.error) ? <p className="form-error" role="alert">{String(integrations.error ?? capabilities.error ?? review.error)}</p> : null}
     </section>
   );
 }

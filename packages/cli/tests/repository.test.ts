@@ -129,7 +129,9 @@ describe("open-source repository", () => {
     expect(readme).not.toContain("cross-Harness control plane");
     expect(readme).toContain("Use now");
     expect(readme).toContain("Consider installing");
-    expect(readme).toContain("Codex and Claude Code `UserPromptSubmit` and completion Hooks");
+    expect(readme).toContain(
+      "implemented Codex and Claude Code adapters cover `UserPromptSubmit` and completion Hooks"
+    );
     expect(readme).toContain("no prompt-time network access");
     expect(readme).toContain("never installs a recommendation automatically");
     expect(readme).toContain("External task-time discovery");
@@ -146,7 +148,8 @@ describe("open-source repository", () => {
     expect(readme).toContain("skill-steward evidence erase");
     for (const command of [
       "skill-steward install --plan <id> --confirm",
-      "skill-steward integrate apply --plan <id> --confirm",
+      "skill-steward integrate status --json",
+      "skill-steward integrate plan --harness codex",
       "skill-steward evidence policy set --plan <id> --confirm",
       "skill-steward evidence erase --plan <id> --confirm",
       "skill-steward govern quarantine --plan <id> --confirm",
@@ -154,9 +157,9 @@ describe("open-source repository", () => {
     ]) {
       expect(readme).toContain(command);
     }
-    expect(readme).toMatch(/initial scan[^.]*cached portfolio/i);
-    expect(readme).toMatch(/readiness scan[^.]*rolls back/i);
-    expect(readme).toMatch(/busy[^.]*does not consume[^.]*reviewed plan/i);
+    expect(readme).toMatch(/Lifecycle apply is intentionally disabled[^.]*alpha/i);
+    expect(readme).toMatch(/revalidates[^.]*record head[^.]*consumer set/i);
+    expect(readme).not.toMatch(/reporting the integration ready|readiness scan[^.]*rolls back/i);
     expect(readme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(readme).toContain("runtime-audit.json");
     expect(readme).toMatch(/real npm and pnpm tarballs/i);
@@ -201,15 +204,12 @@ describe("open-source repository", () => {
       "does not yet enumerate every Skill nested inside a natively installed plugin"
     );
     expect(readme).not.toMatch(/remaining 30-Harness|full candidate, feature, exposure/i);
-    expect(readme).toContain("managed integration setup");
-    expect(readme).not.toContain("or integration change");
-    expect(readme).toMatch(
-      /A busy integration apply[^.]*does not consume its reviewed plan/i
-    );
+    expect(readme).toContain("Harness integration setup is review-only in the current alpha");
+    expect(readme).not.toContain("managed integration setup");
     expect(readme).toMatch(
       /Installation apply and rollback share one state-scoped cross-process lease/i
     );
-    expect(readme).toMatch(/A busy removal[^.]*before changing files/i);
+    expect(readme).toMatch(/Public integration apply currently revalidates[^.]*refuses/i);
     expect(readme).toMatch(
       /CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use/
     );
@@ -256,7 +256,9 @@ describe("open-source repository", () => {
     expect(chineseReadme).not.toContain("跨 Harness 控制平面");
     expect(chineseReadme).toContain("立即使用");
     expect(chineseReadme).toContain("建议安装");
-    expect(chineseReadme).toContain("Codex 和 Claude Code 的 `UserPromptSubmit` 与结束 Hook");
+    expect(chineseReadme).toContain(
+      "已经实现的 Codex 和 Claude Code 适配器覆盖 `UserPromptSubmit` 与结束 Hook"
+    );
     expect(chineseReadme).toContain("任务提交时不访问网络");
     expect(chineseReadme).toContain("绝不会自动安装推荐项");
     expect(chineseReadme).toContain("任务开始前发现外部候选项");
@@ -273,7 +275,8 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("skill-steward evidence erase");
     for (const command of [
       "skill-steward install --plan <id> --confirm",
-      "skill-steward integrate apply --plan <id> --confirm",
+      "skill-steward integrate status --json",
+      "skill-steward integrate plan --harness codex",
       "skill-steward evidence policy set --plan <id> --confirm",
       "skill-steward evidence erase --plan <id> --confirm",
       "skill-steward govern quarantine --plan <id> --confirm",
@@ -281,9 +284,9 @@ describe("open-source repository", () => {
     ]) {
       expect(chineseReadme).toContain(command);
     }
-    expect(chineseReadme).toMatch(/首次扫描[^。]*缓存[^。]*资产/);
-    expect(chineseReadme).toMatch(/就绪扫描[^。]*回滚/);
-    expect(chineseReadme).toMatch(/忙碌[^。]*不会消耗[^。]*计划/);
+    expect(chineseReadme).toMatch(/当前 Alpha 仍刻意禁用生命周期应用/);
+    expect(chineseReadme).toMatch(/重新检查[^。]*记录头[^。]*consumer 集合/);
+    expect(chineseReadme).not.toMatch(/标记为就绪|就绪扫描[^。]*回滚/);
     expect(chineseReadme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(chineseReadme).toContain("runtime-audit.json");
     expect(chineseReadme).toMatch(/npm 和 pnpm[^。]*真实 tarball/);
@@ -336,10 +339,9 @@ describe("open-source repository", () => {
     expect(chineseReadme).not.toContain("尚不能枚举所有原生已安装插件内部嵌套的 Skill");
     expect(chineseReadme).not.toMatch(/其余 30 种|结果 schema v4|候选项特征、暴露状态/);
     expect(chineseReadme).not.toMatch(/失败开放策略|临时 HOME 夹具|边界失败/);
-    expect(chineseReadme).toContain("新增 Harness 集成");
-    expect(chineseReadme).toMatch(/新增集成遇到忙碌[^。]*不会消耗[^。]*计划/);
-    expect(chineseReadme).toMatch(/安装、回滚和 Harness 集成共用同一把状态级跨进程锁/);
-    expect(chineseReadme).toMatch(/移除集成遇到忙碌[^。]*改写配置之前停止/);
+    expect(chineseReadme).toContain("当前 Alpha 的 Harness 集成设置仍只提供检查和预览");
+    expect(chineseReadme).toMatch(/当前 Alpha 仍刻意禁用生命周期应用/);
+    expect(chineseReadme).toMatch(/公共集成应用目前会在集成锁内重新检查[^。]*停止/);
     expect(chineseReadme).toMatch(
       /CLI 的安装、集成应用、证据策略、证据清除、隔离和恢复计划保存在私有目录、会过期且只能使用一次/
     );
@@ -378,10 +380,13 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain("local-first");
     expect(packageReadme).toContain("reversible");
     expect(packageReadme).toContain("--plan <id> --confirm");
-    expect(packageReadme).toContain("integration apply");
+    expect(packageReadme).toMatch(/Harness integration setup is review-only/i);
+    expect(packageReadme).toMatch(/public integration apply[^.]*disabled/i);
     expect(packageReadme).toContain(
       "skill-steward integrate remove --harness <id> --confirm"
     );
+    expect(packageReadme).toMatch(/Earlier Alpha users[^.]*provably managed Hook/i);
+    expect(packageReadme).toMatch(/retains the shared companion Skill/i);
     expect(packageReadme).not.toMatch(/contract applies to integration,/);
     expect(packageReadme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(packageReadme).toContain("runtime-audit.json");
@@ -501,18 +506,13 @@ describe("open-source repository", () => {
     expect(architecture).toMatch(/raw evidence[^.]*attribution/i);
     expect(architecture).toContain("THIRD_PARTY_NOTICES.txt");
     expect(architecture).toContain("runtime-audit.json");
-    expect(architecture).toMatch(
-      /New apply and remove records are written to `integration-records\/`/
-    );
-    expect(architecture).toMatch(
-      /Integration apply acquires `integration-mutation\.lease` before claiming a reviewed plan/
-    );
-    expect(architecture).toMatch(
-      /Integration remove, installation apply, and installation rollback acquire that same physical lease/
-    );
+    expect(architecture).toMatch(/Public integration apply[^.]*review-only/i);
+    expect(architecture).toMatch(/revalidates[^.]*refuses[^.]*before[^.]*write/i);
+    expect(architecture).not.toMatch(/Successful apply persists an initial portfolio report/i);
     expect(architecture).toMatch(/rechecks the destination immediately before backup and replacement/);
     expect(architecture).not.toMatch(/record fingerprints in `integrations\.json`/);
-    expect(architecture).toMatch(/CLI installation, integration apply, evidence-policy/);
+    expect(architecture).toMatch(/CLI installation, evidence-policy, evidence-erasure/);
+    expect(architecture).toMatch(/Integration apply uses the same claim[^.]*revalidation and refusal/i);
     expect(architecture).not.toMatch(/OpenSpec|Superpowers/);
 
     const alphaTesting = await readFile(join(root, "docs/alpha-testing.md"), "utf8");
@@ -520,8 +520,9 @@ describe("open-source repository", () => {
     expect(alphaTesting).toContain("0.5.0-alpha.4");
     expect(alphaTesting).toContain("--plan <id> --confirm");
     expect(alphaTesting).toContain("## Alpha.4 test matrix");
-    expect(alphaTesting).toMatch(/busy[^.]*does not consume[^.]*plan/i);
-    expect(alphaTesting).toMatch(/readiness scan[^.]*rolls back/i);
+    expect(alphaTesting).toMatch(/apply[^.]*refused[^.]*single-use plan[^.]*consumed/i);
+    expect(alphaTesting).toMatch(/no Harness configuration or companion tree is written/i);
+    expect(alphaTesting).not.toMatch(/readiness scan[^.]*rolls back/i);
     expect(alphaTesting).toContain("THIRD_PARTY_NOTICES.txt");
     expect(alphaTesting).toContain("runtime-audit.json");
     expect(alphaTesting).toMatch(/npm and pnpm tarballs/i);
@@ -532,7 +533,7 @@ describe("open-source repository", () => {
     expect(alphaTesting).toMatch(/negative usage clauses[^.]*neither corroborate nor cover/i);
     expect(alphaTesting).toMatch(/generic exact names[^.]*empty gap list/i);
     expect(alphaTesting).toContain("Algorithm v8/result schema v4");
-    expect(alphaTesting).toContain("compact schema v2");
+    expect(alphaTesting).toContain("compact schema v3");
     expect(alphaTesting).toMatch(/phase-checklist[^.]*documentation-review/i);
     expect(alphaTesting).toMatch(/Do not review before merge[^.]*positive lifecycle trigger/i);
     expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);

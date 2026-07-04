@@ -57,7 +57,13 @@ export function registerIntegrationRoutes(
     "/api/v1/integrations/:harness/plan",
     async (request, reply) => {
       try {
-        return apiSuccess(await services.plan(request.params.harness));
+        const plan = await services.plan(request.params.harness);
+        return apiSuccess({
+          ...plan,
+          applyAvailable: false as const,
+          applyCommand: null,
+          applyUnavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED" as const
+        });
       } catch (error) {
         return sendIntegrationError(reply, error);
       }

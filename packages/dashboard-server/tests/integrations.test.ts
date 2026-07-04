@@ -206,7 +206,7 @@ async function fixture(ids: string[] = ["integration-record"]) {
 }
 
 describe("Harness integration routes", () => {
-  it("keeps Phase 1 services free of legacy companion mutators", async () => {
+  it("keeps lifecycle services free of legacy companion mutators", async () => {
     const source = await readFile(
       new URL("../src/integration-services.ts", import.meta.url),
       "utf8"
@@ -230,6 +230,9 @@ describe("Harness integration routes", () => {
 
     await expect(instance.integrationServices.apply("codex", plan.id)).rejects.toMatchObject({
       code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+    });
+    await expect(instance.integrationServices.apply("codex", plan.id)).rejects.toMatchObject({
+      code: "INTEGRATION_PLAN_REQUIRED"
     });
     await expect(access(companion)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(config, "utf8")).toBe(before);
@@ -338,7 +341,8 @@ describe("Harness integration routes", () => {
     await expect(instance.integrationServices.list()).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({
         harness: "codex",
-        status: "needs-trust"
+        status: "needs-trust",
+        companion: expect.objectContaining({ status: "conflict" })
       })])
     );
   });
@@ -435,7 +439,7 @@ describe("Harness integration routes", () => {
     })).statusCode).toBe(400);
   });
 
-  it("reviews, applies, and reversibly removes a Codex integration", async () => {
+  it("keeps legacy readiness and removal compensation behind injected internal fixtures", async () => {
     const { app, home, stateDirectory, readinessCalls } = await fixture();
     const headers = { "x-skill-steward-token": "token" };
     const planned = await app.inject({
@@ -447,12 +451,23 @@ describe("Harness integration routes", () => {
     expect(planned.json().data).toMatchObject({
       harness: "codex",
       targetPath: join(home, ".codex", "hooks.json"),
-      changes: expect.arrayContaining([expect.objectContaining({ operation: "write" })])
+      changes: expect.arrayContaining([expect.objectContaining({ operation: "write" })]),
+      companion: expect.objectContaining({ action: "none" }),
+      applyAvailable: false,
+      applyCommand: null,
+      applyUnavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED"
     });
 
     const applied = await applyRequest(app, "codex", planned.json().data.id, headers);
     expect(applied.statusCode).toBe(200);
-    expect(applied.json().data).toMatchObject({ harness: "codex", status: "needs-trust" });
+    expect(applied.json().data).toMatchObject({
+      harness: "codex",
+      status: "needs-trust",
+      companion: {
+        status: "conflict",
+        reason: "COMPANION_LEGACY_TREE_NOT_ALLOWLISTED"
+      }
+    });
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"))).resolves.toBeUndefined();
     expect(readinessCalls()).toBe(1);
@@ -472,6 +487,61 @@ describe("Harness integration routes", () => {
     expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
     await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
       .resolves.toBeUndefined();
+  });
+
+  it("keeps the production Dashboard integration route review-only and consumes refusal", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-integration-public-api-"));
+    const home = join(base, "home");
+    const stateDirectory = join(base, "state");
+    const companionSkillDirectory = join(base, "asset", "skill-steward-preflight");
+    await mkdir(home, { recursive: true });
+    await mkdir(companionSkillDirectory, { recursive: true });
+    await writeFile(
+      join(companionSkillDirectory, "SKILL.md"),
+      "---\nname: skill-steward-preflight\ndescription: Preflight tasks\n---\nRun preflight.\n"
+    );
+    let readinessCalls = 0;
+    const integrationServices = createIntegrationServices({
+      home,
+      stateDirectory,
+      companionSkillDirectory,
+      afterApply: async () => { readinessCalls += 1; },
+      now: () => new Date("2026-07-05T00:00:00.000Z"),
+      id: () => "public-review-plan"
+    });
+    const { app } = createDashboardApp({
+      mutationToken: "token",
+      integrationServices
+    });
+    apps.push(app);
+    const headers = { "x-skill-steward-token": "token" };
+    const planned = await app.inject({
+      method: "POST",
+      url: "/api/v1/integrations/codex/plan",
+      headers
+    });
+    expect(planned.statusCode).toBe(200);
+    expect(planned.json().data).toMatchObject({
+      id: "public-review-plan",
+      applyAvailable: false,
+      applyCommand: null,
+      applyUnavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED",
+      companion: { action: "create" }
+    });
+
+    const refused = await applyRequest(app, "codex", "public-review-plan", headers);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toMatchObject({
+      code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE"
+    });
+    const consumed = await applyRequest(app, "codex", "public-review-plan", headers);
+    expect(consumed.statusCode).toBe(409);
+    expect(consumed.json().error).toMatchObject({ code: "INTEGRATION_PLAN_REQUIRED" });
+    expect(readinessCalls).toBe(0);
+    await expect(access(join(home, ".codex", "hooks.json")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(join(home, ".agents", "skills", "skill-steward-preflight")))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("reports failed readiness and rolls back only this apply", async () => {

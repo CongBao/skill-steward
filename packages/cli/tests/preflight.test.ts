@@ -16,7 +16,10 @@ import {
   type PreflightResult
 } from "@skill-steward/preflight";
 import { beforeEach, describe, expect, it } from "vitest";
-import { renderPreflightHuman } from "../src/commands/preflight.js";
+import {
+  preflightCommand,
+  renderPreflightHuman
+} from "../src/commands/preflight.js";
 import type { CliContext } from "../src/context.js";
 import { run } from "../src/main.js";
 import { installNativeCodexFixture } from "./native-inventory-fixture.js";
@@ -254,6 +257,114 @@ describe("preflight command", () => {
       harness: "codex",
       delivery: "cli"
     });
+  });
+
+  it("returns recommendations when report and evidence persistence are unavailable", async () => {
+    const exitCode = await preflightCommand({
+      task: "Review security changes and missing tests",
+      stdin: false,
+      maxSkills: 3,
+      json: true,
+      compactJson: false,
+      harness: "codex",
+      includeAvailable: true
+    }, current.context, {
+      writeReport: async () => {
+        throw Object.assign(new Error("secret/path/report"), { code: "EPERM" });
+      },
+      appendEvidence: async () => {
+        throw Object.assign(new Error("secret/path/evidence"), { code: "EACCES" });
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(current.stdout.join(""))).toMatchObject({
+      schemaVersion: 4,
+      useCandidateIds: expect.any(Array)
+    });
+    expect(current.stderr.join("")).toBe(
+      "PREFLIGHT_PERSISTENCE_UNAVAILABLE: portfolio cache and evidence were not saved; " +
+      "recommendations remain valid for this run, but feedback cannot be recorded.\n"
+    );
+    expect(current.stderr.join("")).not.toContain("secret/path");
+  });
+
+  it("marks compact handoff when persistence is unavailable", async () => {
+    const exitCode = await preflightCommand({
+      stdin: true,
+      maxSkills: 3,
+      json: false,
+      compactJson: true,
+      harness: "codex",
+      includeAvailable: true
+    }, current.context, {
+      writeReport: async () => {
+        throw Object.assign(new Error("denied"), { code: "EPERM" });
+      },
+      appendEvidence: async () => {
+        throw Object.assign(new Error("denied"), { code: "EPERM" });
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    const serialized = current.stdout.join("");
+    const output = compactPreflightResultSchema.parse(JSON.parse(serialized));
+    expect(output.conflictWarningCodes).toContain("PREFLIGHT_PERSISTENCE_UNAVAILABLE");
+    expect(output.feedbackCommand).toBeNull();
+    expect(Buffer.byteLength(serialized, "utf8"))
+      .toBeLessThanOrEqual(COMPACT_PREFLIGHT_MAX_BYTES + 1);
+  });
+
+  it("keeps feedback available when only the portfolio cache write fails", async () => {
+    const exitCode = await preflightCommand({
+      task: "Review security changes and missing tests",
+      stdin: false,
+      maxSkills: 3,
+      json: false,
+      compactJson: false,
+      harness: "codex",
+      includeAvailable: true
+    }, current.context, {
+      writeReport: async () => {
+        throw Object.assign(new Error("denied"), { code: "EPERM" });
+      },
+      appendEvidence: async () => undefined
+    });
+
+    expect(exitCode).toBe(0);
+    expect(current.stdout.join("")).toContain("Record feedback:");
+    expect(current.stderr.join("")).toBe(
+      "PREFLIGHT_PERSISTENCE_UNAVAILABLE: portfolio cache was not saved; " +
+      "recommendations remain valid for this run, and evidence feedback remains available.\n"
+    );
+  });
+
+  it("keeps recommendations but hides feedback when only evidence persistence fails", async () => {
+    let reportWrites = 0;
+    const exitCode = await preflightCommand({
+      task: "Review security changes and missing tests",
+      stdin: false,
+      maxSkills: 3,
+      json: false,
+      compactJson: false,
+      harness: "codex",
+      includeAvailable: true
+    }, current.context, {
+      writeReport: async () => { reportWrites += 1; },
+      appendEvidence: async () => {
+        throw Object.assign(new Error("denied"), { code: "EPERM" });
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(reportWrites).toBe(1);
+    expect(current.stdout.join(""))
+      .toContain("Feedback unavailable: this run could not be saved");
+    expect(current.stdout.join("")).not.toContain("Record feedback:");
+    expect(current.stderr.join("")).toBe(
+      "PREFLIGHT_PERSISTENCE_UNAVAILABLE: evidence was not saved; " +
+      "recommendations remain valid for this run, but feedback cannot be recorded.\n"
+    );
   });
 
   it("rejects complete and compact JSON flags together", async () => {

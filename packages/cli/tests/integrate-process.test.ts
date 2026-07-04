@@ -160,7 +160,7 @@ async function authorizeRecordedCompanion(stateDirectory: string, planId: string
 }
 
 describe("integration CLI source processes", () => {
-  it("serializes different exact plans and fails both closed before Hook mutation", async () => {
+  it("serializes forged exact plans and rejects both before Hook mutation", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-cli-lease-process-"));
     const home = join(base, "home");
     const state = join(base, "state");
@@ -197,7 +197,7 @@ describe("integration CLI source processes", () => {
 
     expect(results.map(({ code }) => code)).toEqual([1, 1]);
     expect(results.every(({ stderr }) =>
-      stderr.includes("INTEGRATION_COMPANION_ACTION_UNAVAILABLE")
+      stderr.includes("INTEGRATION_DRIFTED")
     )).toBe(true);
     await expect(readFile(join(home, ".codex", "hooks.json"), "utf8"))
       .rejects.toMatchObject({ code: "ENOENT" });

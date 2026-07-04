@@ -147,7 +147,7 @@ describe("compact preflight contract", () => {
   it("keeps only bounded actionable recommendations, codes, coverage, and feedback", () => {
     const compact = toCompactPreflight(result());
 
-    expect(COMPACT_PREFLIGHT_SCHEMA_VERSION).toBe(2);
+    expect(COMPACT_PREFLIGHT_SCHEMA_VERSION).toBe(3);
 
     expect(compact).toEqual({
       schemaVersion: COMPACT_PREFLIGHT_SCHEMA_VERSION,
@@ -207,6 +207,23 @@ describe("compact preflight contract", () => {
 
     exact.id = "unsafe preflight id";
     expect(() => toCompactPreflight(exact)).toThrow();
+  });
+
+  it("allows a null feedback command only with the persistence warning", () => {
+    const compact = toCompactPreflight(result());
+    expect(() => compactPreflightResultSchema.parse({
+      ...compact,
+      feedbackCommand: null
+    })).toThrow();
+
+    const unavailable = toCompactPreflight(result(), {
+      additionalConflictWarningCodes: ["PREFLIGHT_PERSISTENCE_UNAVAILABLE"],
+      feedbackAvailable: false
+    });
+    expect(unavailable.feedbackCommand).toBeNull();
+    expect(unavailable.conflictWarningCodes)
+      .toContain("PREFLIGHT_PERSISTENCE_UNAVAILABLE");
+    expect(compactPreflightResultSchema.parse(unavailable)).toEqual(unavailable);
   });
 
   it("keeps high-confidence trigger details private and the compact response bounded", () => {
@@ -388,6 +405,15 @@ describe("compact preflight contract", () => {
     expect(serialized).not.toMatch(
       /PRIVATE|excluded-private|description|example\.com|relativePath/i
     );
+
+    const persistenceUnavailable = toCompactPreflight(full, {
+      additionalConflictWarningCodes: ["PREFLIGHT_PERSISTENCE_UNAVAILABLE"]
+    });
+    expect(persistenceUnavailable.conflictWarningCodes)
+      .toContain("PREFLIGHT_PERSISTENCE_UNAVAILABLE");
+    expect(persistenceUnavailable.conflictWarningCodes).toHaveLength(4);
+    expect(Buffer.byteLength(JSON.stringify(persistenceUnavailable), "utf8"))
+      .toBeLessThanOrEqual(COMPACT_PREFLIGHT_MAX_BYTES);
 
     const maximumCompact = {
       ...compact,

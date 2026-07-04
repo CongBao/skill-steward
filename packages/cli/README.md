@@ -34,7 +34,7 @@ Open the local dashboard:
 skill-steward dashboard
 ```
 
-The dashboard, CLI, and supported Harness integrations use the same local state. Governance and installation actions show an exact plan first and require explicit confirmation; quarantine, restore, and managed integrations are reversible.
+The dashboard and CLI use the same local state. Governance and installation actions show an exact plan first and require explicit confirmation; installation rollback, quarantine, and restore are reversible. Harness integration setup is review-only in this Alpha.
 
 Mutation previews print a copyable apply command. Use the emitted ID rather than repeating the original request:
 
@@ -42,9 +42,13 @@ Mutation previews print a copyable apply command. Use the emitted ID rather than
 skill-steward install --plan <id> --confirm
 ```
 
-The same `--plan <id> --confirm` contract applies to integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use. Integration removal remains an explicit Harness-scoped action:
+The same `--plan <id> --confirm` contract applies to evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use.
 
-Installation apply, rollback, and managed integration changes share one state-scoped cross-process lease. A concurrent stale installation plan is revalidated after entering the lease and stops on destination drift instead of overwriting a newer commit.
+Public integration apply is disabled until the transaction-safe companion lifecycle is complete. `skill-steward integrate status --json` and `skill-steward integrate plan --harness <id>` inspect Hook and companion state separately; plans do not contain an apply command and are refused before either tree is changed.
+
+Installation apply and rollback share one state-scoped cross-process lease. A concurrent stale installation plan is revalidated after entering the lease and stops on destination drift instead of overwriting a newer commit.
+
+Earlier Alpha users can remove only a provably managed Hook entry with the cleanup command below. It retains the shared companion Skill; consumer-aware companion removal is not enabled and this is not a new setup path.
 
 ```bash
 skill-steward integrate remove --harness <id> --confirm

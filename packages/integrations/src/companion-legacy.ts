@@ -40,6 +40,11 @@ type ManagedProofResolution =
   | { state: "conflict"; reason: string }
   | { state: "unknown"; reason: string };
 
+export type MissingCompanionLifecycleResolution =
+  | { state: "clear"; lifecycleRecordId?: string }
+  | { state: "conflict"; reason: string }
+  | { state: "unknown"; reason: string };
+
 type JsonObject = Record<string, unknown>;
 type ManagedEvent = "UserPromptSubmit" | "Stop" | "SessionEnd";
 
@@ -48,6 +53,53 @@ export interface CompanionConfigProofOptions {
   openFile?: (path: string, flags: number) => Promise<FileHandle>;
   platform?: NodeJS.Platform;
   realpathPath?: typeof realpath;
+}
+
+export async function resolveMissingCompanionLifecycle(
+  stateDirectory: string,
+  expectedPath: string
+): Promise<MissingCompanionLifecycleResolution> {
+  let journal;
+  try {
+    journal = await readIntegrationRecordJournal(stateDirectory);
+  } catch {
+    return { state: "unknown", reason: "COMPANION_LIFECYCLE_RECORD_UNAVAILABLE" };
+  }
+  if (journal.changedDuringRead) {
+    return { state: "unknown", reason: "COMPANION_LIFECYCLE_RECORD_UNPROVABLE" };
+  }
+  const companionHeadIndex = journal.orderedRecords.findIndex(
+    (record) => record.schemaVersion === 2
+  );
+  if (companionHeadIndex > 0) {
+    return { state: "unknown", reason: "COMPANION_LIFECYCLE_RECORD_UNPROVABLE" };
+  }
+  if (companionHeadIndex === -1) return { state: "clear" };
+  const companionHead = journal.orderedRecords[companionHeadIndex];
+  if (
+    companionHead?.schemaVersion === 2
+    && companionHead.companion.path !== expectedPath
+  ) {
+    return {
+      state: "conflict",
+      reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY"
+    };
+  }
+  if (
+    companionHead?.schemaVersion === 2
+    && companionHead.companion.action === "remove"
+    && companionHead.companion.after.state === "absent"
+    && companionHead.companion.consumers.length === 0
+  ) {
+    return { state: "clear", lifecycleRecordId: companionHead.id };
+  }
+  if (companionHead?.schemaVersion === 2) {
+    return {
+      state: "conflict",
+      reason: "COMPANION_LIFECYCLE_EVIDENCE_WITH_MISSING_TREE"
+    };
+  }
+  return { state: "unknown", reason: "COMPANION_LIFECYCLE_RECORD_UNPROVABLE" };
 }
 
 function hash(value: string | Uint8Array): string {

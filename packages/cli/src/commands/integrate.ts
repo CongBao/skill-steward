@@ -86,9 +86,15 @@ function configOptions(context: CliContext): IntegrationConfigOptions {
 }
 
 function printPlan(plan: IntegrationPlan, context: CliContext, json: boolean): void {
-  const applyCommand = `skill-steward integrate apply --plan ${plan.id} --confirm`;
+  const applyUnavailableReason = "COMPANION_TRANSACTION_NOT_ENABLED";
   if (json) {
-    context.stdout(`${JSON.stringify({ ...plan, planId: plan.id, applyCommand }, null, 2)}\n`);
+    context.stdout(`${JSON.stringify({
+      ...plan,
+      planId: plan.id,
+      applyAvailable: false,
+      applyCommand: null,
+      applyUnavailableReason
+    }, null, 2)}\n`);
     return;
   }
   const lines = [
@@ -100,9 +106,8 @@ function printPlan(plan: IntegrationPlan, context: CliContext, json: boolean): v
     ),
     `Plan ID: ${terminalSafeText(plan.id)}`,
     `Expires: ${plan.expiresAt}`,
-    ...(plan.changes.length > 0
-      ? [`Apply: ${applyCommand}`]
-      : ["Harness configuration already matches; apply still performs the readiness scan.", `Apply: ${applyCommand}`]),
+    "Apply: unavailable until transaction-safe companion lifecycle support is enabled.",
+    `Reason: ${applyUnavailableReason}`,
     ""
   ];
   context.stdout(lines.join("\n"));
