@@ -1,34 +1,40 @@
 export {
-  IntegrationError,
+  IntegrationError
+} from "./config.js";
+export type {
+  IntegrationConfigOptions,
+  IntegrationErrorCode
+} from "./config.js";
+export {
+  IntegrationTransactionError,
+  applyIntegrationDisconnect,
   applyIntegrationPlan,
-  integrationPlanSchema,
   integrationStatus,
   planIntegration,
-  removeIntegration,
-  rethrowAfterIntegrationApplyFailure,
-  rollbackIntegrationPlan
-} from "./config.js";
+  planIntegrationDisconnect,
+  removeLegacyIntegration,
+  serializePublicIntegrationError
+} from "./integration-lifecycle.js";
 export type {
-  IntegrationChange,
-  IntegrationConfigOptions,
-  IntegrationErrorCode,
+  IntegrationArtifactRole,
+  IntegrationDisconnectPlan,
+  IntegrationLegacyRemovalReceipt,
   IntegrationPlan,
+  IntegrationPlanAction,
+  IntegrationPlanAvailability,
+  IntegrationReadinessContext,
   IntegrationStatus,
-  IntegrationStatusValue
-} from "./config.js";
+  IntegrationTransactionOptions,
+  IntegrationTransactionReceipt,
+  PublicIntegrationError,
+  PublicIntegrationErrorCode
+} from "./integration-lifecycle.js";
 export { copilotHookConfig, copilotHookTarget } from "./config-adapters.js";
-export { companionSubplanSchema } from "./companion-domain.js";
-export type { CompanionSubplan } from "./companion-domain.js";
 export {
   CompanionSkillError,
-  companionSkillDirectory,
-  inspectCompanionSkill
+  companionSkillDirectory
 } from "./companion-skill.js";
-export type {
-  CompanionSkillInspection,
-  CompanionSkillStatus,
-  InspectCompanionSkillInput
-} from "./companion-skill.js";
+export type { CompanionSkillStatus } from "./companion-skill.js";
 export {
   integrationCapabilities,
   integrationCapabilitySchema,

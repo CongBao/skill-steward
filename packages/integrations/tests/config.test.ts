@@ -3,10 +3,12 @@ import { createRequire } from "node:module";
 import {
   access,
   cp,
+  link,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile
@@ -14,18 +16,23 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readIntegrationRecords } from "@skill-steward/store";
+import {
+  appendIntegrationRecord,
+  readIntegrationRecords,
+  withIntegrationMutationLease
+} from "@skill-steward/store";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyIntegrationPlan as applyIntegrationPlanPublic,
   applyIntegrationPlanInternal,
+  integrationApplyAvailability,
   integrationPlanSchema,
   integrationStatus,
   planIntegration as planIntegrationDomain,
-  removeIntegration,
+  removeIntegration as removeIntegrationDomain,
   rethrowAfterIntegrationApplyFailure,
-  rollbackIntegrationPlan
+  rollbackIntegrationPlan as rollbackIntegrationPlanDomain
 } from "../src/config.js";
 import { companionSkillDirectory } from "../src/companion-skill.js";
 import { inspectCompanionTree } from "../src/companion-manifest.js";
@@ -47,11 +54,112 @@ const packagedCompanion = fileURLToPath(
 );
 const applyIntegrationPlan = applyIntegrationPlanInternal;
 
+async function removeIntegration(
+  harness: Parameters<typeof removeIntegrationDomain>[0],
+  options: Omit<Parameters<typeof removeIntegrationDomain>[1], "leaseContext">,
+  dependencies?: Parameters<typeof removeIntegrationDomain>[2]
+) {
+  return withIntegrationMutationLease(options.stateDirectory, (leaseContext) =>
+    removeIntegrationDomain(
+      harness,
+      { ...options, leaseContext } as Parameters<typeof removeIntegrationDomain>[1],
+      dependencies
+    )
+  );
+}
+
+async function rollbackIntegrationPlan(
+  plan: Parameters<typeof rollbackIntegrationPlanDomain>[0],
+  options: Omit<Parameters<typeof rollbackIntegrationPlanDomain>[1], "leaseContext">,
+  dependencies?: Parameters<typeof rollbackIntegrationPlanDomain>[2]
+) {
+  return withIntegrationMutationLease(options.stateDirectory, (leaseContext) =>
+    rollbackIntegrationPlanDomain(
+      plan,
+      { ...options, leaseContext } as Parameters<typeof rollbackIntegrationPlanDomain>[1],
+      dependencies
+    )
+  );
+}
+
 function exactCompanionEvidence(companion: CompanionSubplan) {
   if (!("fingerprint" in companion.after) || !("fingerprint" in companion.source)) {
     throw new Error("Expected exact companion evidence");
   }
   return { after: companion.after, source: companion.source };
+}
+
+async function appendCurrentV2Head(
+  plan: Awaited<ReturnType<typeof planIntegrationDomain>>,
+  stateDirectory: string
+): Promise<void> {
+  const evidence = exactCompanionEvidence(plan.companion);
+  const createdAt = new Date(Date.parse(plan.createdAt) + 1).toISOString();
+  await appendIntegrationRecord(stateDirectory, {
+    schemaVersion: 2,
+    id: `${plan.id}-v2-head`,
+    harness: plan.harness,
+    action: "apply",
+    status: "installed",
+    targetPath: plan.targetPath,
+    ...(plan.backupPath ? { backupPath: plan.backupPath } : {}),
+    beforeFingerprint: plan.expectedBeforeFingerprint,
+    afterFingerprint: plan.afterFingerprint,
+    installedEntryFingerprint: plan.installedEntryFingerprint,
+    companion: {
+      action: "none",
+      path: plan.companion.path,
+      before: { state: "exact", fingerprint: evidence.after.fingerprint },
+      after: { state: "exact", fingerprint: evidence.after.fingerprint },
+      source: { fingerprint: evidence.source.fingerprint },
+      proof: { category: "recorded" },
+      installedFingerprint: evidence.after.fingerprint,
+      consumers: [plan.harness]
+    },
+    trigger: {
+      planId: plan.id,
+      harness: plan.harness,
+      createdAt
+    },
+    createdAt
+  });
+}
+
+async function appendV1Shadow(
+  plan: Awaited<ReturnType<typeof planIntegrationDomain>>,
+  stateDirectory: string
+): Promise<void> {
+  await appendIntegrationRecord(stateDirectory, {
+    schemaVersion: 1,
+    id: `${plan.id}-v1-shadow`,
+    harness: plan.harness,
+    action: "apply",
+    status: "installed",
+    targetPath: plan.targetPath,
+    ...(plan.backupPath ? { backupPath: plan.backupPath } : {}),
+    beforeFingerprint: plan.expectedBeforeFingerprint,
+    afterFingerprint: plan.afterFingerprint,
+    installedEntryFingerprint: plan.installedEntryFingerprint,
+    createdAt: new Date(Date.parse(plan.createdAt) + 2).toISOString()
+  });
+}
+
+async function replaceLeasePath(stateDirectory: string): Promise<void> {
+  const path = join(stateDirectory, "integration-mutation.lease");
+  const bytes = await readFile(path);
+  await rm(path);
+  await writeFile(path, bytes, { mode: 0o600 });
+}
+
+async function replaceStateDirectoryWithRelinkedLease(
+  stateDirectory: string
+): Promise<string> {
+  const moved = `${stateDirectory}-moved`;
+  const leaseName = "integration-mutation.lease";
+  await rename(stateDirectory, moved);
+  await mkdir(stateDirectory, { mode: 0o700 });
+  await link(join(moved, leaseName), join(stateDirectory, leaseName));
+  return moved;
 }
 
 async function installCurrentCompanion(home: string, source = packagedCompanion): Promise<void> {
@@ -182,6 +290,55 @@ function replaceFirstBytes(
 }
 
 describe("companion reviewed subplan", () => {
+  it("versions every new plan and strictly rejects a stored Phase 3 plan", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-plan-protocol-"));
+    const options = {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    };
+    const plan = await planIntegrationDomain("codex", options);
+    expect(Reflect.get(plan, "lifecycleProtocolVersion")).toBe(2);
+
+    const phase3Plan = JSON.parse(JSON.stringify(plan)) as Record<string, unknown>;
+    delete phase3Plan.lifecycleProtocolVersion;
+    expect(integrationPlanSchema.safeParse(phase3Plan).success).toBe(false);
+    await expect(applyIntegrationPlanPublic(phase3Plan, options)).rejects.toMatchObject({
+      code: "INTEGRATION_PLAN_INVALID"
+    });
+    await expect(access(companionSkillDirectory(home))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(target(home, "codex"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("derives activated public availability from the strict protocol plan", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-companion-availability-"));
+    const plan = await planIntegrationDomain("codex", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    });
+    expect(integrationApplyAvailability(plan)).toMatchObject({
+      state: process.platform === "win32" ? "blocked" : "available",
+      action: "create",
+      transactionEligible: process.platform !== "win32",
+      applyAvailable: process.platform !== "win32",
+      unavailableReason: process.platform === "win32"
+        ? "INTEGRATION_PLATFORM_UNSUPPORTED"
+        : null
+    });
+
+    const phase3Plan = JSON.parse(JSON.stringify(plan)) as Record<string, unknown>;
+    delete phase3Plan.lifecycleProtocolVersion;
+    expect(integrationApplyAvailability(phase3Plan)).toEqual({
+      state: "blocked",
+      action: "unknown",
+      actionLabel: "Review integration plan",
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason: "INTEGRATION_PLAN_PROTOCOL_UNSUPPORTED"
+    });
+  });
+
   it("reports Hook and missing companion state independently", async () => {
     const home = await mkdtemp(join(tmpdir(), "steward-companion-status-missing-"));
 
@@ -512,6 +669,368 @@ it("keeps product lifecycle writes on v1 until the finalized companion transacti
   expect(source).toContain("schemaVersion: 1");
   expect(source).not.toContain("schemaVersion: 2");
   expect(source).not.toContain("appendIntegrationRecordV2");
+});
+
+it.each(["remove", "rollback"] as const)(
+  "refuses legacy %s when the validated global lifecycle head is v2 without mutation",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-v2-${operation}-guard-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-04T05:00:00.000Z"),
+      id: () => `v2-${operation}-guard`
+    };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    await appendCurrentV2Head(plan, stateDirectory);
+    const beforeConfig = await readFile(plan.targetPath, "utf8");
+    const beforeRecords = await readIntegrationRecords(stateDirectory);
+    let appendCalled = false;
+
+    const failure = await (operation === "remove"
+      ? removeIntegration("codex", options, {
+          appendRecord: async () => { appendCalled = true; }
+        })
+      : rollbackIntegrationPlan(plan, options, {
+          appendRecord: async () => { appendCalled = true; }
+        })
+    ).catch((error: unknown) => error);
+
+    expect.soft(failure).toMatchObject({
+      code: "INTEGRATION_LEGACY_CLEANUP_UNAVAILABLE",
+      message: "Legacy v1 cleanup is unavailable because validated lifecycle history contains v2 evidence or the lifecycle snapshot could not be proven stable; use the reviewed v2 disconnect flow"
+    });
+    expect.soft(appendCalled).toBe(false);
+    expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+    expect.soft(await readIntegrationRecords(stateDirectory)).toEqual(beforeRecords);
+  }
+);
+
+it.each(["remove", "rollback"] as const)(
+  "refuses legacy %s when a newer v1 record shadows validated v2 evidence",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-v1-v2-${operation}-guard-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-04T05:30:00.000Z"),
+      id: () => `v1-v2-${operation}-guard`
+    };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    await appendCurrentV2Head(plan, stateDirectory);
+    await appendV1Shadow(plan, stateDirectory);
+    const beforeConfig = await readFile(plan.targetPath, "utf8");
+    const beforeRecords = await readIntegrationRecords(stateDirectory);
+    let appendCalled = false;
+
+    const failure = await (operation === "remove"
+      ? removeIntegration("codex", options, {
+          appendRecord: async () => { appendCalled = true; }
+        })
+      : rollbackIntegrationPlan(plan, options, {
+          appendRecord: async () => { appendCalled = true; }
+        })
+    ).catch((error: unknown) => error);
+
+    expect.soft(failure).toMatchObject({
+      code: "INTEGRATION_LEGACY_CLEANUP_UNAVAILABLE",
+      message: "Legacy v1 cleanup is unavailable because validated lifecycle history contains v2 evidence or the lifecycle snapshot could not be proven stable; use the reviewed v2 disconnect flow"
+    });
+    expect.soft(appendCalled).toBe(false);
+    expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+    expect.soft(await readIntegrationRecords(stateDirectory)).toEqual(beforeRecords);
+  }
+);
+
+it.each(["remove", "rollback"] as const)(
+  "preserves pure-v1 legacy %s cleanup",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-v1-${operation}-cleanup-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = { home, stateDirectory };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+
+    await expect(operation === "remove"
+      ? removeIntegration("codex", options)
+      : rollbackIntegrationPlan(plan, options)
+    ).resolves.toMatchObject({ schemaVersion: 1, status: "removed" });
+  }
+);
+
+it.each([
+  ["remove", "missing"],
+  ["remove", "forged"],
+  ["rollback", "missing"],
+  ["rollback", "forged"]
+] as const)("refuses legacy %s with a %s lease context before writes", async (
+  operation,
+  contextKind
+) => {
+  const home = await mkdtemp(join(tmpdir(), `steward-${operation}-${contextKind}-lease-`));
+  const stateDirectory = join(home, "state");
+  await seed(home, "codex");
+  const options = { home, stateDirectory };
+  const plan = await planIntegration("codex", options);
+  await applyIntegrationPlan(plan, options);
+  const beforeConfig = await readFile(plan.targetPath, "utf8");
+  const beforeRecords = await readIntegrationRecords(stateDirectory);
+  const cleanupOptions = contextKind === "forged"
+    ? { ...options, leaseContext: Object.freeze({}) }
+    : options as unknown as Parameters<typeof removeIntegrationDomain>[1];
+  const uncheckedCleanupOptions = cleanupOptions as unknown as Parameters<
+    typeof removeIntegrationDomain
+  >[1];
+  let appendCalled = false;
+
+  const failure = await (operation === "remove"
+    ? removeIntegrationDomain("codex", uncheckedCleanupOptions, {
+        appendRecord: async () => { appendCalled = true; }
+      })
+    : rollbackIntegrationPlanDomain(plan, uncheckedCleanupOptions, {
+        appendRecord: async () => { appendCalled = true; }
+      })
+  ).catch((error: unknown) => error);
+
+  expect.soft(failure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+  expect.soft(appendCalled).toBe(false);
+  expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+  expect.soft(await readIntegrationRecords(stateDirectory)).toEqual(beforeRecords);
+});
+
+it.each(["remove", "rollback"] as const)(
+  "wraps unavailable legacy journal evidence during %s without writes",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-${operation}-journal-unavailable-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = { home, stateDirectory };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    await writeFile(join(stateDirectory, "integrations.json"), "not-json\n", "utf8");
+    const beforeConfig = await readFile(plan.targetPath, "utf8");
+    let appendCalled = false;
+
+    const failure = await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const cleanupOptions = { ...options, leaseContext };
+      return (operation === "remove"
+        ? removeIntegrationDomain("codex", cleanupOptions, {
+            appendRecord: async () => { appendCalled = true; }
+          })
+        : rollbackIntegrationPlanDomain(plan, cleanupOptions, {
+            appendRecord: async () => { appendCalled = true; }
+          })
+      );
+    }).catch((error: unknown) => error);
+
+    expect.soft(failure).toMatchObject({
+      code: "INTEGRATION_LEGACY_CLEANUP_UNAVAILABLE",
+      cause: expect.anything()
+    });
+    expect.soft(appendCalled).toBe(false);
+    expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+    expect.soft(await readFile(join(stateDirectory, "integrations.json"), "utf8"))
+      .toBe("not-json\n");
+  }
+);
+
+it.each(["remove", "rollback"] as const)(
+  "detects lease loss immediately before legacy %s configuration mutation",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-${operation}-lease-loss-mutation-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = { home, stateDirectory };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    const beforeConfig = await readFile(plan.targetPath, "utf8");
+    const beforeRecords = await readIntegrationRecords(stateDirectory);
+    let appendCalled = false;
+    let domainFailure: unknown;
+
+    const releaseFailure = await withIntegrationMutationLease(
+      stateDirectory,
+      async (leaseContext) => {
+        const cleanupOptions = { ...options, leaseContext };
+        const dependencies = {
+          appendRecord: async () => { appendCalled = true; },
+          beforeLegacyConfigMutation: () => replaceLeasePath(stateDirectory)
+        } as Parameters<typeof removeIntegrationDomain>[2];
+        domainFailure = await (operation === "remove"
+          ? removeIntegrationDomain("codex", cleanupOptions, dependencies)
+          : rollbackIntegrationPlanDomain(plan, cleanupOptions, dependencies)
+        ).catch((error: unknown) => error);
+      }
+    ).catch((error: unknown) => error);
+
+    expect.soft(domainFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect.soft(releaseFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect.soft(appendCalled).toBe(false);
+    expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+    expect.soft(await readIntegrationRecords(stateDirectory)).toEqual(beforeRecords);
+    await rm(join(stateDirectory, "integration-mutation.lease"), { force: true });
+  }
+);
+
+it.each(["remove", "rollback"] as const)(
+  "rejects a replacement state root with the original lease inode before legacy %s mutation",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-${operation}-state-swap-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = { home, stateDirectory };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    const beforeConfig = await readFile(plan.targetPath, "utf8");
+    const beforeRecords = await readIntegrationRecords(stateDirectory);
+    let movedState = "";
+    let domainFailure: unknown;
+
+    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const cleanupOptions = { ...options, leaseContext };
+      const dependencies = {
+        beforeLegacyConfigMutation: async () => {
+          movedState = await replaceStateDirectoryWithRelinkedLease(stateDirectory);
+        }
+      } as Parameters<typeof removeIntegrationDomain>[2];
+      domainFailure = await (operation === "remove"
+        ? removeIntegrationDomain("codex", cleanupOptions, dependencies)
+        : rollbackIntegrationPlanDomain(plan, cleanupOptions, dependencies)
+      ).catch((error: unknown) => error);
+    }).catch(() => undefined);
+
+    expect.soft(domainFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+    expect.soft(await readIntegrationRecords(movedState)).toEqual(beforeRecords);
+  }
+);
+
+it.each(["remove", "rollback"] as const)(
+  "checks the lease after legacy %s config temporary sync and before rename",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-${operation}-config-publish-loss-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = { home, stateDirectory };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    const beforeConfig = await readFile(plan.targetPath, "utf8");
+    const beforeRecords = await readIntegrationRecords(stateDirectory);
+    let publishBoundaryCalled = false;
+    let domainFailure: unknown;
+
+    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const cleanupOptions = { ...options, leaseContext };
+      const dependencies = {
+        beforeLegacyConfigPublish: async () => {
+          publishBoundaryCalled = true;
+          const entries = await readdir(dirname(plan.targetPath));
+          expect(entries.some((name) => name.endsWith(".tmp"))).toBe(true);
+          await replaceLeasePath(stateDirectory);
+        }
+      } as Parameters<typeof removeIntegrationDomain>[2];
+      domainFailure = await (operation === "remove"
+        ? removeIntegrationDomain("codex", cleanupOptions, dependencies)
+        : rollbackIntegrationPlanDomain(plan, cleanupOptions, dependencies)
+      ).catch((error: unknown) => error);
+    }).catch(() => undefined);
+
+    expect.soft(publishBoundaryCalled).toBe(true);
+    expect.soft(domainFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect.soft(await readFile(plan.targetPath, "utf8")).toBe(beforeConfig);
+    expect.soft(await readIntegrationRecords(stateDirectory)).toEqual(beforeRecords);
+    await rm(join(stateDirectory, "integration-mutation.lease"), { force: true });
+  }
+);
+
+it.each(["remove", "rollback"] as const)(
+  "checks the lease after legacy %s journal temporary sync and before rename",
+  async (operation) => {
+    const home = await mkdtemp(join(tmpdir(), `steward-${operation}-lease-loss-append-`));
+    const stateDirectory = join(home, "state");
+    await seed(home, "codex");
+    const options = { home, stateDirectory };
+    const plan = await planIntegration("codex", options);
+    await applyIntegrationPlan(plan, options);
+    const beforeRecords = await readIntegrationRecords(stateDirectory);
+    let publishBoundaryCalled = false;
+    let domainFailure: unknown;
+
+    const releaseFailure = await withIntegrationMutationLease(
+      stateDirectory,
+      async (leaseContext) => {
+        const cleanupOptions = { ...options, leaseContext };
+        const dependencies = {
+          beforeLegacyJournalPublish: async () => {
+            publishBoundaryCalled = true;
+            const entries = await readdir(join(stateDirectory, "integration-records"));
+            expect(entries.some((name) => name.endsWith(".tmp"))).toBe(true);
+            await replaceLeasePath(stateDirectory);
+            await appendCurrentV2Head(plan, stateDirectory);
+          }
+        } as Parameters<typeof removeIntegrationDomain>[2];
+        domainFailure = await (operation === "remove"
+          ? removeIntegrationDomain("codex", cleanupOptions, dependencies)
+          : rollbackIntegrationPlanDomain(plan, cleanupOptions, dependencies)
+        ).catch((error: unknown) => error);
+      }
+    ).catch((error: unknown) => error);
+
+    expect.soft(domainFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect.soft(releaseFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect.soft(publishBoundaryCalled).toBe(true);
+    const afterRecords = await readIntegrationRecords(stateDirectory);
+    expect.soft(afterRecords.filter(({ schemaVersion }) => schemaVersion === 1))
+      .toEqual(beforeRecords);
+    expect.soft(afterRecords.filter(({ schemaVersion }) => schemaVersion === 2))
+      .toHaveLength(1);
+    await rm(join(stateDirectory, "integration-mutation.lease"), { force: true });
+  }
+);
+
+it("keeps v2 publication outside the authorized legacy cleanup lease", async () => {
+  const home = await mkdtemp(join(tmpdir(), "steward-cleanup-v2-interleave-"));
+  const stateDirectory = join(home, "state");
+  await seed(home, "codex");
+  const options = { home, stateDirectory };
+  const plan = await planIntegration("codex", options);
+  await applyIntegrationPlan(plan, options);
+  let cleanupReachedAppend!: () => void;
+  const reachedAppend = new Promise<void>((resolve) => { cleanupReachedAppend = resolve; });
+  let releaseCleanup!: () => void;
+  const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+  let publisherEntered = false;
+
+  const cleanup = withIntegrationMutationLease(stateDirectory, async (leaseContext) =>
+    removeIntegrationDomain(
+      "codex",
+      { ...options, leaseContext },
+      {
+        appendRecord: async () => {
+          cleanupReachedAppend();
+          await cleanupGate;
+        }
+      }
+    )
+  );
+  await reachedAppend;
+  const publication = withIntegrationMutationLease(stateDirectory, async () => {
+    publisherEntered = true;
+    await appendCurrentV2Head(plan, stateDirectory);
+  }, { waitMs: 1_000, pollMs: 2 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(publisherEntered).toBe(false);
+  releaseCleanup();
+  await cleanup;
+  await publication;
+  expect(publisherEntered).toBe(true);
 });
 
 it("keeps the companion tree before consumer-aware removal is enabled", async () => {
@@ -1237,9 +1756,9 @@ it("rejects tampered plan paths, changes, fingerprints, and non-JSON config", as
   const cleanOptions = { ...options, home: cleanHome, stateDirectory: join(cleanHome, "state") };
   const cleanPlan = await planIntegration("codex", cleanOptions);
   const hiddenWrite = { ...cleanPlan, changes: [] };
-  expect(integrationPlanSchema.safeParse(hiddenWrite).success).toBe(true);
+  expect(integrationPlanSchema.safeParse(hiddenWrite).success).toBe(false);
   await expect(applyIntegrationPlan(hiddenWrite, cleanOptions)).rejects.toMatchObject({
-    code: "INTEGRATION_DRIFTED"
+    code: "INTEGRATION_PLAN_INVALID"
   });
 });
 

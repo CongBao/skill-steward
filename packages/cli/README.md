@@ -34,7 +34,7 @@ Open the local dashboard:
 skill-steward dashboard
 ```
 
-The dashboard and CLI use the same local state. Governance and installation actions show an exact plan first and require explicit confirmation; installation rollback, quarantine, and restore are reversible. Harness integration setup is review-only in this Alpha.
+The dashboard and CLI use the same local state. Governance, installation, and Harness integration actions show an exact plan first and require explicit confirmation; installation rollback, integration rollback, quarantine, restore, and disconnect are reversible or safely retained.
 
 Mutation previews print a copyable apply command. Use the emitted ID rather than repeating the original request:
 
@@ -44,14 +44,19 @@ skill-steward install --plan <id> --confirm
 
 The same `--plan <id> --confirm` contract applies to evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use.
 
-Public integration apply is disabled until the transaction-safe companion lifecycle is complete. `skill-steward integrate status --json` and `skill-steward integrate plan --harness <id>` inspect Hook and companion state separately; plans do not contain an apply command and are refused before either tree is changed.
-
-Installation apply and rollback share one state-scoped cross-process lease. A concurrent stale installation plan is revalidated after entering the lease and stops on destination drift instead of overwriting a newer commit.
-
-Earlier Alpha users can remove only a provably managed Hook entry with the cleanup command below. It retains the shared companion Skill; consumer-aware companion removal is not enabled and this is not a new setup path.
+`skill-steward integrate status --json` and `skill-steward integrate plan --harness <id>` inspect the Harness Hook and shared companion Skill separately. Apply accepts only the emitted single-use plan, revalidates it under a state-scoped cross-process lease, and transactionally publishes the companion, Hook configuration, readiness report, and history record. A definite pre-finalize failure restores the exact prior state; uncertainty or failed compensation retains recovery evidence and returns `recovery-required`.
 
 ```bash
-skill-steward integrate remove --harness <id> --confirm
+skill-steward integrate apply --plan <id> --confirm
+```
+
+Installation, integration, and rollback share the same mutation lease. A concurrent stale plan stops on drift instead of overwriting a newer commit. Companion create and upgrade also require the packaged no-replace native helper for the current platform.
+
+Disconnect removes only the reviewed managed Hook and retains the shared companion Skill so another Harness cannot lose it:
+
+```bash
+skill-steward integrate remove --harness <id>
+skill-steward integrate remove --plan <id> --confirm
 ```
 
 ## Package trust

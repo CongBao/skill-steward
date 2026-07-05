@@ -36,6 +36,7 @@ const reviewedPlanKindSchema = z.enum([
   "installation",
   "governance",
   "integration",
+  "integration-disconnect",
   "evidence-policy",
   "evidence-erase"
 ]);
@@ -330,6 +331,51 @@ export async function writeReviewedPlan<TPayload>(
     }
   } catch (error) {
     throw normalizeStoreError(error, "write");
+  }
+}
+
+export async function peekReviewedPlan(
+  stateDirectory: string,
+  input: {
+    id: string;
+    kind: ReviewedPlanKind;
+    now?: Date;
+  }
+): Promise<ReviewedPlanEnvelope<unknown>> {
+  try {
+    const id = parseId(input.id);
+    const kind = parseKind(input.kind);
+    const now = parseNow(input.now ?? new Date());
+    const directory = await reviewedPlansDirectory(stateDirectory, false);
+    if (directory === undefined) {
+      throw storeError("REVIEWED_PLAN_NOT_FOUND", "Reviewed plan was not found");
+    }
+    const pending = resolve(directory, `${id}.json`);
+    if (dirname(pending) !== directory || await inspectPlanFile(pending) === "missing") {
+      throw storeError("REVIEWED_PLAN_NOT_FOUND", "Reviewed plan was not found");
+    }
+    let envelope: ReviewedPlanEnvelope;
+    try {
+      envelope = parseEnvelope(JSON.parse(await readRegularFile(pending)) as unknown);
+    } catch (error) {
+      if (error instanceof ReviewedPlanStoreError) throw error;
+      throw storeError("REVIEWED_PLAN_INVALID", "Reviewed plan content is invalid");
+    }
+    if (envelope.id !== id) {
+      throw storeError("REVIEWED_PLAN_INVALID", "Reviewed plan ID does not match its file");
+    }
+    if (envelope.kind !== kind) {
+      throw storeError(
+        "REVIEWED_PLAN_KIND_MISMATCH",
+        "Reviewed plan kind does not match the requested action"
+      );
+    }
+    if (Date.parse(envelope.expiresAt) <= now) {
+      throw storeError("REVIEWED_PLAN_EXPIRED", "Reviewed plan has expired");
+    }
+    return envelope;
+  } catch (error) {
+    throw normalizeStoreError(error, "read");
   }
 }
 

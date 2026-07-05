@@ -4,7 +4,7 @@ Use anonymous or synthetic Skills unless the participant has reviewed what will 
 
 Target build: `0.5.0-alpha.4`. This is still an Alpha protocol for a local Harness companion, not a Harness. Native semantics are tested only on the documented core adapter surfaces below.
 
-## Alpha.4 test matrix
+## Current test matrix
 
 Run each row from a clean checkout. Manual mutation journeys must use a disposable `HOME`, workspace, and `SKILL_STEWARD_HOME`.
 
@@ -15,7 +15,8 @@ Run each row from a clean checkout. Manual mutation journeys must use a disposab
 | Compact handoff output and bilingual concept matching | `CI=true pnpm --filter @skill-steward/preflight exec vitest run tests/analyze.test.ts tests/tokenize.test.ts tests/compact.test.ts` | Algorithm v8/result schema v4 preserves visibility and recommendation decisions, compact schema v3 stays within 4,096 UTF-8 bytes and nulls unavailable feedback, the bounded pre-merge review profile resists generic names and negation, and low-confidence two-character fragments remain empty. |
 | Native governance refusal | `CI=true pnpm --filter skill-steward exec vitest run tests/govern.test.ts tests/preflight.test.ts` | Native plugin-managed Skills remain visible but cannot enter quarantine/restore plans; direct Skills remain eligible; compact CLI output stays bounded. |
 | Exact reviewed plans | `CI=true pnpm --filter skill-steward exec vitest run tests/install.test.ts tests/govern.test.ts tests/evidence.test.ts` | Plans survive a new process, apply the inspected payload once, stop on drift, and require a fresh preview after claim. |
-| Integration review-only boundary | `CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts && CI=true pnpm --filter @skill-steward/dashboard-server exec vitest run tests/integrations.test.ts` | Plans bind exact Hook, companion, source, proof, record-head, and consumer evidence; public apply is refused, consumes the single-use plan, and writes neither Harness configuration nor a companion tree. |
+| Integration lifecycle and public surfaces | `CI=true pnpm --filter @skill-steward/integrations test && CI=true pnpm --filter @skill-steward/store test && CI=true pnpm --filter skill-steward exec vitest run tests/integrate.test.ts tests/integrate-process.test.ts && CI=true pnpm --filter @skill-steward/dashboard-server exec vitest run tests/integrations.test.ts` | Plans bind exact Hook, companion, source, proof, record-head, and consumer evidence; create/upgrade/no-op/disconnect use the same recoverable coordinator across CLI, API, and Dashboard; rollback and uncertainty remain safe and path-free. |
+| Native no-replace packages | `CI=true pnpm --filter skill-steward exec vitest run tests/native-workflow-policy.test.mjs tests/native-package-verifier.test.mjs tests/native-package-publisher.test.mjs tests/package.test.ts` plus the six-package matrix in `.github/workflows/native-rename-packages.yml` | Platform packages expose only the expected ABI and native binary, carry exact OS/CPU/libc metadata and a four-file tarball, and use exact-SHA-pinned actions. Exact-main publication preflights all six registry integrities and safely resumes only byte-identical partial publication through the protected `native-publish` environment. The publish job verifies its pinned npm 11 client. The [publication runbook](native-publication.md) limits token use to the one-time package bootstrap; later releases use trusted publishing. |
 | Lifecycle journal snapshot races | `CI=true pnpm --filter @skill-steward/store exec vitest run tests/integration-store.test.ts` | Concurrent cleanup retries only after immediate path absence is proven; same-name replacement still fails closed; real readers remain healthy while writers publish and clean beyond 100 fragments. |
 | Package trust | `CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs` | Package `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and the locked `runtime-audit.json` agree; real npm and pnpm tarballs pass exact-tree verification. |
 | Full repository | `CI=true pnpm check` | Every workspace builds, typechecks, and passes its test suite without writing private task content. |
@@ -75,24 +76,40 @@ In a disposable HOME, create two different replacement plans for the same instal
 
 ## Harness bridge
 
-Inspect status and create a read-only plan:
+Run the full journey inside a disposable `HOME` and `SKILL_STEWARD_HOME`:
 
 ```bash
 skill-steward integrate status
 skill-steward integrate plan --harness codex --json
 ```
 
-Confirm status reports the Hook and companion separately. The plan must include the exact target, packaged source, expected companion tree, proof category, record head, and consumer evidence. JSON must report `applyAvailable: false`, `applyCommand: null`, and `COMPANION_TRANSACTION_NOT_ENABLED`. The Dashboard must show the same domains and must not render Apply or Remove controls.
+Confirm status reports the Hook and companion separately. The plan must include the exact target, packaged source, expected companion tree, proof category, record head, consumer evidence, action, availability, and one copyable apply command. Review and apply that exact plan:
 
-As a negative contract test in a disposable HOME, invoke `skill-steward integrate apply --plan <id> --confirm` with the reviewed ID. Apply must be refused with `INTEGRATION_COMPANION_ACTION_UNAVAILABLE`; the single-use plan must be consumed; and no Harness configuration or companion tree is written. A second call with the same ID must report that the reviewed plan is unavailable. Repeat after changing the source, destination, Harness config, record head, or consumer set and confirm drift is refused before any write.
+```bash
+skill-steward integrate apply --plan <id> --confirm --json
+skill-steward integrate status --harness codex --json
+```
 
-Exercise the cached Hook protocols only through the temporary-HOME fixtures until lifecycle apply is enabled:
+The result must be `ready`; a create reports `companion: created` and `hook: installed`. Repeat the plan and apply journey without changing files; the `none` action must be a real zero-write path. Seed an older owned companion fixture and verify the upgrade path. After every run, compare the CLI, loopback API, Dashboard, readiness report, and integration history fields.
+
+Review and apply disconnect in two separate commands:
+
+```bash
+skill-steward integrate remove --harness codex --json
+skill-steward integrate remove --plan <id> --confirm --json
+```
+
+The selected Hook must be removed without changing unrelated configuration. The companion remains present. After the last consumer disconnects, reconnect must reuse only a lifecycle-proven retained companion; modify, replace, truncate, or make it unreadable and confirm reconnect stops on drift.
+
+Exercise the cached Hook protocols through temporary-HOME fixtures:
 
 - Codex: `UserPromptSubmit` returns recommendation context; `Stop` returns valid non-blocking JSON.
 - Claude Code: `UserPromptSubmit` returns recommendation context; `Stop` and `SessionEnd` return valid non-blocking JSON.
 - GitHub Copilot CLI: `userPromptSubmitted` and `sessionEnd` both return `{}`; recommendations are tested separately through the companion Skill or CLI.
 
-For migration coverage, seed a Hook installed by an earlier Alpha and run the narrow cleanup path in a disposable HOME. It may remove only a provably managed Hook entry, must preserve unrelated configuration, and must retain the shared companion Skill. Do not treat this as consumer-aware companion removal or as part of new setup.
+For failure coverage, inject final readiness publication failure after the companion and Hook mutations. Both must return to their exact before state and the receipt must report `rolled-back`. Kill a child process after durable recovery intent and rerun the recovery reader. Force a lease loss at a forward mutation boundary and confirm `recovery-required` is path-free and no unsafe overwrite occurs. Unknown `EACCES` and `EIO` errors must use the stable generic public error rather than include a filesystem path.
+
+On every supported platform package, remove the no-replace helper and confirm create/upgrade is blocked before mutation. Disconnect must remain available because it does not mutate the companion tree. A proven existing-parent `none` action may proceed without the helper; a missing config ancestor may not.
 
 ## Evidence and privacy
 
@@ -152,7 +169,7 @@ CI=true pnpm --filter @skill-steward/dashboard-server build
 CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts
 ```
 
-It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, reviews all three integration adapters, verifies that public apply fails closed with zero Hook/companion writes, and checks legacy cleanup only in explicitly injected migration fixtures.
+It seeds installed Skills and cached catalog records, exercises all declared Hook protocols, checks privacy-reduced state and sanitized export, reviews all three integration adapters, and verifies create/upgrade/no-op/disconnect plus rollback, recovery-required, native-capability, and privacy gates through public surfaces.
 
 ## Package trust review
 

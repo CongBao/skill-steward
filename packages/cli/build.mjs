@@ -330,7 +330,7 @@ const cliBuild = await build({
     "jsonc-parser": jsoncParserEsm
   },
   banner: {
-    js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+    js: "import { createRequire as __bundleCreateRequire } from 'node:module'; const require = __bundleCreateRequire(import.meta.url);"
   }
 });
 const dashboardAnalysis = await build({

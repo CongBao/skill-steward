@@ -97,9 +97,10 @@ export function createDashboardApplication(
     home: context.home,
     stateDirectory: context.stateDir,
     companionSkillDirectory: packagedCompanionSkillDirectory(),
-    afterApply: async () => {
-      await dashboardServices.scan([]);
-    },
+    generateReadiness: async () => scanInventory({
+      home: context.home,
+      cwd: context.cwd
+    }, context.now?.() ?? new Date()),
     ...(context.now ? { now: context.now } : {})
   });
   const evidenceServices = createEvidenceServices({

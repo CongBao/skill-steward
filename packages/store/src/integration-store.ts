@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import {
   lstat,
@@ -13,6 +13,12 @@ import {
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+import {
+  issueIntegrationRecordCommitReceipt,
+  type IntegrationRecordCommitReceipt
+} from "./integration-record-authority.js";
+
+export type { IntegrationRecordCommitReceipt } from "./integration-record-authority.js";
 
 const INTEGRATIONS_FILE = "integrations.json";
 const INTEGRATION_RECORDS_DIRECTORY = "integration-records";
@@ -146,11 +152,10 @@ const companionTransitionSchema = z.object({
     || transition.before.fingerprint !== transition.after.fingerprint
     || transition.before.fingerprint !== transition.installedFingerprint
     || transition.proof.category !== "recorded"
-    || transition.consumers.length === 0
   )) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Retain requires an exact recorded tree and remaining consumers"
+      message: "Retain requires an exact recorded tree"
     });
   }
   if (transition.action === "remove" && (
@@ -259,12 +264,50 @@ export type IntegrationRecord = z.infer<typeof integrationRecordSchema>;
 export type IntegrationRecordV1 = z.infer<typeof integrationRecordV1Schema>;
 export type IntegrationRecordV2 = z.infer<typeof integrationRecordV2Schema>;
 
+export const integrationRecordV2BindingSchema = z.object({
+  schemaVersion: z.literal(1),
+  digest: fingerprintSchema
+}).strict();
+
+export type IntegrationRecordV2Binding = z.infer<typeof integrationRecordV2BindingSchema>;
+
+function canonicalIntegrationRecordJson(value: unknown): string {
+  const canonicalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(canonicalize);
+    if (entry !== null && typeof entry === "object") {
+      return Object.fromEntries(Object.keys(entry as Record<string, unknown>)
+        .sort()
+        .map((key) => [
+          key,
+          canonicalize((entry as Record<string, unknown>)[key])
+        ]));
+    }
+    return entry;
+  };
+  return JSON.stringify(canonicalize(value));
+}
+
+export function bindIntegrationRecordV2(input: unknown): IntegrationRecordV2Binding {
+  const record = integrationRecordV2Schema.parse(input);
+  return Object.freeze(integrationRecordV2BindingSchema.parse({
+    schemaVersion: 1,
+    digest: `sha256:${createHash("sha256")
+      .update(canonicalIntegrationRecordJson(record))
+      .digest("hex")}`
+  }));
+}
+
 export class IntegrationJournalCommitUncertainError extends Error {
   readonly code = "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN";
 
-  constructor(commitError: unknown, cleanupError: unknown) {
+  constructor(
+    commitError: unknown,
+    cleanupError: unknown,
+    message = "Integration record publication failed and removal of its owned fragment could not be proven",
+    readonly preservePublished = false
+  ) {
     super(
-      "Integration record publication failed and removal of its owned fragment could not be proven",
+      message,
       {
         cause: new AggregateError(
           [commitError, cleanupError],
@@ -326,12 +369,17 @@ export interface IntegrationRecordStore {
   appendIntegrationRecord(
     stateDirectory: string,
     input: IntegrationRecord,
-    options?: { limit?: number }
-  ): Promise<void>;
+    options?: IntegrationRecordAppendOptions
+  ): Promise<IntegrationRecordCommitReceipt>;
   latestIntegrationRecord(
     stateDirectory: string,
     harness: IntegrationRecord["harness"]
   ): Promise<IntegrationRecord | null>;
+}
+
+interface IntegrationRecordAppendOptions {
+  limit?: number;
+  beforePublish?: () => Promise<void>;
 }
 
 const defaultContext: IntegrationStoreContext = { platform: process.platform };
@@ -531,6 +579,51 @@ async function assertSameRecordsStorage(
     assertSameStateDirectory(storage.state, context),
     assertSameRecordsDirectory(storage, context)
   ]);
+}
+
+async function syncRecordsDirectory(
+  storage: RecordsDirectoryStorage,
+  context: IntegrationStoreContext
+): Promise<void> {
+  await assertSameRecordsStorage(storage, context);
+  const handle = await open(
+    storage.directory,
+    constants.O_RDONLY
+      | (context.platform === "win32" ? 0 : constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  );
+  let primary: unknown;
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (
+      !before.isDirectory()
+      || before.dev !== storage.identity.device
+      || before.ino !== storage.identity.inode
+    ) throw new Error("Integration record directory changed before fsync");
+    await handle.sync();
+    const after = await handle.stat({ bigint: true });
+    if (
+      !after.isDirectory()
+      || after.dev !== storage.identity.device
+      || after.ino !== storage.identity.inode
+    ) throw new Error("Integration record directory changed during fsync");
+    await assertSameRecordsStorage(storage, context);
+  } catch (error) {
+    primary = error;
+  }
+  let closeError: unknown;
+  try {
+    await handle.close();
+  } catch (error) {
+    closeError = error;
+  }
+  if (primary !== undefined && closeError !== undefined) {
+    throw new AggregateError(
+      [primary, closeError],
+      "Integration record directory sync and handle close both failed"
+    );
+  }
+  if (primary !== undefined) throw primary;
+  if (closeError !== undefined) throw closeError;
 }
 
 async function removeOwnedPath(
@@ -1358,9 +1451,9 @@ async function readIntegrationRecordsWithContext(
 async function appendIntegrationRecordWithContext(
   stateDirectory: string,
   input: IntegrationRecord,
-  options: { limit?: number },
+  options: IntegrationRecordAppendOptions,
   context: IntegrationStoreContext
-): Promise<void> {
+): Promise<IntegrationRecordCommitReceipt> {
   const limit = options.limit ?? MAX_RECORDS;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORDS) {
     throw new Error(`Integration record limit must be between 1 and ${MAX_RECORDS}`);
@@ -1423,6 +1516,7 @@ async function appendIntegrationRecordWithContext(
   let temporaryNeedsCleanup = true;
   let publishedIdentity: BigIntStats | undefined;
   let destination: string | undefined;
+  let durablePublication = false;
   try {
     const initialTemporaryIdentity = await handle.stat({ bigint: true });
     assertProvableOwnedFile(
@@ -1458,6 +1552,7 @@ async function appendIntegrationRecordWithContext(
       `${Date.now()}-${process.pid}-${String(processSequence).padStart(12, "0")}-${unique}.json`
     );
     await assertSameRecordsStorage(storage, context);
+    await options.beforePublish?.();
     try {
       await rename(temporary, destination);
     } catch (renameError) {
@@ -1569,7 +1664,32 @@ async function appendIntegrationRecordWithContext(
       storage,
       context
     );
+    try {
+      await syncRecordsDirectory(storage, context);
+    } catch (syncError) {
+      throw new IntegrationJournalCommitUncertainError(
+        new IntegrationPublishedOwnershipError(
+          "Integration fragment was published before directory durability failed"
+        ),
+        syncError,
+        "Integration record publication is visible but directory durability is uncertain",
+        true
+      );
+    }
+    durablePublication = true;
     await cleanupOldFragments(stateDirectory, context, storage);
+    try {
+      await syncRecordsDirectory(storage, context);
+    } catch (syncError) {
+      throw new IntegrationJournalCommitUncertainError(
+        new IntegrationPublishedOwnershipError(
+          "Integration fragment cleanup completed before directory durability failed"
+        ),
+        syncError,
+        "Integration record cleanup is visible but directory durability is uncertain",
+        true
+      );
+    }
     await readIntegrationRecordJournalWithContext(
       stateDirectory,
       context,
@@ -1584,7 +1704,33 @@ async function appendIntegrationRecordWithContext(
       storage,
       context
     );
+    return issueIntegrationRecordCommitReceipt(statePath, record);
   } catch (error) {
+    if (durablePublication) {
+      let compensation: unknown = new Error(
+        "Durable integration publication was retained after a later validation failure"
+      );
+      if (destination && publishedIdentity) {
+        try {
+          await removeOwnedPath(destination, publishedIdentity, storage, context);
+          await syncRecordsDirectory(storage, context);
+          compensation = new Error(
+            "Durable integration publication was compensated and the directory was synchronized"
+          );
+        } catch (cleanupError) {
+          compensation = cleanupError;
+        }
+      }
+      throw new IntegrationJournalCommitUncertainError(
+        error,
+        compensation,
+        "Integration record was durably published before a later operation failed",
+        true
+      );
+    }
+    if (error instanceof IntegrationJournalCommitUncertainError && error.preservePublished) {
+      throw error;
+    }
     if (destinationMayExist && destination) {
       if (!publishedIdentity) {
         if (error instanceof IntegrationJournalCommitUncertainError) throw error;
@@ -1661,8 +1807,8 @@ export async function readIntegrationRecordJournal(
 export async function appendIntegrationRecord(
   stateDirectory: string,
   input: IntegrationRecord,
-  options: { limit?: number } = {}
-): Promise<void> {
+  options: IntegrationRecordAppendOptions = {}
+): Promise<IntegrationRecordCommitReceipt> {
   return appendIntegrationRecordWithContext(stateDirectory, input, options, defaultContext);
 }
 

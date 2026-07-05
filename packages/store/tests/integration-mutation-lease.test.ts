@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
 import {
   access,
+  chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   stat,
   unlink,
@@ -27,9 +30,14 @@ type LeaseOptions = {
 
 type WithLease = <T>(
   stateDirectory: string,
-  operation: () => Promise<T>,
+  operation: (context: unknown) => Promise<T>,
   options?: LeaseOptions
 ) => Promise<T>;
+
+type AssertLeaseOwned = (
+  context: unknown,
+  stateDirectory: string
+) => Promise<void>;
 
 const withLease = (store as unknown as {
   withIntegrationMutationLease: WithLease;
@@ -37,6 +45,9 @@ const withLease = (store as unknown as {
 const withInstallationLease = (store as unknown as {
   withInstallationMutationLease: WithLease;
 }).withInstallationMutationLease;
+const assertLeaseOwned = (store as unknown as {
+  assertIntegrationMutationLeaseOwned?: AssertLeaseOwned;
+}).assertIntegrationMutationLeaseOwned;
 const leaseFixture = fileURLToPath(
   new URL("./fixtures/integration-lease-holder.mjs", import.meta.url)
 );
@@ -82,6 +93,93 @@ async function exitedChildPid(): Promise<number> {
 }
 
 describe("integration mutation lease", () => {
+  it("issues an opaque live context and rejects missing, forged, or expired contexts", async () => {
+    expect(assertLeaseOwned).toBeTypeOf("function");
+    const state = await mkdtemp(join(tmpdir(), "steward-lease-context-"));
+    let captured: unknown;
+
+    await withLease(state, async (context) => {
+      captured = context;
+      expect(Object.isFrozen(context)).toBe(true);
+      expect(Reflect.ownKeys(context as object)).toEqual([]);
+      await expect(assertLeaseOwned!(context, state)).resolves.toBeUndefined();
+      await expect(assertLeaseOwned!(undefined, state)).rejects.toMatchObject({
+        code: "INTEGRATION_LEASE_LOST"
+      });
+      await expect(assertLeaseOwned!(Object.freeze({}), state)).rejects.toMatchObject({
+        code: "INTEGRATION_LEASE_LOST"
+      });
+      await expect(assertLeaseOwned!(context, `${state}-other`)).rejects.toMatchObject({
+        code: "INTEGRATION_LEASE_LOST"
+      });
+    });
+
+    await expect(assertLeaseOwned!(captured, state)).rejects.toMatchObject({
+      code: "INTEGRATION_LEASE_LOST"
+    });
+  });
+
+  it("detects same-content lease path replacement before the next mutation boundary", async () => {
+    expect(assertLeaseOwned).toBeTypeOf("function");
+    const state = await mkdtemp(join(tmpdir(), "steward-lease-context-replaced-"));
+    const leasePath = join(state, "integration-mutation.lease");
+    let boundaryFailure: unknown;
+
+    const releaseFailure = await withLease(state, async (context) => {
+      await expect(assertLeaseOwned!(context, state)).resolves.toBeUndefined();
+      const bytes = await readFile(leasePath);
+      await unlink(leasePath);
+      await writeFile(leasePath, bytes, { mode: 0o600 });
+      boundaryFailure = await assertLeaseOwned!(context, state)
+        .catch((error: unknown) => error);
+    }).catch((error: unknown) => error);
+
+    expect(boundaryFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect(releaseFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    await unlink(leasePath);
+  });
+
+  it("rejects a replacement state directory even when it relinks the owned lease inode", async () => {
+    expect(assertLeaseOwned).toBeTypeOf("function");
+    const base = await mkdtemp(join(tmpdir(), "steward-lease-state-replaced-"));
+    const state = join(base, "state");
+    const moved = join(base, "state-moved");
+    const leaseName = "integration-mutation.lease";
+    let boundaryFailure: unknown;
+
+    const releaseFailure = await withLease(state, async (context) => {
+      await expect(assertLeaseOwned!(context, state)).resolves.toBeUndefined();
+      await rename(state, moved);
+      await mkdir(state, { mode: 0o700 });
+      await link(join(moved, leaseName), join(state, leaseName));
+      boundaryFailure = await assertLeaseOwned!(context, state)
+        .catch((error: unknown) => error);
+    }).catch((error: unknown) => error);
+
+    expect(boundaryFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect(releaseFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    await expect(access(join(state, leaseName))).resolves.toBeUndefined();
+    await rm(base, { recursive: true, force: true });
+  });
+
+  it("detects state-directory permission drift before the next mutation boundary", async () => {
+    expect(assertLeaseOwned).toBeTypeOf("function");
+    const state = await mkdtemp(join(tmpdir(), "steward-lease-state-mode-"));
+    const leasePath = join(state, "integration-mutation.lease");
+    let boundaryFailure: unknown;
+
+    const releaseFailure = await withLease(state, async (context) => {
+      await chmod(state, 0o755);
+      boundaryFailure = await assertLeaseOwned!(context, state)
+        .catch((error: unknown) => error);
+    }).catch((error: unknown) => error);
+
+    expect(boundaryFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    expect(releaseFailure).toMatchObject({ code: "INTEGRATION_LEASE_LOST" });
+    await chmod(state, 0o700);
+    await unlink(leasePath);
+  });
+
   it("serializes same-state work in the same process", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-lease-serial-"));
     let active = 0;

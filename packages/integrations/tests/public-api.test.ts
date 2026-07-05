@@ -22,46 +22,48 @@ const tscPath = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 const runtimeExports = [
   "CompanionSkillError",
   "IntegrationError",
+  "IntegrationTransactionError",
   "applyIntegrationPlan",
+  "applyIntegrationDisconnect",
   "companionSkillDirectory",
-  "companionSubplanSchema",
   "copilotHookConfig",
   "copilotHookTarget",
-  "inspectCompanionSkill",
   "integrationCapabilities",
   "integrationCapabilitySchema",
   "integrationHarnessSchema",
-  "integrationPlanSchema",
   "integrationStatus",
   "normalizeLifecycleInput",
   "normalizeObserveInput",
   "normalizePromptDelivery",
   "planIntegration",
+  "planIntegrationDisconnect",
   "promptHookInputSchema",
   "promptInjectionHarnessSchema",
-  "removeIntegration",
+  "removeLegacyIntegration",
   "renderPromptHook",
-  "rethrowAfterIntegrationApplyFailure",
-  "rollbackIntegrationPlan",
   "runLifecycleHook",
   "runObserveHook",
-  "runPromptHook"
+  "runPromptHook",
+  "serializePublicIntegrationError"
 ].sort();
 
 const declarationExports = [
   ...runtimeExports,
-  "CompanionSkillInspection",
   "CompanionSkillStatus",
-  "CompanionSubplan",
-  "InspectCompanionSkillInput",
   "IntegrationCapability",
-  "IntegrationChange",
+  "IntegrationArtifactRole",
   "IntegrationConfigOptions",
   "IntegrationErrorCode",
   "IntegrationHarness",
+  "IntegrationLegacyRemovalReceipt",
   "IntegrationPlan",
+  "IntegrationPlanAction",
+  "IntegrationPlanAvailability",
+  "IntegrationReadinessContext",
+  "IntegrationTransactionOptions",
+  "IntegrationTransactionReceipt",
+  "IntegrationDisconnectPlan",
   "IntegrationStatus",
-  "IntegrationStatusValue",
   "LifecyclePrivacy",
   "NormalizeLifecycleInput",
   "NormalizeObserveInput",
@@ -69,6 +71,8 @@ const declarationExports = [
   "PromptHookInput",
   "PromptHookOutput",
   "PromptInjectionHarness",
+  "PublicIntegrationError",
+  "PublicIntegrationErrorCode",
   "RenderPromptHookInput",
   "RunLifecycleHookInput",
   "RunObserveHookInput",
@@ -78,6 +82,7 @@ const declarationExports = [
 let temporaryDirectory = "";
 let builtIndex = "";
 let builtDeclaration = "";
+let builtConfigDeclaration = "";
 
 beforeAll(async () => {
   temporaryDirectory = await mkdtemp(join(packageRoot, ".tmp-public-api-"));
@@ -98,6 +103,7 @@ beforeAll(async () => {
   await execFileAsync(process.execPath, [tscPath, "-p", configPath]);
   builtIndex = join(outputDirectory, "src", "index.js");
   builtDeclaration = join(outputDirectory, "src", "index.d.ts");
+  builtConfigDeclaration = join(outputDirectory, "src", "config.d.ts");
 }, 30_000);
 
 afterAll(async () => {
@@ -128,15 +134,31 @@ describe("built package root", () => {
     const declarationText = await readFile(builtDeclaration, "utf8");
     expect(declarationText).not.toContain("export *");
     expect(declarationText).not.toMatch(
-      /CompanionManifest|companionTree|compareCompanionPaths|createCompanionTreeManifest|LegacyAlpha|resolveCompanionManagedProof/u
+      /CompanionManifest|companionTree|compareCompanionPaths|createCompanionTreeManifest|IntegrationRecovery|LegacyAlpha|resolveCompanionManagedProof/u
+    );
+
+    const configDeclarationText = await readFile(builtConfigDeclaration, "utf8");
+    expect(configDeclarationText).toContain(
+      "interface IntegrationMutationConfigOptions extends IntegrationConfigOptions"
+    );
+    expect(configDeclarationText).toMatch(
+      /rollbackIntegrationPlan\([^)]*options: IntegrationMutationConfigOptions/su
+    );
+    expect(configDeclarationText).toMatch(
+      /removeIntegration\([^)]*options: IntegrationMutationConfigOptions/su
     );
   });
 
   it.each([
+    "@skill-steward/integrations/config",
     "@skill-steward/integrations/companion-domain",
     "@skill-steward/integrations/companion-legacy",
     "@skill-steward/integrations/companion-manifest",
-    "@skill-steward/integrations/companion-inspector-internal"
+    "@skill-steward/integrations/companion-inspector-internal",
+    "@skill-steward/integrations/companion-transaction",
+    "@skill-steward/integrations/companion-native-capability",
+    "@skill-steward/integrations/companion-owned-tree-native",
+    "@skill-steward/integrations/integration-lifecycle"
   ])("does not export internal subpath %s", async (specifier) => {
     const script = `
       try {
@@ -185,22 +207,13 @@ describe("built package root", () => {
       const api = await import(${JSON.stringify(pathToFileURL(builtIndex).href)});
       const [home, stateDirectory, sourceDirectory, hookPath] = process.argv.slice(1);
       const options = { home, stateDirectory, companionSourceDirectory: sourceDirectory };
-      let missingSourceCode = "RESOLVED";
-      try {
-        await api.inspectCompanionSkill({
-          home,
-          sourceDirectory: sourceDirectory + "-missing"
-        });
-      } catch (error) {
-        missingSourceCode = error?.code ?? "UNKNOWN";
-      }
-      const inspection = await api.inspectCompanionSkill({ home, sourceDirectory });
-      const plan = api.integrationPlanSchema.parse(
-        await api.planIntegration("codex", options)
-      );
+      const plan = await api.planIntegration("codex", options);
       let applyCode = "RESOLVED";
       try {
-        await api.applyIntegrationPlan(plan, options);
+        await api.applyIntegrationPlan(plan.planId, {
+          ...options,
+          generateReadiness: async () => { throw new Error("unreachable readiness"); }
+        });
       } catch (error) {
         applyCode = error?.code ?? "UNKNOWN";
       }
@@ -212,11 +225,9 @@ describe("built package root", () => {
         hookExists = false;
       }
       process.stdout.write(JSON.stringify({
-        inspection,
         plan,
         applyCode,
-        hookExists,
-        missingSourceCode
+        hookExists
       }));
     `;
     const { stdout } = await execFileAsync(process.execPath, [
@@ -229,25 +240,27 @@ describe("built package root", () => {
       hookPath
     ], { cwd: packageRoot });
     const result = JSON.parse(stdout);
-    const unavailable = {
-      state: "unavailable",
-      reason: "COMPANION_SOURCE_UNPROVABLE"
-    };
-    expect(result.inspection).toMatchObject({
+    expect(result.plan).toMatchObject({
+      schemaVersion: 1,
+      action: "blocked",
       status: "unknown",
-      reason: "COMPANION_SOURCE_UNPROVABLE",
-      subplan: {
-        action: "conflict",
-        expectedBefore: { state: "unknown", reason: "COMPANION_SOURCE_UNPROVABLE" },
-        after: unavailable,
-        source: { path: sourceDirectory, ...unavailable },
-        proof: { kind: "unknown", reason: "COMPANION_SOURCE_UNPROVABLE" }
-      }
+      availability: {
+        state: "unavailable",
+        available: false,
+        reason: "COMPANION_SOURCE_UNPROVABLE"
+      },
+      targets: {
+        hook: hookPath,
+        companion: join(home, ".agents", "skills", "skill-steward-preflight")
+      },
+      fingerprintCategory: "unknown",
+      artifacts: []
     });
-    expect(result.plan.companion).toEqual(result.inspection.subplan);
+    expect(JSON.stringify(result.plan)).not.toMatch(
+      /backupPath|sourceDirectory|expectedBefore|proof|allowlist|identity/u
+    );
     expect(result.applyCode).toBe("INTEGRATION_COMPANION_ACTION_UNAVAILABLE");
     expect(result.hookExists).toBe(false);
-    expect(result.missingSourceCode).toBe("COMPANION_SOURCE_INVALID");
     await expect(access(hookPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

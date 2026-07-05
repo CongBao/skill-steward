@@ -86,8 +86,8 @@ it("wires fresh task preflight into the dashboard application", async () => {
   const integrations = await app.inject({ method: "GET", url: "/api/v1/integrations" });
   expect(integrations.statusCode).toBe(200);
   expect(integrations.json().data).toEqual(expect.arrayContaining([
-    expect.objectContaining({ harness: "codex", status: "not-installed" }),
-    expect.objectContaining({ harness: "claude-code", status: "not-installed" })
+    expect.objectContaining({ harness: "codex", status: "missing", hookStatus: "not-installed" }),
+    expect.objectContaining({ harness: "claude-code", status: "missing", hookStatus: "not-installed" })
   ]));
   await app.close();
 });

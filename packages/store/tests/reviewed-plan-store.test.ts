@@ -136,6 +136,7 @@ import {
   claimReviewedPlan,
   cleanupExpiredReviewedPlans,
   discardReviewedPlan,
+  peekReviewedPlan,
   writeReviewedPlan,
   type ReviewedPlanEnvelope,
   type ReviewedPlanKind
@@ -213,6 +214,42 @@ afterEach(async () => {
 });
 
 describe("reviewed plan store", () => {
+  it("peeks a strict reviewed plan without consuming its later claim", async () => {
+    const stateDir = await state("steward-reviewed-peek-");
+    const plan = envelope("peek-plan", "integration");
+    await writeReviewedPlan(stateDir, plan);
+
+    await expect(peekReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: "integration",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toEqual(plan);
+    await expect(claimReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: "integration",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toEqual(plan);
+  });
+
+  it("stores and durably claims the distinct integration-disconnect kind", async () => {
+    const stateDir = await state("steward-reviewed-disconnect-");
+    const plan = envelope("disconnect-plan", "integration-disconnect");
+
+    await writeReviewedPlan(stateDir, plan);
+    vi.resetModules();
+    const freshStore = await import("../src/reviewed-plan-store.js");
+    await expect(freshStore.claimReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: "integration-disconnect",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toEqual(plan);
+    await expect(freshStore.claimReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: "integration-disconnect",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).rejects.toMatchObject({ code: "REVIEWED_PLAN_NOT_FOUND" });
+  });
+
   it("writes private files and lets a fresh module instance claim the payload", async () => {
     const stateDir = await state("steward-reviewed-plan-");
     const plan = envelope("plan-1");

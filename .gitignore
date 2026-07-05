@@ -13,3 +13,5 @@ playwright-report/
 test-results/
 .playwright-cli/
 docs/superpowers/
+packages/rename-noreplace-*/rename_noreplace.node
+packages/rename-noreplace-*/LICENSE

@@ -1,0 +1,139 @@
+name: Native rename packages
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish verified platform packages to npm
+        required: true
+        type: boolean
+        default: false
+      authentication:
+        description: Use trusted publishing, except for the reviewed one-time package bootstrap
+        required: true
+        type: choice
+        default: trusted-publisher
+        options:
+          - trusted-publisher
+          - bootstrap-token
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            package: rename-noreplace-darwin-arm64
+            platform: darwin
+            arch: arm64
+            libc: none
+            container: false
+          - runner: macos-15-intel
+            package: rename-noreplace-darwin-x64
+            platform: darwin
+            arch: x64
+            libc: none
+            container: false
+          - runner: ubuntu-24.04-arm
+            package: rename-noreplace-linux-arm64-gnu
+            platform: linux
+            arch: arm64
+            libc: gnu
+            container: false
+          - runner: ubuntu-24.04
+            package: rename-noreplace-linux-x64-gnu
+            platform: linux
+            arch: x64
+            libc: gnu
+            container: false
+          - runner: ubuntu-24.04-arm
+            package: rename-noreplace-linux-arm64-musl
+            platform: linux
+            arch: arm64
+            libc: musl
+            container: true
+          - runner: ubuntu-24.04
+            package: rename-noreplace-linux-x64-musl
+            platform: linux
+            arch: x64
+            libc: musl
+            container: true
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        if: ${{ !matrix.container }}
+        with:
+          node-version: 22
+      - name: Build and verify native helper
+        if: ${{ !matrix.container }}
+        working-directory: packages/${{ matrix.package }}
+        run: >-
+          node ../../scripts/build-native-rename-noreplace.mjs
+          ${{ matrix.platform }} ${{ matrix.arch }} ${{ matrix.libc }}
+      - name: Build and verify musl native helper
+        if: ${{ matrix.container }}
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/workspace"
+          -w "/workspace/packages/${{ matrix.package }}"
+          node:22-alpine
+          sh -lc "apk add --no-cache build-base && node ../../scripts/build-native-rename-noreplace.mjs linux ${{ matrix.arch }} musl"
+      - name: Pack platform package
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          mkdir -p ../../artifacts/native
+          npm pack --ignore-scripts --pack-destination ../../artifacts/native
+      - name: Verify packed native package
+        run: >-
+          node scripts/verify-native-rename-package.mjs
+          artifacts/native/*.tgz
+          ${{ matrix.platform }} ${{ matrix.arch }} ${{ matrix.libc }}
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.package }}
+          path: artifacts/native/*.tgz
+          if-no-files-found: error
+
+  publish:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+      && inputs.publish
+      && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: native-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22.22.1
+          registry-url: https://registry.npmjs.org
+      - name: Pin npm trusted-publishing client
+        run: |
+          npm install --global npm@11.17.0
+          test "$(npm --version)" = "11.17.0"
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: rename-noreplace-*
+          path: artifacts/native
+          merge-multiple: true
+      - name: Publish with npm trusted publishing
+        if: ${{ inputs.authentication == 'trusted-publisher' }}
+        run: node scripts/publish-native-rename-packages.mjs artifacts/native/*.tgz
+      - name: Bootstrap packages with the short-lived environment token
+        if: ${{ inputs.authentication == 'bootstrap-token' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: |
+          test -n "$NODE_AUTH_TOKEN"
+          node scripts/publish-native-rename-packages.mjs artifacts/native/*.tgz

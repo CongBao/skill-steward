@@ -53,6 +53,35 @@ interface PublishedOwner extends ObservedOwner {
   path: string;
 }
 
+interface SecureStateDirectoryProof {
+  identity: FileIdentity;
+  path: string;
+  physicalPath: string;
+}
+
+declare const integrationMutationLeaseContextBrand: unique symbol;
+
+export interface IntegrationMutationLeaseContext {
+  readonly [integrationMutationLeaseContextBrand]: true;
+}
+
+interface HeartbeatController {
+  assertHealthy(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+interface IntegrationMutationLeaseContextState {
+  active: boolean;
+  heartbeat: HeartbeatController;
+  lease: PublishedOwner;
+  state: SecureStateDirectoryProof;
+}
+
+const integrationMutationLeaseContexts = new WeakMap<
+  IntegrationMutationLeaseContext,
+  IntegrationMutationLeaseContextState
+>();
+
 export interface IntegrationMutationLeaseOptions {
   waitMs?: number;
   pollMs?: number;
@@ -90,6 +119,14 @@ function isFileSystemError(error: unknown, code: string): boolean {
 function unsafe(message: string, cause?: unknown): IntegrationMutationLeaseError {
   return new IntegrationMutationLeaseError(
     "INTEGRATION_LEASE_UNSAFE",
+    message,
+    cause === undefined ? undefined : { cause }
+  );
+}
+
+function lost(message: string, cause?: unknown): IntegrationMutationLeaseError {
+  return new IntegrationMutationLeaseError(
+    "INTEGRATION_LEASE_LOST",
     message,
     cause === undefined ? undefined : { cause }
   );
@@ -134,7 +171,9 @@ async function removeFile(path: string): Promise<void> {
   }
 }
 
-async function secureStateDirectory(stateDirectory: string): Promise<string> {
+async function secureStateDirectory(
+  stateDirectory: string
+): Promise<SecureStateDirectoryProof> {
   const statePath = resolve(stateDirectory);
   await mkdir(statePath, { recursive: true, mode: 0o700 });
   const before = await lstat(statePath, { bigint: true });
@@ -155,7 +194,9 @@ async function secureStateDirectory(stateDirectory: string): Promise<string> {
       ) {
         throw unsafe("Integration mutation state changed while it was opened");
       }
-      await handle.chmod(0o700);
+      if ((opened.mode & 0o777n) !== 0o700n) {
+        await handle.chmod(0o700);
+      }
       const secured = await handle.stat({ bigint: true });
       if ((secured.mode & 0o777n) !== 0o700n) {
         throw unsafe("Integration mutation state must have private permissions");
@@ -178,7 +219,39 @@ async function secureStateDirectory(stateDirectory: string): Promise<string> {
   ) {
     throw unsafe("Integration mutation state changed during validation");
   }
-  return statePath;
+  const physicalPath = await realpath(statePath);
+  return {
+    identity: { device: after.dev, inode: after.ino },
+    path: statePath,
+    physicalPath
+  };
+}
+
+async function assertSameSecureStateDirectory(
+  proof: SecureStateDirectoryProof
+): Promise<void> {
+  let current;
+  let physicalPath: string;
+  try {
+    [current, physicalPath] = await Promise.all([
+      lstat(proof.path, { bigint: true }),
+      realpath(proof.path)
+    ]);
+  } catch (error) {
+    throw lost("Integration mutation state directory could not be revalidated", error);
+  }
+  if (
+    current.isSymbolicLink()
+    || !current.isDirectory()
+    || (process.platform !== "win32" && (current.mode & 0o777n) !== 0o700n)
+    || !sameIdentity(
+      { device: current.dev, inode: current.ino },
+      proof.identity
+    )
+    || physicalPath !== proof.physicalPath
+  ) {
+    throw lost("Integration mutation state directory is no longer the acquired directory");
+  }
 }
 
 async function observeOwner(path: string): Promise<ObservedOwner | undefined> {
@@ -527,7 +600,7 @@ async function acquireLease(
 function startHeartbeat(
   lease: PublishedOwner,
   heartbeatMs: number
-): { stop: () => Promise<void> } {
+): HeartbeatController {
   let inFlight = Promise.resolve();
   let heartbeatError: unknown;
   const timer = setInterval(() => {
@@ -540,48 +613,116 @@ function startHeartbeat(
   }, heartbeatMs);
   timer.unref();
   return {
+    async assertHealthy() {
+      await inFlight;
+      if (heartbeatError !== undefined) {
+        throw lost("Integration mutation lease heartbeat failed", heartbeatError);
+      }
+    },
     async stop() {
       clearInterval(timer);
       await inFlight;
-      if (heartbeatError !== undefined) throw heartbeatError;
+      if (heartbeatError !== undefined) {
+        throw lost("Integration mutation lease heartbeat failed", heartbeatError);
+      }
     }
   };
 }
 
+export async function assertIntegrationMutationLeaseOwned(
+  context: unknown,
+  stateDirectory: string
+): Promise<void> {
+  if ((typeof context !== "object" && typeof context !== "function") || context === null) {
+    throw lost("A live integration mutation lease context is required");
+  }
+  const state = integrationMutationLeaseContexts.get(
+    context as IntegrationMutationLeaseContext
+  );
+  if (
+    state === undefined
+    || !state.active
+    || resolve(stateDirectory) !== state.state.path
+  ) {
+    throw lost("Integration mutation lease context is missing, expired, or belongs to another state");
+  }
+  await assertSameSecureStateDirectory(state.state);
+  await state.heartbeat.assertHealthy();
+  let current: ObservedOwner | undefined;
+  try {
+    current = await observeOwner(state.lease.path);
+  } catch (error) {
+    if (error instanceof IntegrationMutationLeaseError) throw error;
+    throw lost("Integration mutation lease could not be revalidated", error);
+  }
+  const opened = await state.lease.handle.stat({ bigint: true }).catch((error: unknown) => {
+    throw lost("Integration mutation lease handle could not be revalidated", error);
+  });
+  if (
+    current === undefined
+    || current.owner.token !== state.lease.owner.token
+    || !sameIdentity(current.identity, state.lease.identity)
+    || !sameIdentity(
+      { device: opened.dev, inode: opened.ino },
+      state.lease.identity
+    )
+  ) {
+    throw lost("Integration mutation lease is no longer owned by this operation");
+  }
+}
+
 async function releaseLease(
   lease: PublishedOwner,
-  statePath: string,
+  state: SecureStateDirectoryProof,
   options: NormalizedOptions,
   deadline: number,
   stopHeartbeat: () => Promise<void>
 ): Promise<void> {
-  await withRecoveryGuard(statePath, options, deadline, async () => {
+  try {
+    await assertSameSecureStateDirectory(state);
+  } catch (error) {
+    await stopHeartbeat().catch(() => undefined);
+    await lease.handle.close().catch(() => undefined);
+    throw error;
+  }
+  await withRecoveryGuard(state.path, options, deadline, async () => {
+    await assertSameSecureStateDirectory(state);
     await stopHeartbeat();
-    await releasePublishedOwner(lease, statePath, LEASE_FILE);
+    await releasePublishedOwner(lease, state.path, LEASE_FILE);
   });
 }
 
 export async function withIntegrationMutationLease<T>(
   stateDirectory: string,
-  operation: () => Promise<T>,
+  operation: (context: IntegrationMutationLeaseContext) => Promise<T>,
   inputOptions: IntegrationMutationLeaseOptions = {}
 ): Promise<T> {
   const options = normalizeOptions(inputOptions);
-  const statePath = await secureStateDirectory(stateDirectory);
+  const state = await secureStateDirectory(stateDirectory);
+  const statePath = state.path;
   const deadline = Date.now() + options.waitMs;
   const lease = await acquireLease(statePath, options, deadline);
   const heartbeat = startHeartbeat(lease, options.heartbeatMs);
+  const context = Object.freeze(Object.create(null)) as IntegrationMutationLeaseContext;
+  const contextState: IntegrationMutationLeaseContextState = {
+    active: true,
+    heartbeat,
+    lease,
+    state
+  };
+  integrationMutationLeaseContexts.set(context, contextState);
   let operationError: unknown;
   try {
-    return await operation();
+    return await operation(context);
   } catch (error) {
     operationError = error;
     throw error;
   } finally {
+    contextState.active = false;
     try {
       await releaseLease(
         lease,
-        statePath,
+        state,
         options,
         Date.now() + options.waitMs,
         heartbeat.stop

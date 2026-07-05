@@ -7,7 +7,7 @@
   "types": "./dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -16,5 +16,13 @@
     "@skill-steward/preflight": "workspace:*",
     "@skill-steward/store": "workspace:*",
     "zod": "^3.25.67"
+  },
+  "optionalDependencies": {
+    "@skill-steward/rename-noreplace-darwin-arm64": "workspace:*",
+    "@skill-steward/rename-noreplace-darwin-x64": "workspace:*",
+    "@skill-steward/rename-noreplace-linux-arm64-gnu": "workspace:*",
+    "@skill-steward/rename-noreplace-linux-arm64-musl": "workspace:*",
+    "@skill-steward/rename-noreplace-linux-x64-gnu": "workspace:*",
+    "@skill-steward/rename-noreplace-linux-x64-musl": "workspace:*"
   }
 }

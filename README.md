@@ -4,7 +4,9 @@ English | [简体中文](README.zh-CN.md)
 
 Know which Agent Skills you have, which ones a task needs, and change them safely.
 
-Skill Steward is a local companion for Codex, Claude Code, GitHub Copilot, and other coding Harnesses. It is not a Harness: it does not answer prompts, run agents, or replace each product's own Skill and plugin system. It inventories the Skills on your machine, recommends a small set for the task in front of you, and puts review and recovery around changes.
+Skill Steward is a cross-Harness companion and local control console for Agent Skills. Its three core adapters give Codex, Claude Code, and GitHub Copilot CLI one proof-aware inventory and one reviewed mutation contract; the wider Harness catalog uses directory conventions where native behavior has not been verified.
+
+It is not another Harness: it does not answer prompts, route models, or run agents. Your Harness keeps doing the work; Skill Steward helps it choose a small, relevant Skill set and keeps Skill changes reviewable and reversible.
 
 > Status: active alpha. Install from source or a local tarball; the npm package is not published yet.
 
@@ -21,6 +23,12 @@ Compare the task with both installed Skills and candidates from public catalogs 
 ### 3. Make reviewed, reversible changes
 
 Inspect the source revision and exact filesystem plan before installation. Confirmed changes use provenance, backups, drift checks, and rollback. Quarantine and restore remove a Skill from active use without offering permanent deletion.
+
+### Why keep it installed
+
+- **Task-time help, not another destination:** Codex and Claude Code prompt Hooks can run Preflight where a request starts. Copilot remains observe-only and gets recommendations through the companion Skill or CLI.
+- **One view across tools:** direct and plugin-managed Skills are resolved into one proof-aware inventory instead of being counted by directory presence alone.
+- **Safe local operations:** installation, integration, disconnect, quarantine, restore, and rollback use exact reviewed plans and stop on drift.
 
 The ranking is deterministic and local; it does not require an LLM. Your Harness still decides whether and how to use a recommended Skill.
 
@@ -49,6 +57,8 @@ These views use local example data to show populated states; the scores and evid
 ![Evidence dashboard with explicit feedback, lifecycle, Harness, and algorithm metrics](docs/images/evidence-light-en.png)
 
 ![Reviewed quarantine plan with verified recovery and no permanent delete](docs/images/governance-dark-en.png)
+
+![Exact reviewed Codex connection plan with Hook and companion targets](docs/images/integrations-dark-en.png)
 
 Screenshots in this README use the English locale. The [Chinese README](README.zh-CN.md) uses the matching Chinese captures.
 
@@ -106,7 +116,7 @@ skill-steward preflight \
 skill-steward dashboard
 ```
 
-This first path is read-only. For installation, policy, or governance changes, stop at the preview and apply only the exact command it prints; no mutation is required to evaluate the portfolio or recommendations. Harness integration setup is review-only in the current alpha and does not emit an apply command.
+This path does not change any Skill or Harness configuration. It does write the latest local report and privacy-reduced Preflight evidence under `~/.skill-steward`; the raw task is not stored. For installation, integration, policy, or governance changes, stop at the preview and apply only the exact command it prints.
 
 For a headless inventory or report:
 
@@ -135,9 +145,7 @@ printf '%s' "Review this pull request" | skill-steward preflight --stdin --compa
 skill-steward preflight --task "Review this pull request" --installed-only
 ```
 
-Installed candidates rank ahead of otherwise similar catalog candidates. An available candidate is excluded when it is critically risky, incompatible with the target Harness, or duplicates installed content. Algorithm v8 and result schema v4 retain narrow English routing clauses, the two-term minimum for non-name matches, and deterministic bounded Simplified/Traditional Chinese concept canonicalization for long-session, evolving-requirements, and context-compaction intent. For detailed tasks, Algorithm v8 uses a versioned trigger profile: the current profile recognizes `review ... before merge` only for a `request` + `code` + `review` Skill-name signature whose positive routing description also contains `before merge`. Generic name words do not qualify, and phrase matching never crosses Unicode punctuation or symbol boundaries. One internal bounded parser recognizes task negations `do not`, straight/curly `don't`, `never`, `avoid`, and `without`, plus candidate routing negations built from use/invoke/call/run/apply actions. Negated clauses stop at semicolons, sentence punctuation, or line breaks; comma/colon lists and punctuation-rich technical terms stay negative, while an explicit `, but ...` or colon followed by a positive action opens a positive contrast. Recognized negated task text contributes neither ordinary relevance, full-name matching, trigger evidence, nor capability gaps. The current lifecycle rule uses `code` only to resolve mixed positive/negative objects: negated code review still vetoes positive documentation review, while independently positive code review remains eligible beside negated documentation review. Critical risk or Harness ineligibility still excludes the candidate. Capability gaps are high-confidence Skill search hints: candidate metadata must pass either a name match that contributes a specific capability concept or the minimum specific multi-term relevance gate; generic single-token names do not corroborate a hint by name alone. Concise tasks without credible candidates use a conservative non-generic fallback. Gap-only projection puts positive task aliases, positive candidate metadata, and selected positive coverage in one canonical namespace; its relevance gate uses positive matches over the complete metadata denominator, so negative text can never strengthen corroboration. Canonical deduplication happens before the six-hint bound. Unsegmented two-character fragments made only of generic Han characters are low confidence and create neither routing/name matches nor standalone gaps. These display rules do not alter recommendation scoring. This is still lexical routing, not general cross-language semantic understanding. Results include relevance, unique coverage, risk, redundancy, context estimates, source revision, compatibility, and readable reasons.
-
-An explicit code-review rejection also keeps both requesting and receiving code-review variants out of the recommendation. Action-name lists after a colon stay negative rather than opening a positive contrast.
+Algorithm v8 is a deterministic local lexical ranker, not an LLM or a general semantic search engine. It compares relevance, unique coverage, risk, redundancy, Harness compatibility, and estimated context, and ranks installed candidates ahead of otherwise similar catalog candidates. Bounded Simplified/Traditional Chinese concepts and a narrow pre-merge code-review signal improve common routing cases; explicit negative instructions such as “do not review” keep related review workflows out. Capability gaps appear only when the evidence is specific enough, so low-confidence input can correctly produce no suggestion. The exact parser, trigger, and adversarial boundaries are documented in [Architecture](docs/architecture.md#task-time-data-flow) and the [Alpha testing protocol](docs/alpha-testing.md#compact-and-bilingual-preflight).
 
 Use `--compact-json` for Harness or companion-Skill handoff. Compact schema v3 emits one line and at most 4,096 UTF-8 bytes, with selected use/install recommendations and stable warning codes but no raw task. Its feedback command is `null` when evidence persistence failed. `--json` returns the complete `PreflightResult`: candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage. Available catalog candidates may include catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. The portfolio reports and dashboard preserve those records; Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain capped at 2,048 bytes.
 
@@ -198,7 +206,7 @@ The Evidence dashboard shows the numerator and denominator for feedback rate, us
 
 ## Harness integration
 
-The current alpha can inspect Codex, Claude Code, and GitHub Copilot CLI integration state and create an exact reviewed plan. JSON status keeps the Harness Hook and the shared companion Skill separate, so an installed Hook cannot hide a missing, outdated, modified, or unreadable companion:
+Skill Steward can connect Codex, Claude Code, and GitHub Copilot CLI without replacing them. The managed Hook observes the native lifecycle; the shared companion Skill gives the Harness an explicit task-preflight tool. JSON status keeps those two pieces separate, so a connected Hook cannot hide a missing, outdated, modified, or unreadable companion:
 
 ```bash
 skill-steward integrate status --json
@@ -207,13 +215,17 @@ skill-steward integrate plan --harness claude-code
 skill-steward integrate plan --harness github-copilot
 ```
 
-Each preview persists the exact configuration, backup paths, companion tree, packaged source, and ownership proof. Apply claims the single-use plan under the shared mutation lease and revalidates those fields plus the current Harness configuration, record head, and consumer set.
+Each preview persists the exact Hook change, companion bundle, packaged source, ownership proof, record head, and consumer set. Apply uses the emitted single-use plan, revalidates every bound field under one cross-process lease, and publishes the companion, Harness configuration, readiness report, and history as one transaction. A definite failure before finalize restores the exact prior state; uncertain publication, lease loss, or failed compensation keeps recovery evidence and reports `recovery-required` instead of guessing.
 
-**Lifecycle apply is intentionally disabled in this alpha.** Even a current plan is rejected before any Hook or companion write. Transaction-safe companion create/upgrade, readiness rollback, and shared-consumer removal are the next implementation phase. The CLI still accepts the apply command so the fail-closed contract can be tested, but it is not an installation path yet.
+```bash
+skill-steward integrate apply --plan <plan-id> --confirm
+skill-steward integrate remove --harness codex
+skill-steward integrate remove --plan <plan-id> --confirm
+```
 
-For users who installed a managed Hook with an earlier Alpha, `skill-steward integrate remove --harness <id> --confirm` remains a narrow cleanup path. It removes only the provably managed Hook entry and retains the shared companion Skill; consumer-aware companion removal is not enabled yet. This cleanup command is not part of new integration setup.
+Disconnect removes only the reviewed Harness Hook and retains the shared companion Skill, so another Harness cannot lose its task-preflight tool. Reconnect can reuse a lifecycle-proven retained companion; modified, stale, unreadable, or unproved content stops for review. Create and upgrade require the packaged no-replace native helper for the current platform. Missing or unsupported helpers block the write instead of falling back to a racy filesystem operation.
 
-Once enabled, the managed Hooks fail open and use cached local state. The implemented Codex and Claude Code adapters cover `UserPromptSubmit` and completion Hooks. Both receive a compact recommendation, not raw task text or catalog URLs. Codex may require its native trust review. The GitHub Copilot CLI adapter is intentionally observe-only: its documented Hook receives lifecycle events, while recommendations remain available through the companion Skill or explicit CLI Preflight.
+Managed Hooks fail open and use cached local state. Codex and Claude Code cover `UserPromptSubmit` and completion Hooks and receive a compact recommendation rather than raw task text or catalog URLs. Codex may still require its native trust review. GitHub Copilot CLI is intentionally observe-only: its documented Hook records lifecycle evidence, while recommendations remain available through the companion Skill or explicit CLI Preflight.
 
 ## Harness capability matrix
 
@@ -223,7 +235,7 @@ Once enabled, the managed Hooks fail open and use cached local state. The implem
 | Claude Code | `UserPromptSubmit`, `Stop`, `SessionEnd` | Recommend + observe through the prompt Hook | Turn and session lifecycle |
 | GitHub Copilot CLI | `userPromptSubmitted`, `sessionEnd` | **Observe only**; recommendations via companion Skill/CLI | Prompt observation and session lifecycle |
 
-All three adapter configurations are tested with temporary-HOME fixtures and preserve unrelated configuration. Public lifecycle apply remains disabled as described above. “Observe only” is deliberate: the Copilot adapter does not inject recommendations into prompts.
+All three adapter configurations are tested with temporary-HOME fixtures and preserve unrelated configuration. “Observe only” is deliberate: the Copilot adapter does not inject recommendations into prompts.
 
 ## Supported harnesses
 
@@ -271,14 +283,17 @@ The dashboard exposes the same operation plan. There is no Delete action. Recove
 
 ## Comparison
 
-Codex, Claude Code, and GitHub Copilot already own the execution environment and their native Skill/plugin experience. Skill Steward complements them with a local inventory, task-specific comparison, and reviewed recovery flow that spans their known Skill directories.
+Skill Steward is strongest for developers who use several Harnesses and want local task selection plus reviewed, reversible operations. Native products remain the best-integrated experience inside their own Harness; package managers and registries are stronger at broad distribution, dependency locking, or hosted evaluation. Comparison checked **2026-07-05** against the linked product documentation.
 
-| Product | External task-time discovery | Native workflow integration | Cross-Harness analysis | Reversible installation |
-|---|---|---|---|---|
-| **Skill Steward** | Opt-in cached public Git indexes; installed and available candidates ranked together | Proof-aware status and reviewed adapter plans; public Hook/companion apply not enabled yet | **One inventory, scoring, evidence, and governance model across 30 root conventions** | **Cross-process exact plans, persistent staging, drift refusal, install/rollback, and verified quarantine/restore** |
-| [Codex Skills and Plugins](https://developers.openai.com/codex/plugins) | Plugin directory and marketplace browsing; install before use | Native Skills, plugins, and lifecycle Hooks | Codex scope | Native enable/disable/uninstall; no Skill Steward journal |
-| [Claude Code Skills and Plugins](https://code.claude.com/docs/en/discover-plugins) | Marketplaces separate catalog registration from plugin installation | Native Skills, plugins, marketplaces, and Hooks | Claude Code scope | Native plugin update/removal; no Skill Steward journal |
-| [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) | `gh skill` can discover and install Skills from GitHub repositories | Native Skills and Hooks in Copilot CLI/cloud agent | Copilot-compatible scopes | Native Skill management; no Skill Steward journal |
+| Product | Primary job | Task-time selection | Cross-Harness lifecycle |
+|---|---|---|---|
+| **Skill Steward** | Proof-aware local inventory, task Preflight, evidence, and reversible governance | **Ranks installed and opt-in catalog candidates for the current task** | **Reviewed Hook + companion transactions, rollback, safe disconnect, and local recovery history for three core adapters; convention-only inventory elsewhere** |
+| [Microsoft APM](https://microsoft.github.io/apm/) | Declarative agent-context package management with manifest, lockfile, transitive dependencies, policy, and CI audit | Installs and compiles declared packages; audit checks integrity and deployment drift | Deploys several primitive types across supported Harnesses with reproducible lockfile and policy controls |
+| [skills.sh](https://www.skills.sh/docs) | Public directory, leaderboard, security checks, and one-command cross-agent Skill installation | Discovery and popularity ranking before install | Installs GitHub-hosted Skills into supported agents; lifecycle centers on CLI install/update |
+| [Tessl](https://docs.tessl.io/) | Versioned Skill registry, evaluation, distribution, and optimization | Registry search plus measured quality/impact before install | Agent-agnostic package installation and hosted evaluation lifecycle |
+| [Codex Skills and Plugins](https://developers.openai.com/codex/plugins) | Native Codex Skills, plugins, marketplace, and Hooks | Native discovery and invocation inside Codex | Codex-native enable, disable, and uninstall controls |
+| [Claude Code Skills and Plugins](https://code.claude.com/docs/en/discover-plugins) | Native Claude Code Skills, plugins, marketplaces, and Hooks | Native discovery and invocation inside Claude Code | Claude-native install, update, enable, disable, and remove controls |
+| [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) | Native Copilot Skills and Hooks across supported Copilot surfaces | Native discovery and invocation inside Copilot | Copilot-native Skill and Hook management |
 
 ## Privacy and security
 
@@ -292,7 +307,7 @@ Codex, Claude Code, and GitHub Copilot already own the execution environment and
 - Sanitized export and API responses never include the private HMAC salt.
 - Installation-source scripts, package managers, build commands, repository Hooks, and submodules are not executed.
 - CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use; confirmation never regenerates a plan from request arguments.
-- Installation apply/rollback uses a cross-process mutation lease. Public integration apply currently revalidates its claimed plan under the integration lease and then refuses before any Hook or companion write; the transaction-safe mutation path is not enabled yet.
+- Installation, integration, and disconnect mutations share a cross-process lease. Integration create/upgrade binds no-replace native filesystem operations, recovery state, readiness publication, Hook configuration, history, and rollback to the same reviewed transaction.
 - Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
 - Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.
 
@@ -302,7 +317,7 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 
 - Task scoring is a deterministic lexical baseline. Algorithm v8 adds one bounded, corroborated lifecycle-trigger signal alongside limited Simplified/Traditional Chinese concepts and high-confidence capability-gap hints; it does not provide general cross-language semantic understanding or measure actual task success.
 - Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
-- Harness integration can produce proof-aware plans and separate Hook/companion status, but public lifecycle apply is intentionally disabled until the transaction-safe companion phase lands.
+- Harness lifecycle apply currently covers Codex, Claude Code, and GitHub Copilot CLI only. Disconnect intentionally retains the shared companion Skill; removal of that shared bundle is not offered as a public action.
 - GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.
 - Native inventory is limited to documented local surfaces for Codex, Claude Code, and GitHub Copilot CLI. Copilot Harness coverage can remain `partial` when local runtime or MDM proof is unavailable; an affected source or Skill exposure can remain `ambiguous`.
 - Each scan covers the current workspace and user scopes, not every project or workspace on the machine.

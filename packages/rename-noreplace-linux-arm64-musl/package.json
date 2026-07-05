@@ -1,0 +1,19 @@
+{
+  "name": "@skill-steward/rename-noreplace-linux-arm64-musl",
+  "version": "0.5.0-alpha.4",
+  "description": "Private Linux arm64 musl atomic no-replace rename helper for Skill Steward",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "rename_noreplace.node",
+  "files": ["rename_noreplace.node", "README.md", "LICENSE"],
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["musl"],
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/CongBao/skill-steward.git" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "node ../../scripts/build-native-rename-noreplace.mjs linux arm64 musl",
+    "test": "node ../../scripts/build-native-rename-noreplace.mjs linux arm64 musl --verify-only"
+  }
+}

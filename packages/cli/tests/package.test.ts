@@ -102,6 +102,20 @@ it("declares complete public package metadata", async () => {
   });
 });
 
+it("declares the exact private native no-replace platform packages as optional", async () => {
+  const manifest = await packageJson() as {
+    optionalDependencies?: Record<string, string>;
+  };
+  expect(manifest.optionalDependencies).toEqual({
+    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-alpha.4"
+  });
+});
+
 it("builds package documentation, license, and deterministic notice coverage", async () => {
   await expect(access(join(packageDirectory, "README.md"))).resolves.toBeUndefined();
   await expect(access(join(packageDirectory, "LICENSE"))).resolves.toBeUndefined();
