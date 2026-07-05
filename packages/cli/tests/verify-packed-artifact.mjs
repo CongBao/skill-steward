@@ -192,6 +192,17 @@ function assertMetadata(packageJson) {
   if (packageJson.publishConfig?.access !== "public" || packageJson.engines?.node !== ">=22") {
     throw new Error("Packed package publication metadata is incomplete");
   }
+  const expectedNativeHelpers = {
+    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-alpha.4",
+    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-alpha.4"
+  };
+  if (JSON.stringify(packageJson.optionalDependencies) !== JSON.stringify(expectedNativeHelpers)) {
+    throw new Error("Packed package native no-replace helpers are incomplete");
+  }
 }
 
 async function regularFile(path, label) {

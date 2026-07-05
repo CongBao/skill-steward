@@ -1,0 +1,18 @@
+{
+  "name": "@skill-steward/rename-noreplace-darwin-arm64",
+  "version": "0.5.0-alpha.4",
+  "description": "Private macOS arm64 atomic no-replace rename helper for Skill Steward",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "rename_noreplace.node",
+  "files": ["rename_noreplace.node", "README.md", "LICENSE"],
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/CongBao/skill-steward.git" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "node ../../scripts/build-native-rename-noreplace.mjs darwin arm64 none",
+    "test": "node ../../scripts/build-native-rename-noreplace.mjs darwin arm64 none --verify-only"
+  }
+}

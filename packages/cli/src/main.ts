@@ -303,10 +303,18 @@ export async function run(
 
   integrate
     .command("remove")
-    .requiredOption("--harness <id>", "codex, claude-code, or github-copilot")
-    .option("--confirm", "confirm integration removal", false)
-    .action(async (options: { harness: string; confirm: boolean }) => {
-      exitCode = await integrateRemoveCommand(options.harness, options.confirm, context);
+    .description("Review or apply one exact Harness disconnect plan")
+    .option("--harness <id>", "review a disconnect for this Harness")
+    .option("--plan <id>", "reviewed disconnect plan ID")
+    .option("--confirm", "confirm the reviewed disconnect plan", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: {
+      harness?: string;
+      plan?: string;
+      confirm: boolean;
+      json: boolean;
+    }) => {
+      exitCode = await integrateRemoveCommand(options, context);
     });
 
   catalog

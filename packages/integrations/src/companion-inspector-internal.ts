@@ -1,5 +1,9 @@
 import { dirname } from "node:path";
 import {
+  readIntegrationRecoveryState,
+  type IntegrationRecoverySummary
+} from "@skill-steward/store";
+import {
   COMPANION_SOURCE_UNPROVABLE_REASON,
   companionSubplanSchema
 } from "./companion-domain.js";
@@ -45,6 +49,7 @@ export interface InternalInspectCompanionSkillOptions {
   source?: CompanionManifestOptions;
   destination?: CompanionManifestOptions;
   config?: CompanionConfigProofOptions;
+  recoverySummary?: IntegrationRecoverySummary;
 }
 
 function inspectionReason(error: CompanionManifestError): {
@@ -136,6 +141,28 @@ export async function inspectCompanionSkillWithProof(
     );
   }
   const source = { path: input.sourceDirectory, fingerprint: after.fingerprint };
+  if (input.stateDirectory !== undefined) {
+    const recovery = options.recoverySummary
+      ?? await readIntegrationRecoveryState(input.stateDirectory);
+    if (recovery.status !== "clear") {
+      const reason = recovery.status === "unresolved"
+        ? "COMPANION_RECOVERY_REQUIRED"
+        : "COMPANION_RECOVERY_UNAVAILABLE";
+      return {
+        status: "unknown",
+        reason,
+        path,
+        subplan: companionSubplanSchema.parse({
+          action: "conflict",
+          path,
+          expectedBefore: { state: "unknown", reason },
+          after,
+          source,
+          proof: { kind: "unknown", reason }
+        })
+      };
+    }
+  }
   let before;
   try {
     before = await inspectCompanionTree(path, {

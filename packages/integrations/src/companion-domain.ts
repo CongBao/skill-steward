@@ -316,3 +316,108 @@ export const companionSubplanSchema = z.union([
 ]);
 
 export type CompanionSubplan = z.infer<typeof companionSubplanSchema>;
+
+type CompanionTransactionAction = Exclude<CompanionSubplan["action"], "conflict">;
+const companionBlockedReasons = [
+  "COMPANION_CANONICAL_CONFIG_DRIFT",
+  "COMPANION_CANONICAL_CONFIG_UNAVAILABLE",
+  "COMPANION_CONFLICT",
+  "COMPANION_INSPECTION_CHANGED",
+  "COMPANION_INSPECTION_TRUNCATED",
+  "COMPANION_INSPECTION_UNAVAILABLE",
+  "COMPANION_INSPECTION_UNPROVABLE",
+  "COMPANION_LEGACY_HOOK_RECORD_MISSING",
+  "COMPANION_LEGACY_TREE_NOT_ALLOWLISTED",
+  "COMPANION_LIFECYCLE_EVIDENCE_WITH_MISSING_TREE",
+  "COMPANION_LIFECYCLE_RECORD_UNAVAILABLE",
+  "COMPANION_LIFECYCLE_RECORD_UNPROVABLE",
+  "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY",
+  "COMPANION_RECORDED_TREE_DRIFT",
+  "COMPANION_RECOVERY_REQUIRED",
+  "COMPANION_RECOVERY_UNAVAILABLE",
+  "COMPANION_SOURCE_UNPROVABLE",
+  "COMPANION_TREE_COLLISION",
+  "COMPANION_TREE_ESCAPE",
+  "COMPANION_TREE_UNREADABLE",
+  "COMPANION_TREE_UNSAFE",
+  "COMPANION_UNMANAGED_TREE"
+] as const;
+type CompanionBlockedReason =
+  | "INTEGRATION_PLATFORM_UNSUPPORTED"
+  | typeof companionBlockedReasons[number];
+const companionBlockedReasonSet = new Set<string>(companionBlockedReasons);
+
+export type CompanionTransactionAvailability =
+  | {
+      state: "blocked";
+      action: CompanionSubplan["action"];
+      actionLabel: string;
+      transactionEligible: false;
+      applyAvailable: false;
+      unavailableReason: CompanionBlockedReason;
+    }
+  | {
+      state: "transaction-disabled";
+      action: CompanionTransactionAction;
+      actionLabel: string;
+      transactionEligible: true;
+      applyAvailable: false;
+      unavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED";
+    }
+  | {
+      state: "available";
+      action: CompanionTransactionAction;
+      actionLabel: string;
+      transactionEligible: true;
+      applyAvailable: true;
+      unavailableReason: null;
+    };
+
+const companionActionLabels: Record<CompanionSubplan["action"], string> = {
+  create: "Create companion Skill",
+  upgrade: "Upgrade companion Skill",
+  none: "Connect Harness to companion Skill",
+  conflict: "Resolve companion conflict"
+};
+
+export function deriveCompanionTransactionAvailability(
+  companion: CompanionSubplan,
+  platform: NodeJS.Platform
+): CompanionTransactionAvailability {
+  const actionLabel = companionActionLabels[companion.action];
+  if (companion.action === "conflict") {
+    const evidenceReason = companion.proof.kind === "conflict"
+      || companion.proof.kind === "unknown"
+      ? companion.proof.reason
+      : "COMPANION_CONFLICT";
+    const unavailableReason: CompanionBlockedReason = companionBlockedReasonSet.has(evidenceReason)
+      ? evidenceReason as typeof companionBlockedReasons[number]
+      : "COMPANION_CONFLICT";
+    return {
+      state: "blocked",
+      action: companion.action,
+      actionLabel,
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason
+    };
+  }
+  if (platform === "win32" || companion.after.platform !== "posix") {
+    return {
+      state: "blocked",
+      action: companion.action,
+      actionLabel,
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason: "INTEGRATION_PLATFORM_UNSUPPORTED"
+    };
+  }
+  return {
+    state: "available",
+    action: companion.action,
+    actionLabel,
+    transactionEligible: true,
+    applyAvailable: true,
+    unavailableReason: null
+  };
+}

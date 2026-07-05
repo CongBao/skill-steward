@@ -87,6 +87,9 @@ const ROUTING_NEGATION_PATTERN = new RegExp(
   "giu"
 );
 
+const TASK_NEGATION_HINT = /\b(?:do\s+not|don['\u2019]t|never|avoid|without)\b/iu;
+const ROUTING_NEGATION_HINT = /\b(?:do\s+not|don['\u2019]t|never|avoid)\b/iu;
+
 function replaceClauses(value: string, pattern: RegExp): string {
   pattern.lastIndex = 0;
   const result = value.replace(pattern, " ");
@@ -105,20 +108,24 @@ function capturedClauses(value: string, pattern: RegExp): string[] {
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function positiveTaskText(task: string): string {
+  if (!TASK_NEGATION_HINT.test(task)) return task;
   return replaceClauses(task, TASK_NEGATION_PATTERN);
 }
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function negativeTaskClauses(task: string): string[] {
+  if (!TASK_NEGATION_HINT.test(task)) return [];
   return capturedClauses(task, TASK_NEGATION_PATTERN);
 }
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function positiveRoutingText(description: string): string {
+  if (!ROUTING_NEGATION_HINT.test(description)) return description;
   return replaceClauses(description, ROUTING_NEGATION_PATTERN);
 }
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function negativeRoutingClauses(description: string): string[] {
+  if (!ROUTING_NEGATION_HINT.test(description)) return [];
   return capturedClauses(description, ROUTING_NEGATION_PATTERN);
 }

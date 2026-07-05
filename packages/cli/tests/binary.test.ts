@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  createDashboardApp,
+  createIntegrationServices
+} from "@skill-steward/dashboard-server";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -25,6 +29,21 @@ function runWithInput(
     child.on("close", (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`CLI exited ${code}: ${stderr}`)));
     child.stdin.end(input);
   });
+}
+
+async function runFailed(
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv }
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    await execFileAsync(process.execPath, [binary, ...args], options);
+  } catch (error) {
+    return {
+      stdout: String((error as { stdout?: string }).stdout ?? ""),
+      stderr: String((error as { stderr?: string }).stderr ?? "")
+    };
+  }
+  throw new Error(`Expected CLI failure for ${args.join(" ")}`);
 }
 
 describe("built CLI", () => {
@@ -50,6 +69,12 @@ describe("built CLI", () => {
     )).stdout;
     expect(applyHelp).toContain("--plan <id>");
     expect(applyHelp).toContain("--confirm");
+    const removeHelp = (await execFileAsync(
+      process.execPath,
+      [binary, "integrate", "remove", "--help"]
+    )).stdout;
+    expect(removeHelp).toContain("--plan <id>");
+    expect(removeHelp).toContain("--confirm");
     for (const args of [
       ["install", "--help"],
       ["govern", "quarantine", "--help"],
@@ -84,6 +109,76 @@ describe("built CLI", () => {
 
     expect(stderr.match(/option '--compact-json' cannot be used with option '--json'/gu))
       .toHaveLength(1);
+  });
+
+  it("keeps every invalid integration Harness path-safe and in parity with the API", async () => {
+    const base = await mkdtemp(join(tmpdir(), "steward-invalid-integration-harness-"));
+    const home = join(base, "home");
+    const stateDirectory = join(base, "state");
+    const rawHarness = "private-invalid-harness-canary";
+    await mkdir(home, { recursive: true });
+    const options = {
+      cwd: base,
+      env: { ...process.env, HOME: home, SKILL_STEWARD_HOME: stateDirectory }
+    };
+    const invalidCommands = [
+      ["integrate", "plan", "--harness", rawHarness, "--json"],
+      ["integrate", "status", "--harness", rawHarness, "--json"],
+      ["integrate", "apply", "--plan", "reviewed-plan", "--harness", rawHarness, "--confirm", "--json"],
+      ["integrate", "remove", "--harness", rawHarness, "--confirm", "--json"],
+      ["integrate", "remove", "--harness", rawHarness, "--json"],
+      ["integrate", "remove", "--plan", "reviewed-plan", "--harness", rawHarness, "--confirm", "--json"]
+    ];
+    const cliFailures = await Promise.all(invalidCommands.map((args) =>
+      runFailed(args, options)
+    ));
+    const expectedError = {
+      code: "INVALID_INTEGRATION_HARNESS",
+      message: "The requested integration Harness is not supported."
+    };
+    for (const failure of cliFailures) {
+      expect(failure.stdout).toBe("");
+      expect(JSON.parse(failure.stderr).error).toEqual(expectedError);
+      expect(failure.stderr).not.toContain(rawHarness);
+    }
+
+    for (const command of ["apply", "remove"] as const) {
+      const conflict = await runFailed([
+        "integrate",
+        command,
+        "--plan",
+        "reviewed-plan",
+        "--harness",
+        "codex",
+        "--confirm",
+        "--json"
+      ], options);
+      expect(conflict.stdout).toBe("");
+      expect(JSON.parse(conflict.stderr).error.code).toBe("REVIEWED_PLAN_AMBIGUOUS");
+    }
+
+    const integrationServices = createIntegrationServices({
+      home,
+      stateDirectory,
+      companionSkillDirectory: fileURLToPath(new URL(
+        "../../integrations/assets/skill-steward-preflight",
+        import.meta.url
+      )),
+      generateReadiness: async () => ({})
+    });
+    const { app } = createDashboardApp({ mutationToken: "token", integrationServices });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/v1/integrations/${rawHarness}/plan`,
+        headers: { "x-skill-steward-token": "token" }
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toEqual(expectedError);
+      expect(response.body).not.toContain(rawHarness);
+    } finally {
+      await app.close();
+    }
   });
 
   it("runs as an ESM executable", async () => {
@@ -122,7 +217,7 @@ describe("built CLI", () => {
     });
   });
 
-  it("runs cached Hooks and fails closed before companion transactions for all adapters", async () => {
+  it("runs cached Hooks and reviewed companion transactions for all adapters", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-vertical-slice-"));
     const home = join(base, "home");
     const workspace = join(base, "workspace");
@@ -209,21 +304,18 @@ describe("built CLI", () => {
         process.execPath,
         [binary, "integrate", "plan", "--harness", harness, "--json"],
         { cwd: workspace, env }
-      )).stdout) as { id: string };
+      )).stdout) as { planId: string };
       await expect(execFileAsync(
         process.execPath,
-        [binary, "integrate", "apply", "--plan", preview.id, "--confirm"],
+        [binary, "integrate", "apply", "--plan", preview.planId, "--confirm"],
         { cwd: workspace, env }
-      )).rejects.toMatchObject({
-        stderr: expect.stringContaining("INTEGRATION_COMPANION_ACTION_UNAVAILABLE")
-      });
+      )).resolves.toMatchObject({ stderr: "" });
     }
-    expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true });
-    expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"))).toMatchObject({ unrelated: true });
+    expect(JSON.parse(await readFile(join(home, ".codex", "hooks.json"), "utf8"))).toMatchObject({ unrelated: true, hooks: expect.any(Object) });
+    expect(JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"))).toMatchObject({ unrelated: true, hooks: expect.any(Object) });
     expect(JSON.parse(await readFile(join(home, ".copilot", "hooks", "keep-me.json"), "utf8"))).toMatchObject({ unrelated: true });
-    await expect(readFile(join(home, ".copilot", "hooks", "skill-steward.json"), "utf8"))
-      .rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8"))
-      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.parse(await readFile(join(home, ".copilot", "hooks", "skill-steward.json"), "utf8"))).toMatchObject({ version: 1 });
+    expect(await readFile(join(home, ".agents", "skills", "skill-steward-preflight", "SKILL.md"), "utf8"))
+      .toContain("name: skill-steward-preflight");
   }, 30_000);
 });

@@ -4,6 +4,24 @@ export interface ApiEnvelope<T> {
   meta: { apiVersion: number };
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly data?: unknown
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+export class ApiTransportError extends Error {
+  constructor() {
+    super("The local Skill Steward service could not be reached.");
+    this.name = "ApiTransportError";
+  }
+}
+
 export type SemanticStatus = "neutral" | "positive" | "attention" | "risk";
 
 export interface KpiResult {
@@ -130,10 +148,24 @@ export async function apiRequest<T>(
   headers.set("Accept", "application/json");
   if (init.body) headers.set("Content-Type", "application/json");
   if (method !== "GET") headers.set("X-Skill-Steward-Token", mutationToken());
-  const response = await fetch(path, { ...init, method, headers });
-  const envelope = (await response.json()) as ApiEnvelope<T>;
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, method, headers });
+  } catch {
+    throw new ApiTransportError();
+  }
+  let envelope: ApiEnvelope<T>;
+  try {
+    envelope = (await response.json()) as ApiEnvelope<T>;
+  } catch {
+    throw new ApiRequestError("REQUEST_FAILED", "The server response was invalid.");
+  }
   if (!response.ok || envelope.error || envelope.data === null) {
-    throw new Error(envelope.error?.message ?? `Request failed with ${response.status}`);
+    throw new ApiRequestError(
+      envelope.error?.code ?? "REQUEST_FAILED",
+      envelope.error?.message ?? `Request failed with ${response.status}`,
+      envelope.error?.data
+    );
   }
   return envelope.data;
 }
@@ -372,30 +404,70 @@ export type CompanionSkillStatus = "current" | "upgrade-available" | "missing" |
 
 export interface IntegrationStatus {
   harness: IntegrationHarness;
-  status: IntegrationStatusValue;
-  targetPath: string;
+  status: CompanionSkillStatus;
+  reason: string;
+  hookStatus: IntegrationStatusValue;
   lastChangedAt?: string;
-  message?: string;
-  companion: {
-    status: CompanionSkillStatus;
-    reason: string;
-    path: string;
-  };
 }
 
 export interface IntegrationPlan {
-  id: string;
+  schemaVersion: 1;
+  planId: string;
   harness: IntegrationHarness;
-  targetPath: string;
-  backupPath?: string;
-  changes: Array<{ operation: "backup" | "write"; path: string }>;
-  companion: {
-    action: "none" | "create" | "upgrade" | "conflict";
-    path: string;
+  action: "create" | "upgrade" | "connect" | "blocked";
+  status: CompanionSkillStatus;
+  availability: {
+    state: "available" | "unavailable";
+    available: boolean;
+    reason: string | null;
   };
-  applyAvailable: false;
-  applyCommand: null;
-  applyUnavailableReason: "COMPANION_TRANSACTION_NOT_ENABLED";
+  targets: {
+    hook: string;
+    companion: string;
+  };
+  fingerprintCategory: "new" | "recorded" | "legacy-alpha" | "conflict" | "unknown";
+  artifacts: Array<{
+    role: "companion-skill" | "harness-configuration";
+    operation: "create" | "upgrade" | "connect";
+  }>;
+  createdAt: string;
+  expiresAt: string;
+  applyCommand: string | null;
+}
+
+export interface IntegrationDisconnectPlan {
+  schemaVersion: 1;
+  planId: string;
+  harness: IntegrationHarness;
+  action: "disconnect";
+  status: "current";
+  availability: IntegrationPlan["availability"];
+  targets: IntegrationPlan["targets"];
+  fingerprintCategory: "recorded";
+  artifacts: [{ role: "harness-configuration"; operation: "disconnect" }];
+  companionRetained: true;
+  lastConsumer: boolean;
+  remainingConsumers: number;
+  createdAt: string;
+  expiresAt: string;
+  applyCommand: string | null;
+}
+
+export interface IntegrationTransactionReceipt {
+  transactionId: string;
+  outcome: "ready" | "rolled-back" | "recovery-required";
+  hook: "unchanged" | "installed" | "removed" | "restored" | "unknown";
+  companion: "unchanged" | "created" | "upgraded" | "retained" | "restored" | "unknown";
+  recordId: string;
+  cleanup: "clean" | "pending";
+  reasonCode: string;
+  nextSafeAction: "none" | "create-new-plan" | "recover-transaction" | "review-final-cleanup";
+}
+
+export interface IntegrationMutationResult {
+  planId: string;
+  action: "create" | "upgrade" | "connect" | "disconnect";
+  receipt: IntegrationTransactionReceipt;
 }
 
 export function fetchIntegrations(): Promise<IntegrationStatus[]> {
@@ -421,6 +493,32 @@ export function fetchIntegrationCapabilities(): Promise<IntegrationCapability[]>
 
 export function planHarnessIntegration(harness: IntegrationHarness): Promise<IntegrationPlan> {
   return apiRequest(`/api/v1/integrations/${harness}/plan`, { method: "POST" });
+}
+
+export function applyHarnessIntegration(input: {
+  harness: IntegrationHarness;
+  planId: string;
+}): Promise<IntegrationMutationResult> {
+  return apiRequest(`/api/v1/integrations/${input.harness}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ planId: input.planId })
+  });
+}
+
+export function planHarnessDisconnect(
+  harness: IntegrationHarness
+): Promise<IntegrationDisconnectPlan> {
+  return apiRequest(`/api/v1/integrations/${harness}/disconnect/plan`, { method: "POST" });
+}
+
+export function disconnectHarnessIntegration(input: {
+  harness: IntegrationHarness;
+  planId: string;
+}): Promise<IntegrationMutationResult> {
+  return apiRequest(`/api/v1/integrations/${input.harness}/disconnect`, {
+    method: "POST",
+    body: JSON.stringify({ planId: input.planId })
+  });
 }
 
 export function inspectInstallation(payload: unknown): Promise<InspectionResult> {

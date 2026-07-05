@@ -43,7 +43,7 @@ beforeAll(async () => {
     target: "node22",
     logLevel: "silent",
     banner: {
-      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+      js: "import { createRequire as __bundleCreateRequire } from 'node:module'; const require = __bundleCreateRequire(import.meta.url);"
     },
     alias: {
       "jsonc-parser": jsoncParserEsm,
@@ -181,18 +181,18 @@ describe("integration CLI source processes", () => {
       "integrate", "plan", "--harness", "codex", "--json"
     ], options);
     expect(firstPreview.code, firstPreview.stderr).toBe(0);
-    const firstPlan = JSON.parse(firstPreview.stdout) as { id: string };
-    await authorizeRecordedCompanion(state, firstPlan.id);
+    const firstPlan = JSON.parse(firstPreview.stdout) as { planId: string };
+    await authorizeRecordedCompanion(state, firstPlan.planId);
     const secondPreview = await runCli([
       "integrate", "plan", "--harness", "codex", "--json"
     ], options);
     expect(secondPreview.code, secondPreview.stderr).toBe(0);
-    const secondPlan = JSON.parse(secondPreview.stdout) as { id: string };
-    await authorizeRecordedCompanion(state, secondPlan.id);
+    const secondPlan = JSON.parse(secondPreview.stdout) as { planId: string };
+    await authorizeRecordedCompanion(state, secondPlan.planId);
 
     const results = await Promise.all([
-      runCli(["integrate", "apply", "--plan", firstPlan.id, "--confirm"], options),
-      runCli(["integrate", "apply", "--plan", secondPlan.id, "--confirm"], options)
+      runCli(["integrate", "apply", "--plan", firstPlan.planId, "--confirm"], options),
+      runCli(["integrate", "apply", "--plan", secondPlan.planId, "--confirm"], options)
     ]);
 
     expect(results.map(({ code }) => code)).toEqual([1, 1]);

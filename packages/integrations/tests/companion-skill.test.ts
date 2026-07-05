@@ -17,7 +17,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendIntegrationRecord, readIntegrationRecords } from "@skill-steward/store";
+import {
+  appendIntegrationRecord,
+  appendIntegrationRecoveryTransition as appendIntegrationRecoveryTransitionRaw,
+  bindIntegrationRecordV2,
+  createIntegrationRecoveryIntent as createIntegrationRecoveryIntentRaw,
+  readIntegrationRecords,
+  withIntegrationMutationLease
+} from "@skill-steward/store";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyIntegrationPlan, integrationStatus, planIntegration } from "../src/config.js";
 import {
@@ -27,6 +34,15 @@ import {
 } from "../src/companion-skill.js";
 import { inspectCompanionSkillWithProof } from "../src/companion-inspector-internal.js";
 import { inspectCompanionTree } from "../src/companion-manifest.js";
+
+async function appendIntegrationRecoveryTransition(
+  stateDirectory: string,
+  input: Parameters<typeof appendIntegrationRecoveryTransitionRaw>[1]
+) {
+  return withIntegrationMutationLease(stateDirectory, (leaseContext) =>
+    appendIntegrationRecoveryTransitionRaw(stateDirectory, input, { leaseContext })
+  );
+}
 
 const journalRemovalGate = vi.hoisted(() => ({
   remainingFailures: 0,
@@ -243,6 +259,56 @@ async function recordedEvidenceFixture(state: "current" | "old") {
     createdAt: "2026-07-04T01:00:00.000Z"
   });
   return { ...fixture, stateDirectory, plan };
+}
+
+async function createRecoveryIntent(
+  fixture: Awaited<ReturnType<typeof companionFixture>> & { stateDirectory: string },
+  action: "create" | "upgrade" = "create"
+) {
+  const createdAt = "2026-07-05T00:00:00.000Z";
+  const configPath = join(fixture.home, ".codex", "hooks.json");
+  const fingerprint = `sha256:${"e".repeat(64)}`;
+  return withIntegrationMutationLease(fixture.stateDirectory, (leaseContext) =>
+    createIntegrationRecoveryIntentRaw(fixture.stateDirectory, {
+      schemaVersion: 1,
+      transactionId: "33333333-3333-4333-8333-333333333333",
+      planId: "recovery-mask-plan",
+      harness: "codex",
+      action,
+      companionPath: fixture.destination,
+      configPath,
+      beforeFingerprint: action === "create" ? null : `sha256:${"d".repeat(64)}`,
+      afterFingerprint: fingerprint,
+      createdAt,
+      lifecycleRecordBinding: bindIntegrationRecordV2({
+        schemaVersion: 2,
+        id: "recovery-mask-record",
+        harness: "codex",
+        action: "apply",
+        status: "installed",
+        targetPath: configPath,
+        beforeFingerprint: fingerprint,
+        afterFingerprint: fingerprint,
+        installedEntryFingerprint: fingerprint,
+        companion: {
+          action: "none",
+          path: fixture.destination,
+          before: { state: "exact", fingerprint },
+          after: { state: "exact", fingerprint },
+          source: { fingerprint },
+          proof: { category: "recorded" },
+          installedFingerprint: fingerprint,
+          consumers: ["codex"]
+        },
+        trigger: { planId: "recovery-mask-plan", harness: "codex", createdAt },
+        createdAt
+      }),
+      artifactHints: [{
+        role: "stage",
+        path: join(dirname(fixture.destination), ".skill-steward-stage-recovery-mask")
+      }]
+    }, { leaseContext })
+  );
 }
 
 describe("inspectCompanionSkill", () => {
@@ -1040,6 +1106,137 @@ describe("inspectCompanionSkill", () => {
         }
       });
     }
+  });
+
+  it("masks an apparently current companion while recovery remains unresolved", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+    await createRecoveryIntent(fixture, "upgrade");
+
+    const inspection = await inspectCompanionSkillWithProof({
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      sourceDirectory: fixture.sourceDirectory,
+      harness: "codex"
+    });
+    expect(inspection).toMatchObject({
+      status: "unknown",
+      reason: "COMPANION_RECOVERY_REQUIRED",
+      subplan: {
+        action: "conflict",
+        expectedBefore: { state: "unknown", reason: "COMPANION_RECOVERY_REQUIRED" },
+        proof: { kind: "unknown", reason: "COMPANION_RECOVERY_REQUIRED" }
+      }
+    });
+    expect(JSON.stringify(inspection)).not.toContain(".skill-steward-stage-recovery-mask");
+    expect(JSON.stringify(inspection)).not.toContain("33333333-3333-4333-8333-333333333333");
+  });
+
+  it("masks an apparently missing companion while recovery remains unresolved", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    await createRecoveryIntent({ ...fixture, stateDirectory });
+
+    await expect(inspectCompanionSkillWithProof({
+      ...fixture,
+      stateDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "unknown",
+      reason: "COMPANION_RECOVERY_REQUIRED",
+      subplan: { action: "conflict", proof: { kind: "unknown" } }
+    });
+  });
+
+  it("masks an apparently conflicting companion while recovery remains unresolved", async () => {
+    const fixture = await companionFixture();
+    const stateDirectory = join(fixture.home, "state");
+    await mkdir(dirname(fixture.destination), { recursive: true });
+    await cp(fixture.sourceDirectory, fixture.destination, { recursive: true });
+    await createRecoveryIntent({ ...fixture, stateDirectory }, "upgrade");
+
+    await expect(inspectCompanionSkillWithProof({
+      ...fixture,
+      stateDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "unknown",
+      reason: "COMPANION_RECOVERY_REQUIRED",
+      subplan: { action: "conflict", proof: { kind: "unknown" } }
+    });
+  });
+
+  it("masks normal companion proof when recovery evidence is unreadable", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+    await createRecoveryIntent(fixture, "upgrade");
+    const recoveryDirectory = join(fixture.stateDirectory, "integration-recovery");
+    const [fragment] = (await readdir(recoveryDirectory)).filter((name) => name.endsWith(".json"));
+    await writeFile(join(recoveryDirectory, fragment!), "not-json\n", { mode: 0o600 });
+
+    await expect(inspectCompanionSkillWithProof({
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      sourceDirectory: fixture.sourceDirectory,
+      harness: "codex"
+    })).resolves.toMatchObject({
+      status: "unknown",
+      reason: "COMPANION_RECOVERY_UNAVAILABLE",
+      subplan: { action: "conflict", proof: { kind: "unknown" } }
+    });
+  });
+
+  it.each(["rolled-back", "closed"] as const)(
+    "does not mask normal companion proof after recovery is %s",
+    async (terminal) => {
+      const fixture = await recordedEvidenceFixture("current");
+      const prepared = await createRecoveryIntent(fixture, "upgrade");
+      const mutating = await appendIntegrationRecoveryTransition(fixture.stateDirectory, {
+        transactionId: prepared.transactionId,
+        expectedSequence: prepared.sequence,
+        expectedState: prepared.state,
+        state: "mutating",
+        transitionedAt: "2026-07-05T00:00:01.000Z"
+      });
+      const rolledBack = await appendIntegrationRecoveryTransition(fixture.stateDirectory, {
+        transactionId: mutating.transactionId,
+        expectedSequence: mutating.sequence,
+        expectedState: mutating.state,
+        state: "rolled-back",
+        transitionedAt: "2026-07-05T00:00:02.000Z"
+      });
+      if (terminal === "closed") {
+        await appendIntegrationRecoveryTransition(fixture.stateDirectory, {
+          transactionId: rolledBack.transactionId,
+          expectedSequence: rolledBack.sequence,
+          expectedState: rolledBack.state,
+          state: "closed",
+          transitionedAt: "2026-07-05T00:00:03.000Z"
+        });
+      }
+
+      await expect(inspectCompanionSkillWithProof({
+        home: fixture.home,
+        stateDirectory: fixture.stateDirectory,
+        sourceDirectory: fixture.sourceDirectory,
+        harness: "codex"
+      })).resolves.toMatchObject({ status: "current", reason: "COMPANION_CURRENT" });
+    }
+  );
+
+  it("keeps Hook status visible while unresolved recovery makes only companion unknown", async () => {
+    const fixture = await recordedEvidenceFixture("current");
+    await createRecoveryIntent(fixture, "upgrade");
+
+    await expect(integrationStatus("codex", {
+      home: fixture.home,
+      stateDirectory: fixture.stateDirectory,
+      companionSourceDirectory: fixture.sourceDirectory
+    })).resolves.toMatchObject({
+      status: "needs-trust",
+      companion: {
+        status: "unknown",
+        reason: "COMPANION_RECOVERY_REQUIRED"
+      }
+    });
   });
 
   it("keeps a live Hook visible when companion state is conflict or unknown", async () => {

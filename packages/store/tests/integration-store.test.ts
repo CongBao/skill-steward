@@ -48,6 +48,12 @@ const publicationGate = vi.hoisted(() => ({
   zeroTemporaryIdentity: false
 }));
 
+const recordsSyncGate = vi.hoisted(() => ({
+  events: [] as string[],
+  failNext: false,
+  afterNext: null as (() => Promise<void>) | null
+}));
+
 const readRaceGate = vi.hoisted(() => ({
   mode: null as
     | "remove-target-before-read"
@@ -542,6 +548,30 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       await replaceTargetBeforeRead(path);
       const handle = await original.open(...args);
+      if (path.endsWith("/integration-records")) {
+        return new Proxy(handle, {
+          get(target, property, receiver) {
+            if (property === "sync") {
+              return async () => {
+                recordsSyncGate.events.push("records-sync");
+                if (recordsSyncGate.failNext) {
+                  recordsSyncGate.failNext = false;
+                  throw Object.assign(new Error("injected records directory fsync failure"), {
+                    code: "EIO"
+                  });
+                }
+                const result = await target.sync();
+                const after = recordsSyncGate.afterNext;
+                recordsSyncGate.afterNext = null;
+                await after?.();
+                return result;
+              };
+            }
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+        });
+      }
       if (publicationGate.zeroTemporaryIdentity && path.endsWith(".tmp")) {
         return new Proxy(handle, {
           get(target, property, receiver) {
@@ -622,6 +652,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const [temporary, published] = args;
       const isPublicationRename = String(temporary).includes("integration-records")
         && String(temporary).endsWith(".tmp");
+      if (isPublicationRename) recordsSyncGate.events.push("fragment-rename");
       let hardLinkNoOp = false;
       if (isPublicationRename && publicationGate.renameCollisionSource !== null) {
         publicationGate.publishedPath = String(published);
@@ -720,6 +751,9 @@ afterAll(async () => {
 });
 
 afterEach(() => {
+  recordsSyncGate.events = [];
+  recordsSyncGate.failNext = false;
+  recordsSyncGate.afterNext = null;
   publicationGate.ageTemporary = false;
   publicationGate.armed = false;
   publicationGate.blocked = null;
@@ -922,6 +956,55 @@ function removalRecordV2(
 }
 
 describe("integration store", () => {
+  it("returns a frozen opaque receipt only after record publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skill-steward-record-receipt-"));
+    const receipt = await appendIntegrationRecord(
+      root,
+      recordV2("receipt", "2026-07-03T00:00:00.000Z")
+    );
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(Object.keys(receipt)).toEqual([]);
+    expect(JSON.parse(JSON.stringify(receipt))).toEqual({});
+    expect(await readIntegrationRecords(root)).toHaveLength(1);
+  });
+
+  it("withholds the record receipt until the exact records directory is durable", async () => {
+    const state = await mkdtemp(join(tmpdir(), "skill-steward-record-durability-"));
+    recordsSyncGate.failNext = true;
+
+    await expect(appendIntegrationRecord(
+      state,
+      recordV2("directory-fsync", "2026-07-03T00:00:00.000Z")
+    )).rejects.toBeInstanceOf(IntegrationJournalCommitUncertainError);
+    expect(recordsSyncGate.events.slice(0, 2)).toEqual([
+      "fragment-rename",
+      "records-sync"
+    ]);
+    await expect(readIntegrationRecords(state)).resolves.toMatchObject([
+      { id: "directory-fsync" }
+    ]);
+  });
+
+  it("keeps post-durability journal validation failures typed as commit uncertainty", async () => {
+    const state = await mkdtemp(join(tmpdir(), "skill-steward-record-post-durable-"));
+    const recordsDirectory = join(state, "integration-records");
+    recordsSyncGate.afterNext = async () => {
+      await writeFile(join(
+        recordsDirectory,
+        `${Date.now()}-${process.pid}-999999999999-77777777-7777-4777-8777-777777777777.json`
+      ), "not-json\n", { mode: 0o600 });
+    };
+
+    const failure = await appendIntegrationRecord(
+      state,
+      recordV2("post-durable", "2026-07-03T00:00:00.000Z")
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(IntegrationJournalCommitUncertainError);
+    expect(recordsSyncGate.events.filter((event) => event === "records-sync").length)
+      .toBeGreaterThanOrEqual(2);
+  });
+
   it("runs child-process fixtures from current source instead of package dist", async () => {
     for (const fixture of [readerFixtureSource, writerFixtureSource]) {
       const source = await readFile(fixture, "utf8");
@@ -943,6 +1026,33 @@ describe("integration store", () => {
         (await stat(join(state, "integration-records", file))).mode & 0o777
       ))).resolves.toEqual([0o600, 0o600, 0o600]);
     }
+  });
+
+  it.each([
+    ["v1", record("blocked-v1", "2026-07-03T00:00:00.000Z")],
+    ["v2", recordV2("blocked-v2", "2026-07-03T00:00:00.000Z")]
+  ] as const)("runs %s beforePublish after temporary sync and before fragment rename", async (
+    _version,
+    candidate
+  ) => {
+    const state = await mkdtemp(join(tmpdir(), "steward-integration-before-publish-"));
+    const publicationFailure = new Error("lease lost before fragment publication");
+    let beforePublishCalled = false;
+
+    const failure = await appendIntegrationRecord(state, candidate, {
+      beforePublish: async () => {
+        beforePublishCalled = true;
+        const entries = await readdir(join(state, "integration-records"));
+        expect(entries.some((name) => name.endsWith(".tmp"))).toBe(true);
+        expect(entries.some((name) => name.endsWith(".json"))).toBe(false);
+        throw publicationFailure;
+      }
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBe(publicationFailure);
+    expect(beforePublishCalled).toBe(true);
+    await expect(readIntegrationRecords(state)).resolves.toEqual([]);
+    await expect(readdir(join(state, "integration-records"))).resolves.toEqual([]);
   });
 
   it("keeps concurrent pure-reader snapshots unchanged", async () => {
@@ -1102,11 +1212,73 @@ describe("integration store", () => {
     }
   });
 
+  it("creates one strict canonical digest binding over every v2 lifecycle field group", async () => {
+    const api = await import("../src/integration-store.js") as typeof import(
+      "../src/integration-store.js"
+    ) & {
+      bindIntegrationRecordV2?: (record: unknown) => {
+        schemaVersion: 1;
+        digest: string;
+      };
+    };
+    expect(typeof api.bindIntegrationRecordV2).toBe("function");
+    const expected = recordV2("binding-record", "2026-07-03T03:00:00.000Z");
+    const bind = api.bindIntegrationRecordV2!;
+    const binding = bind(expected);
+    expect(binding).toEqual({
+      schemaVersion: 1,
+      digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/)
+    });
+    expect(Object.isFrozen(binding)).toBe(true);
+    expect(bind(structuredClone(expected))).toEqual(binding);
+    expect(() => bind({ ...expected, extra: true })).toThrow();
+
+    const mismatches: IntegrationRecordV2[] = [
+      { ...expected, id: "another-record" },
+      {
+        ...expected,
+        targetPath: "/tmp/home/.codex/other-hooks.json",
+        beforeFingerprint: `sha256:${"1".repeat(64)}`,
+        afterFingerprint: `sha256:${"2".repeat(64)}`,
+        installedEntryFingerprint: `sha256:${"3".repeat(64)}`
+      },
+      {
+        ...expected,
+        companion: {
+          ...expected.companion,
+          path: "/tmp/home/.agents/skills/another-companion"
+        }
+      },
+      {
+        ...expected,
+        trigger: { ...expected.trigger, planId: "another-plan" }
+      },
+      {
+        ...expected,
+        trigger: { ...expected.trigger, createdAt: "2026-07-03T03:00:01.000Z" },
+        createdAt: "2026-07-03T03:00:01.000Z"
+      }
+    ];
+    for (const mismatch of mismatches) expect(bind(mismatch)).not.toEqual(binding);
+  });
+
   it("represents retained-consumer and final-removal transitions without enabling product writes", async () => {
     const retainedState = await mkdtemp(join(tmpdir(), "steward-integration-v2-retain-"));
     const retained = removalRecordV2("retained", "retain");
     await appendIntegrationRecord(retainedState, retained);
     await expect(readIntegrationRecords(retainedState)).resolves.toEqual([retained]);
+
+    const lastConsumerState = await mkdtemp(join(tmpdir(), "steward-integration-v2-retain-empty-"));
+    const lastConsumerRetained: IntegrationRecordV2 = {
+      ...removalRecordV2("last-consumer-retained", "retain"),
+      companion: {
+        ...removalRecordV2("last-consumer-retained", "retain").companion,
+        consumers: []
+      }
+    };
+    await appendIntegrationRecord(lastConsumerState, lastConsumerRetained);
+    await expect(readIntegrationRecords(lastConsumerState))
+      .resolves.toEqual([lastConsumerRetained]);
 
     const removedState = await mkdtemp(join(tmpdir(), "steward-integration-v2-remove-"));
     const removed = removalRecordV2("removed", "remove");
@@ -1131,7 +1303,7 @@ describe("integration store", () => {
       },
       {
         ...recordV2("apply-retain", "2026-07-03T02:00:00.000Z"),
-        companion: retained.companion
+        companion: lastConsumerRetained.companion
       }
     ];
     for (const [index, candidate] of contradictory.entries()) {
@@ -1559,7 +1731,7 @@ describe("integration store", () => {
       .resolves.toBe("untouched\n");
   });
 
-  it("uses Windows-compatible containment without POSIX flags or mode equality", async () => {
+  it("uses Windows-compatible containment without POSIX flags, mode equality, or directory fsync", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-windows-"));
     const directory = join(state, "integration-records");
     await mkdir(directory, { mode: 0o755 });
@@ -1584,6 +1756,7 @@ describe("integration store", () => {
       state,
       windowsV2
     );
+    expect(recordsSyncGate.events).not.toContain("records-sync");
     await expect(windowsStore.latestIntegrationRecord(state, "codex"))
       .resolves.toEqual(windowsV2);
     expect((await stat(directory)).mode & 0o777).toBe(inheritedMode);
@@ -1998,7 +2171,7 @@ describe("integration store", () => {
       state,
       record("post-publish", "2026-07-03T04:00:00.000Z")
     ).catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(SyntaxError);
+    expect(failure).toBeInstanceOf(IntegrationJournalCommitUncertainError);
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -2253,9 +2426,7 @@ describe("integration store", () => {
       record("cleanup-trigger", "2026-07-03T06:02:00.000Z")
     ).catch((error: unknown) => error);
     expect(publicationOwnershipGate.cleanupTriggered).toBe(true);
-    expect(failure).toMatchObject({
-      message: "Integration record fragment changed before cleanup"
-    });
+    expect(failure).toMatchObject({ code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN" });
     await expect(readFile(target, "utf8")).resolves.toBe(replacementSource);
   }, 15_000);
 

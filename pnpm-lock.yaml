@@ -120,6 +120,25 @@ importers:
       spdx-expression-parse:
         specifier: ^4.0.0
         version: 4.0.0
+    optionalDependencies:
+      '@skill-steward/rename-noreplace-darwin-arm64':
+        specifier: 0.5.0-alpha.4
+        version: link:../rename-noreplace-darwin-arm64
+      '@skill-steward/rename-noreplace-darwin-x64':
+        specifier: 0.5.0-alpha.4
+        version: link:../rename-noreplace-darwin-x64
+      '@skill-steward/rename-noreplace-linux-arm64-gnu':
+        specifier: 0.5.0-alpha.4
+        version: link:../rename-noreplace-linux-arm64-gnu
+      '@skill-steward/rename-noreplace-linux-arm64-musl':
+        specifier: 0.5.0-alpha.4
+        version: link:../rename-noreplace-linux-arm64-musl
+      '@skill-steward/rename-noreplace-linux-x64-gnu':
+        specifier: 0.5.0-alpha.4
+        version: link:../rename-noreplace-linux-x64-gnu
+      '@skill-steward/rename-noreplace-linux-x64-musl':
+        specifier: 0.5.0-alpha.4
+        version: link:../rename-noreplace-linux-x64-musl
 
   packages/dashboard-server:
     dependencies:
@@ -225,6 +244,25 @@ importers:
       zod:
         specifier: ^3.25.67
         version: 3.25.76
+    optionalDependencies:
+      '@skill-steward/rename-noreplace-darwin-arm64':
+        specifier: workspace:*
+        version: link:../rename-noreplace-darwin-arm64
+      '@skill-steward/rename-noreplace-darwin-x64':
+        specifier: workspace:*
+        version: link:../rename-noreplace-darwin-x64
+      '@skill-steward/rename-noreplace-linux-arm64-gnu':
+        specifier: workspace:*
+        version: link:../rename-noreplace-linux-arm64-gnu
+      '@skill-steward/rename-noreplace-linux-arm64-musl':
+        specifier: workspace:*
+        version: link:../rename-noreplace-linux-arm64-musl
+      '@skill-steward/rename-noreplace-linux-x64-gnu':
+        specifier: workspace:*
+        version: link:../rename-noreplace-linux-x64-gnu
+      '@skill-steward/rename-noreplace-linux-x64-musl':
+        specifier: workspace:*
+        version: link:../rename-noreplace-linux-x64-musl
 
   packages/preflight:
     dependencies:
@@ -237,6 +275,18 @@ importers:
       zod:
         specifier: ^3.25.67
         version: 3.25.76
+
+  packages/rename-noreplace-darwin-arm64: {}
+
+  packages/rename-noreplace-darwin-x64: {}
+
+  packages/rename-noreplace-linux-arm64-gnu: {}
+
+  packages/rename-noreplace-linux-arm64-musl: {}
+
+  packages/rename-noreplace-linux-x64-gnu: {}
+
+  packages/rename-noreplace-linux-x64-musl: {}
 
   packages/report:
     dependencies:

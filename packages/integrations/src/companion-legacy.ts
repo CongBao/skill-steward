@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { readIntegrationRecordJournal } from "@skill-steward/store";
+import {
+  readIntegrationRecordJournal,
+  type IntegrationRecordJournal
+} from "@skill-steward/store";
 import type { IntegrationHarness } from "./domain.js";
 import {
   companionTreeManifestSchema,
@@ -47,6 +50,7 @@ export type MissingCompanionLifecycleResolution =
 
 type JsonObject = Record<string, unknown>;
 type ManagedEvent = "UserPromptSubmit" | "Stop" | "SessionEnd";
+const integrationHarnesses = ["claude-code", "codex", "github-copilot"] as const;
 
 export interface CompanionConfigProofOptions {
   lstatPath?: (path: string, options: { bigint: true }) => Promise<BigIntStats>;
@@ -336,6 +340,67 @@ async function readCanonicalConfig(
   }
 }
 
+export type CompanionConsumerResolution =
+  | { state: "proven"; consumers: IntegrationHarness[] }
+  | { state: "conflict"; reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" }
+  | { state: "unknown"; reason: "COMPANION_CANONICAL_CONFIG_UNAVAILABLE" | "COMPANION_LIFECYCLE_RECORD_UNPROVABLE" };
+
+/** Resolves the complete post-apply consumer set once from one validated journal snapshot. */
+export async function resolveCompanionConsumers(
+  home: string,
+  applyingHarness: IntegrationHarness,
+  journal: IntegrationRecordJournal,
+  options: CompanionConfigProofOptions = {}
+): Promise<CompanionConsumerResolution> {
+  if (journal.changedDuringRead) {
+    return { state: "unknown", reason: "COMPANION_LIFECYCLE_RECORD_UNPROVABLE" };
+  }
+  const companionHeadIndex = journal.orderedRecords.findIndex(
+    (record) => record.schemaVersion === 2
+  );
+  if (companionHeadIndex > 0) {
+    return { state: "unknown", reason: "COMPANION_LIFECYCLE_RECORD_UNPROVABLE" };
+  }
+  const companionHead = companionHeadIndex === -1
+    ? undefined
+    : journal.orderedRecords[companionHeadIndex];
+  const candidates = companionHead?.schemaVersion === 2
+    ? companionHead.companion.consumers
+    : integrationHarnesses.filter((harness) => {
+        const head = journal.orderedRecords.find((record) => record.harness === harness);
+        return head?.schemaVersion === 1 && head.status === "installed";
+      });
+  const consumers = new Set<IntegrationHarness>([applyingHarness]);
+  for (const harness of candidates) {
+    if (harness === applyingHarness) {
+      consumers.add(harness);
+      continue;
+    }
+    const head = journal.orderedRecords.find((record) => record.harness === harness);
+    if (head?.status !== "installed") {
+      if (companionHead?.schemaVersion === 2) {
+        return { state: "conflict", reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" };
+      }
+      continue;
+    }
+    const config = await readCanonicalConfig(home, head, options);
+    if (config.state !== "exact") {
+      if (companionHead?.schemaVersion !== 2) continue;
+      return config.state === "unknown"
+        ? { state: "unknown", reason: "COMPANION_CANONICAL_CONFIG_UNAVAILABLE" }
+        : { state: "conflict", reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" };
+    }
+    if (config.fingerprint !== head.installedEntryFingerprint) {
+      if (companionHead?.schemaVersion === 2) {
+        return { state: "conflict", reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" };
+      }
+      continue;
+    }
+    consumers.add(harness);
+  }
+  return { state: "proven", consumers: [...consumers].sort() };
+}
+
 export async function resolveCompanionManagedProof(input: {
   home: string;
   stateDirectory: string;
@@ -369,20 +434,23 @@ export async function resolveCompanionManagedProof(input: {
     );
     if (
       companionHead.companion.path !== expectedPath
-      || !companionHead.companion.consumers.includes(input.harness)
-      || harnessHead?.status !== "installed"
     ) {
       return { state: "conflict", reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" };
     }
-    const config = await readCanonicalConfig(input.home, harnessHead, options);
-    if (config.state === "unknown") {
-      return { state: "unknown", reason: "COMPANION_CANONICAL_CONFIG_UNAVAILABLE" };
-    }
-    if (
-      config.state === "conflict"
-      || config.fingerprint !== harnessHead.installedEntryFingerprint
-    ) {
-      return { state: "conflict", reason: "COMPANION_CANONICAL_CONFIG_DRIFT" };
+    if (companionHead.companion.consumers.includes(input.harness)) {
+      if (harnessHead?.status !== "installed") {
+        return { state: "conflict", reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" };
+      }
+      const config = await readCanonicalConfig(input.home, harnessHead, options);
+      if (config.state === "unknown") {
+        return { state: "unknown", reason: "COMPANION_CANONICAL_CONFIG_UNAVAILABLE" };
+      }
+      if (
+        config.state === "conflict"
+        || config.fingerprint !== harnessHead.installedEntryFingerprint
+      ) {
+        return { state: "conflict", reason: "COMPANION_CANONICAL_CONFIG_DRIFT" };
+      }
     }
     return {
       state: "proven",

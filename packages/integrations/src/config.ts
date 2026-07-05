@@ -14,16 +14,29 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   appendIntegrationRecord,
+  assertIntegrationMutationLeaseOwned,
+  bindIntegrationRecordV2,
+  integrationRecordV2BindingSchema,
   latestIntegrationRecord,
-  type IntegrationRecord
+  readIntegrationRecordJournal,
+  readIntegrationRecoveryState,
+  writeReviewedPlan,
+  type IntegrationMutationLeaseContext,
+  type IntegrationRecord,
+  type IntegrationRecordV2
 } from "@skill-steward/store";
 import {
   integrationHarnessSchema,
   type IntegrationHarness
 } from "./domain.js";
 import { copilotHookConfig, copilotHookTarget } from "./config-adapters.js";
-import { companionSubplanSchema } from "./companion-domain.js";
+import {
+  companionSubplanSchema,
+  deriveCompanionTransactionAvailability,
+  type CompanionTransactionAvailability
+} from "./companion-domain.js";
 import { inspectCompanionSkillWithProof } from "./companion-inspector-internal.js";
+import { inspectCompanionTree } from "./companion-manifest.js";
 import type { CompanionSkillStatus } from "./companion-shared.js";
 
 export type IntegrationErrorCode =
@@ -31,9 +44,11 @@ export type IntegrationErrorCode =
   | "INTEGRATION_CONFIG_INVALID"
   | "INTEGRATION_DUPLICATE"
   | "INTEGRATION_DRIFTED"
+  | "INTEGRATION_LEGACY_CLEANUP_UNAVAILABLE"
   | "INTEGRATION_NOT_INSTALLED"
   | "INTEGRATION_PLAN_EXPIRED"
   | "INTEGRATION_PLAN_INVALID"
+  | "INTEGRATION_PLAN_MISMATCH"
   | "INTEGRATION_ROLLBACK_FAILED"
   | "INTEGRATION_UNSAFE_PATH";
 
@@ -58,6 +73,10 @@ function errorCode(error: unknown): string | undefined {
 
 function journalCommitIsUncertain(error: unknown): boolean {
   return errorCode(error) === "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN";
+}
+
+function leaseOwnershipWasLost(error: unknown): boolean {
+  return errorCode(error)?.startsWith("INTEGRATION_LEASE_") ?? false;
 }
 
 function uncertainJournalError(error: unknown, action: "apply" | "remove"): IntegrationError {
@@ -155,6 +174,7 @@ const integrationChangeSchema = z.object({
 }).strict();
 
 export const integrationPlanSchema = z.object({
+  lifecycleProtocolVersion: z.literal(2),
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
   harness: integrationHarnessSchema,
   targetPath: normalizedAbsolutePathSchema,
@@ -202,9 +222,178 @@ export const integrationPlanSchema = z.object({
       message: "No-op integration plans cannot create backups"
     });
   }
+  if (
+    plan.changes.length === 0
+    && plan.expectedBeforeFingerprint !== plan.afterFingerprint
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["afterFingerprint"],
+      message: "No-op integration plans must retain the exact configuration bytes"
+    });
+  }
 });
 
 export type IntegrationPlan = z.infer<typeof integrationPlanSchema>;
+
+const disconnectConfigurationStateSchema = z.object({
+  state: z.literal("file"),
+  fingerprint: fingerprintSchema,
+  config: z.custom<JsonObject>(
+    (value) => isObject(value) && isJsonValue(value),
+    "Disconnect configuration must be a JSON object"
+  )
+}).strict();
+
+const disconnectConsumersSchema = z.array(integrationHarnessSchema).max(3).superRefine(
+  (consumers, context) => {
+    if (
+      new Set(consumers).size !== consumers.length
+      || JSON.stringify(consumers) !== JSON.stringify([...consumers].sort())
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Disconnect consumers must be sorted and unique"
+      });
+    }
+  }
+);
+
+export const integrationDisconnectPlanSchema = z.object({
+  lifecycleProtocolVersion: z.literal(2),
+  action: z.literal("disconnect"),
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
+  harness: integrationHarnessSchema,
+  lifecycleHead: z.object({
+    recordId: z.string().min(1).max(128),
+    binding: integrationRecordV2BindingSchema
+  }).strict(),
+  consumerRecord: z.object({
+    recordId: z.string().min(1).max(128),
+    binding: integrationRecordV2BindingSchema
+  }).strict(),
+  configuration: z.object({
+    path: normalizedAbsolutePathSchema,
+    before: disconnectConfigurationStateSchema,
+    after: disconnectConfigurationStateSchema,
+    installedEntryFingerprint: fingerprintSchema
+  }).strict(),
+  companion: z.object({
+    path: normalizedAbsolutePathSchema,
+    status: z.literal("retained"),
+    fingerprint: fingerprintSchema,
+    installedFingerprint: fingerprintSchema,
+    sourceFingerprint: fingerprintSchema,
+    expectedConsumers: disconnectConsumersSchema,
+    remainingConsumers: disconnectConsumersSchema
+  }).strict(),
+  readiness: z.object({
+    trigger: z.object({
+      planId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
+      harness: integrationHarnessSchema,
+      createdAt: z.string().datetime()
+    }).strict()
+  }).strict(),
+  availability: z.object({
+    disconnectAvailable: z.literal(true),
+    reason: z.null()
+  }).strict(),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime()
+}).strict().superRefine((plan, context) => {
+  if (Date.parse(plan.expiresAt) - Date.parse(plan.createdAt) !== INTEGRATION_PLAN_TTL_MS) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expiresAt"],
+      message: "Disconnect plan must expire ten minutes after creation"
+    });
+  }
+  if (
+    plan.readiness.trigger.planId !== plan.id
+    || plan.readiness.trigger.harness !== plan.harness
+    || plan.readiness.trigger.createdAt !== plan.createdAt
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["readiness", "trigger"],
+      message: "Disconnect readiness trigger must exactly match its plan"
+    });
+  }
+  if (
+    hash(stableJson(plan.configuration.after.config))
+      !== plan.configuration.after.fingerprint
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["configuration"],
+      message: "Disconnect after configuration fingerprint must match exact published bytes"
+    });
+  }
+  if (
+    !plan.companion.expectedConsumers.includes(plan.harness)
+    || plan.companion.remainingConsumers.includes(plan.harness)
+    || JSON.stringify(plan.companion.remainingConsumers)
+      !== JSON.stringify(plan.companion.expectedConsumers.filter(
+        (harness) => harness !== plan.harness
+      ))
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["companion", "remainingConsumers"],
+      message: "Disconnect remaining consumers must remove exactly its Harness"
+    });
+  }
+  if (plan.companion.fingerprint !== plan.companion.installedFingerprint) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["companion", "fingerprint"],
+      message: "Disconnect companion must match the recorded installed fingerprint"
+    });
+  }
+});
+
+export type IntegrationDisconnectPlan = z.infer<typeof integrationDisconnectPlanSchema>;
+
+export type IntegrationApplyAvailability = CompanionTransactionAvailability | {
+  state: "blocked";
+  action: "unknown";
+  actionLabel: "Review integration plan";
+  transactionEligible: false;
+  applyAvailable: false;
+  unavailableReason:
+    | "INTEGRATION_PLAN_PROTOCOL_UNSUPPORTED"
+    | "INTEGRATION_PLAN_INVALID";
+};
+
+export function integrationApplyAvailability(
+  inputPlan: unknown
+): IntegrationApplyAvailability {
+  if (
+    !isObject(inputPlan)
+    || inputPlan.lifecycleProtocolVersion !== 2
+  ) {
+    return {
+      state: "blocked",
+      action: "unknown",
+      actionLabel: "Review integration plan",
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason: "INTEGRATION_PLAN_PROTOCOL_UNSUPPORTED"
+    };
+  }
+  const parsed = integrationPlanSchema.safeParse(inputPlan);
+  if (!parsed.success) {
+    return {
+      state: "blocked",
+      action: "unknown",
+      actionLabel: "Review integration plan",
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason: "INTEGRATION_PLAN_INVALID"
+    };
+  }
+  return deriveCompanionTransactionAvailability(parsed.data.companion, process.platform);
+}
 
 export type IntegrationStatusValue =
   | "not-installed"
@@ -236,12 +425,26 @@ export interface IntegrationConfigOptions {
   id?: () => string;
 }
 
+export interface IntegrationMutationConfigOptions extends IntegrationConfigOptions {
+  leaseContext: IntegrationMutationLeaseContext;
+}
+
 export interface IntegrationConfigDependencies {
-  appendRecord: typeof appendIntegrationRecord;
+  appendRecord: (
+    ...args: Parameters<typeof appendIntegrationRecord>
+  ) => Promise<Awaited<ReturnType<typeof appendIntegrationRecord>> | void>;
+  beforeLegacyConfigMutation: () => Promise<void>;
+  beforeLegacyConfigPublish: () => Promise<void>;
+  beforeLegacyJournalAppend: () => Promise<void>;
+  beforeLegacyJournalPublish: () => Promise<void>;
 }
 
 const integrationConfigDefaults: IntegrationConfigDependencies = {
-  appendRecord: appendIntegrationRecord
+  appendRecord: appendIntegrationRecord,
+  beforeLegacyConfigMutation: async () => undefined,
+  beforeLegacyConfigPublish: async () => undefined,
+  beforeLegacyJournalAppend: async () => undefined,
+  beforeLegacyJournalPublish: async () => undefined
 };
 
 const defaultCompanionSourceDirectory = fileURLToPath(
@@ -298,6 +501,40 @@ function isObject(value: unknown): value is JsonObject {
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function assertLegacyCleanupAvailable(
+  stateDirectory: string
+): Promise<Awaited<ReturnType<typeof readIntegrationRecordJournal>>> {
+  let journal: Awaited<ReturnType<typeof readIntegrationRecordJournal>>;
+  try {
+    journal = await readIntegrationRecordJournal(stateDirectory);
+  } catch (error) {
+    throw new IntegrationError(
+      "INTEGRATION_LEGACY_CLEANUP_UNAVAILABLE",
+      "Legacy v1 cleanup is unavailable because validated lifecycle history could not be read safely; use the reviewed v2 disconnect flow",
+      { cause: error }
+    );
+  }
+  if (
+    journal.changedDuringRead
+    || journal.orderedRecords.some((record) => record.schemaVersion === 2)
+  ) {
+    throw new IntegrationError(
+      "INTEGRATION_LEGACY_CLEANUP_UNAVAILABLE",
+      "Legacy v1 cleanup is unavailable because validated lifecycle history contains v2 evidence or the lifecycle snapshot could not be proven stable; use the reviewed v2 disconnect flow"
+    );
+  }
+  return journal;
+}
+
+async function assertLegacyCleanupLease(
+  options: IntegrationMutationConfigOptions
+): Promise<void> {
+  await assertIntegrationMutationLeaseOwned(
+    options.leaseContext,
+    options.stateDirectory
+  );
 }
 
 function integrationTarget(harness: IntegrationHarness, home: string): string {
@@ -527,16 +764,6 @@ function removeManagedGroup(
   return { ...config, hooks: nextHooks };
 }
 
-function managedBundle(harness: IntegrationHarness): Array<{
-  event: ManagedEvent;
-  group: JsonObject;
-}> {
-  return managedEvents(harness).map((event) => ({
-    event,
-    group: managedGroup(harness, event)
-  }));
-}
-
 function installedBundle(config: JsonObject, harness: IntegrationHarness): Array<{
   event: ManagedEvent;
   group: JsonObject;
@@ -564,7 +791,8 @@ async function atomicWrite(
     exists: boolean;
     fingerprint: string;
     message: string;
-  }
+  },
+  beforePublish: () => Promise<void> = async () => undefined
 ): Promise<void> {
   await assertSafeTarget(path, home);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -589,6 +817,7 @@ async function atomicWrite(
       expectedFingerprint: expected.fingerprint,
       message: expected.message
     });
+    await beforePublish();
     await rename(temporary, path);
     renamed = true;
   } finally {
@@ -616,7 +845,12 @@ async function writeBackup(
   }
 }
 
-async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Promise<void> {
+async function restoreIntegrationTarget(
+  plan: IntegrationPlan,
+  home: string,
+  assertBeforeMutation: () => Promise<void> = async () => undefined,
+  beforePublish: () => Promise<void> = assertBeforeMutation
+): Promise<void> {
   await assertSafeTarget(plan.targetPath, home);
   const current = await readTargetState(plan.targetPath);
   if (!current.exists || current.fingerprint !== plan.afterFingerprint) {
@@ -644,11 +878,13 @@ async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Pr
         "Integration backup changed before rollback"
       );
     }
+    await assertBeforeMutation();
     await atomicWrite(plan.targetPath, backupSource, home, {
       exists: true,
       fingerprint: plan.afterFingerprint,
       message: "Harness configuration changed while integration rollback was prepared"
-    });
+    }, beforePublish);
+    await assertBeforeMutation();
     await unlink(plan.backupPath);
     return;
   }
@@ -658,12 +894,83 @@ async function restoreIntegrationTarget(plan: IntegrationPlan, home: string): Pr
       "Integration rollback is missing its reviewed backup"
     );
   }
+  await assertBeforeMutation();
   await unlink(plan.targetPath);
 }
 
-export async function planIntegration(
+const integrationHarnesses: IntegrationHarness[] = [
+  "claude-code",
+  "codex",
+  "github-copilot"
+];
+
+async function currentCopilotTombstoneRecord(input: {
+  stateDirectory: string;
+  targetPath: string;
+  currentFingerprint: string;
+  home: string;
+}): Promise<IntegrationRecordV2 | null> {
+  const tombstoneFingerprint = hash(stableJson({ version: 1, hooks: {} }));
+  if (input.currentFingerprint !== tombstoneFingerprint) return null;
+  let journal: Awaited<ReturnType<typeof readIntegrationRecordJournal>>;
+  try {
+    journal = await readIntegrationRecordJournal(input.stateDirectory);
+  } catch {
+    return null;
+  }
+  if (journal.changedDuringRead) return null;
+  const record = journal.orderedRecords[0];
+  const harnessHead = journal.orderedRecords.find(
+    (candidate) => candidate.harness === "github-copilot"
+  );
+  if (
+    record?.schemaVersion !== 2
+    || harnessHead !== record
+    || record.harness !== "github-copilot"
+    || record.action !== "remove"
+    || record.status !== "removed"
+    || record.targetPath !== input.targetPath
+    || record.afterFingerprint !== tombstoneFingerprint
+    || record.beforeFingerprint !== record.installedEntryFingerprint
+    || record.companion.action !== "retain"
+    || record.companion.path !== resolve(
+      input.home,
+      ".agents",
+      "skills",
+      "skill-steward-preflight"
+    )
+    || record.companion.before.state !== "exact"
+    || record.companion.after.state !== "exact"
+    || record.companion.before.fingerprint !== record.companion.installedFingerprint
+    || record.companion.after.fingerprint !== record.companion.installedFingerprint
+    || record.companion.consumers.includes("github-copilot")
+  ) return null;
+  const currentConsumers = integrationHarnesses.filter((harness) =>
+    journal.orderedRecords.find((candidate) => candidate.harness === harness)?.status
+      === "installed"
+  ).sort();
+  return JSON.stringify(currentConsumers) === JSON.stringify(record.companion.consumers)
+    ? record
+    : null;
+}
+
+function companionProvesCurrentCopilotTombstone(
+  companion: IntegrationPlan["companion"],
+  record: IntegrationRecordV2
+): boolean {
+  return companion.action === "none"
+    && companion.expectedBefore.state === "exact"
+    && companion.proof.kind === "recorded"
+    && companion.proof.recordId === record.id
+    && companion.expectedBefore.fingerprint === record.companion.installedFingerprint
+    && companion.after.fingerprint === record.companion.installedFingerprint
+    && companion.source.fingerprint === record.companion.source.fingerprint;
+}
+
+async function planIntegrationInternal(
   inputHarness: IntegrationHarness,
-  options: IntegrationConfigOptions
+  options: IntegrationConfigOptions,
+  claimedRecovery = false
 ): Promise<IntegrationPlan> {
   const harness = integrationHarnessSchema.parse(inputHarness);
   const targetPath = integrationTarget(harness, options.home);
@@ -674,12 +981,23 @@ export async function planIntegration(
     sourceDirectory: companionSourceDirectory(options),
     stateDirectory: options.stateDirectory,
     harness
-  })).subplan;
+  }, claimedRecovery ? { recoverySummary: { status: "clear" } } : {})).subplan;
   if (harness === "github-copilot") {
     const afterConfig = copilotHookConfig();
     const afterSource = stableJson(afterConfig);
     const afterFingerprint = hash(afterSource);
-    if (before.exists && before.fingerprint !== afterFingerprint) {
+    const tombstoneRecord = before.exists
+      ? await currentCopilotTombstoneRecord({
+          stateDirectory: options.stateDirectory,
+          targetPath,
+          currentFingerprint: before.fingerprint,
+          home: options.home
+        })
+      : null;
+    const exactTombstone = tombstoneRecord !== null
+      && companionProvesCurrentCopilotTombstone(companion, tombstoneRecord);
+    const fullyInstalled = before.exists && before.fingerprint === afterFingerprint;
+    if (before.exists && !fullyInstalled && !exactTombstone) {
       throw new IntegrationError(
         "INTEGRATION_DRIFTED",
         "The dedicated Copilot Hook file already exists with different content"
@@ -687,6 +1005,7 @@ export async function planIntegration(
     }
     const now = options.now?.() ?? new Date();
     return {
+      lifecycleProtocolVersion: 2,
       id: options.id?.() ?? randomUUID(),
       harness,
       targetPath,
@@ -695,7 +1014,7 @@ export async function planIntegration(
       afterFingerprint,
       installedEntryFingerprint: afterFingerprint,
       companion,
-      changes: before.exists ? [] : [{ operation: "write", path: targetPath }],
+      changes: fullyInstalled ? [] : [{ operation: "write", path: targetPath }],
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + INTEGRATION_PLAN_TTL_MS).toISOString()
     };
@@ -727,20 +1046,22 @@ export async function planIntegration(
     before.config
   );
   const afterSource = stableJson(afterConfig);
+  const afterFingerprint = fullyInstalled ? before.fingerprint : hash(afterSource);
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();
   const path = before.exists && !fullyInstalled
     ? backupPath(targetPath, now, id)
     : undefined;
   return {
+    lifecycleProtocolVersion: 2,
     id,
     harness,
     targetPath,
     ...(path ? { backupPath: path } : {}),
     expectedBeforeFingerprint: before.fingerprint,
     afterConfig,
-    afterFingerprint: hash(afterSource),
-    installedEntryFingerprint: bundleFingerprint(managedBundle(harness)),
+    afterFingerprint,
+    installedEntryFingerprint: bundleFingerprint(installedBundle(afterConfig, harness)),
     companion,
     changes: fullyInstalled
       ? []
@@ -751,6 +1072,256 @@ export async function planIntegration(
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + INTEGRATION_PLAN_TTL_MS).toISOString()
   };
+}
+
+export async function planIntegration(
+  inputHarness: IntegrationHarness,
+  options: IntegrationConfigOptions
+): Promise<IntegrationPlan> {
+  return planIntegrationInternal(inputHarness, options);
+}
+
+/** Package-private: the coordinator has already claimed and exclusively owns this recovery intent. */
+export async function revalidateClaimedIntegrationPlan(
+  inputHarness: IntegrationHarness,
+  options: IntegrationConfigOptions
+): Promise<IntegrationPlan> {
+  return planIntegrationInternal(inputHarness, options, true);
+}
+
+function unavailableDisconnect(message: string, cause?: unknown): IntegrationError {
+  return new IntegrationError(
+    "INTEGRATION_COMPANION_ACTION_UNAVAILABLE",
+    message,
+    cause === undefined ? undefined : { cause }
+  );
+}
+
+function exactV2RecordBinding(record: IntegrationRecordV2): {
+  recordId: string;
+  binding: ReturnType<typeof bindIntegrationRecordV2>;
+} {
+  return { recordId: record.id, binding: bindIntegrationRecordV2(record) };
+}
+
+function disconnectAfterConfig(
+  harness: IntegrationHarness,
+  before: JsonObject
+): JsonObject {
+  if (harness === "github-copilot") return { version: 1, hooks: {} };
+  return managedEvents(harness).reduce(
+    (config, event) => removeManagedGroup(config, harness, event),
+    before
+  );
+}
+
+async function planIntegrationDisconnectInternal(
+  inputHarness: IntegrationHarness,
+  options: IntegrationConfigOptions,
+  input: {
+    persist: boolean;
+    claimedRecovery: boolean;
+  }
+): Promise<IntegrationDisconnectPlan> {
+  if (process.platform === "win32") {
+    throw unavailableDisconnect("Reviewed disconnect is unavailable on this platform");
+  }
+  const harness = integrationHarnessSchema.parse(inputHarness);
+  if (!input.claimedRecovery) {
+    let recovery: Awaited<ReturnType<typeof readIntegrationRecoveryState>>;
+    try {
+      recovery = await readIntegrationRecoveryState(options.stateDirectory);
+    } catch (error) {
+      throw unavailableDisconnect(
+        "Reviewed disconnect recovery state could not be proven",
+        error
+      );
+    }
+    if (recovery.status !== "clear") {
+      throw unavailableDisconnect(
+        recovery.status === "unresolved"
+          ? "Reviewed disconnect is unavailable while integration recovery is required"
+          : "Reviewed disconnect recovery state could not be proven"
+      );
+    }
+  }
+  let journal: Awaited<ReturnType<typeof readIntegrationRecordJournal>>;
+  try {
+    journal = await readIntegrationRecordJournal(options.stateDirectory);
+  } catch (error) {
+    throw unavailableDisconnect("Reviewed disconnect lifecycle evidence could not be read", error);
+  }
+  if (journal.changedDuringRead) {
+    throw unavailableDisconnect("Reviewed disconnect lifecycle evidence changed during planning");
+  }
+  const lifecycleHead = journal.orderedRecords[0];
+  if (lifecycleHead?.schemaVersion !== 2) {
+    throw unavailableDisconnect("Reviewed disconnect requires a current lifecycle v2 head");
+  }
+  const selectedHarnessHead = journal.orderedRecords.find(
+    (record) => record.harness === harness
+  );
+  const consumerRecord = selectedHarnessHead?.schemaVersion === 2
+    ? selectedHarnessHead
+    : undefined;
+  if (
+    consumerRecord === undefined
+    || consumerRecord.status !== "installed"
+    || consumerRecord.action !== "apply"
+    || !lifecycleHead.companion.consumers.includes(harness)
+  ) {
+    throw new IntegrationError(
+      "INTEGRATION_NOT_INSTALLED",
+      "The selected Harness is not a current lifecycle v2 companion consumer"
+    );
+  }
+  const companionPath = resolve(
+    options.home,
+    ".agents",
+    "skills",
+    "skill-steward-preflight"
+  );
+  if (
+    lifecycleHead.companion.path !== companionPath
+    || lifecycleHead.companion.after.state !== "exact"
+  ) {
+    throw unavailableDisconnect("Current companion lifecycle evidence is contradictory");
+  }
+  let companion;
+  try {
+    companion = await inspectCompanionTree(companionPath, {
+      boundary: options.home,
+      platform: process.platform
+    });
+  } catch (error) {
+    throw unavailableDisconnect("Current companion tree could not be proven exactly", error);
+  }
+  if (
+    companion.fingerprint !== lifecycleHead.companion.installedFingerprint
+    || lifecycleHead.companion.after.fingerprint
+      !== lifecycleHead.companion.installedFingerprint
+  ) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Current companion tree changed after lifecycle v2 finalize"
+    );
+  }
+
+  const targetPath = integrationTarget(harness, options.home);
+  if (consumerRecord.targetPath !== targetPath) {
+    throw unavailableDisconnect("Current Harness lifecycle target is contradictory");
+  }
+  await assertSafeTarget(targetPath, options.home);
+  const before = await readConfig(targetPath);
+  if (!before.exists || before.fingerprint !== consumerRecord.afterFingerprint) {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Current Harness configuration changed after lifecycle v2 finalize"
+    );
+  }
+  if (harness === "github-copilot") {
+    const expected = stableJson(copilotHookConfig());
+    if (
+      before.source !== expected
+      || consumerRecord.installedEntryFingerprint !== before.fingerprint
+    ) {
+      throw new IntegrationError(
+        "INTEGRATION_DRIFTED",
+        "Current Copilot Hook does not exactly match its installed lifecycle entry"
+      );
+    }
+  } else {
+    const bundle = installedBundle(before.config, harness);
+    if (
+      bundle.length !== managedEvents(harness).length
+      || bundleFingerprint(bundle) !== consumerRecord.installedEntryFingerprint
+    ) {
+      throw new IntegrationError(
+        "INTEGRATION_DRIFTED",
+        "Current Harness Hook does not exactly match its installed lifecycle entry"
+      );
+    }
+  }
+  const afterConfig = disconnectAfterConfig(harness, before.config);
+  const afterSource = stableJson(afterConfig);
+  const createdAt = (options.now?.() ?? new Date()).toISOString();
+  const id = options.id?.() ?? randomUUID();
+  const expectedConsumers = [...lifecycleHead.companion.consumers];
+  const remainingConsumers = expectedConsumers.filter((consumer) => consumer !== harness);
+  const plan = integrationDisconnectPlanSchema.parse({
+    lifecycleProtocolVersion: 2,
+    action: "disconnect",
+    id,
+    harness,
+    lifecycleHead: exactV2RecordBinding(lifecycleHead),
+    consumerRecord: exactV2RecordBinding(consumerRecord),
+    configuration: {
+      path: targetPath,
+      before: {
+        state: "file",
+        fingerprint: before.fingerprint,
+        config: before.config
+      },
+      after: {
+        state: "file",
+        fingerprint: hash(afterSource),
+        config: afterConfig
+      },
+      installedEntryFingerprint: consumerRecord.installedEntryFingerprint
+    },
+    companion: {
+      path: companionPath,
+      status: "retained",
+      fingerprint: companion.fingerprint,
+      installedFingerprint: lifecycleHead.companion.installedFingerprint,
+      sourceFingerprint: lifecycleHead.companion.source.fingerprint,
+      expectedConsumers,
+      remainingConsumers
+    },
+    readiness: {
+      trigger: { planId: id, harness, createdAt }
+    },
+    availability: { disconnectAvailable: true, reason: null },
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + INTEGRATION_PLAN_TTL_MS).toISOString()
+  });
+  if (input.persist) {
+    await writeReviewedPlan(options.stateDirectory, {
+      schemaVersion: 1,
+      id: plan.id,
+      kind: "integration-disconnect",
+      createdAt: plan.createdAt,
+      expiresAt: plan.expiresAt,
+      payload: plan
+    });
+  }
+  return plan;
+}
+
+/** Package-private until the Phase 4 common-surface activation gate. */
+export async function planIntegrationDisconnect(
+  inputHarness: IntegrationHarness,
+  options: IntegrationConfigOptions
+): Promise<IntegrationDisconnectPlan> {
+  return planIntegrationDisconnectInternal(inputHarness, options, {
+    persist: true,
+    claimedRecovery: false
+  });
+}
+
+/** Package-private: the coordinator owns the reviewed plan and recovery intent. */
+export async function revalidateClaimedIntegrationDisconnect(
+  plan: IntegrationDisconnectPlan,
+  options: IntegrationConfigOptions
+): Promise<IntegrationDisconnectPlan> {
+  return planIntegrationDisconnectInternal(plan.harness, {
+    ...options,
+    now: () => new Date(plan.createdAt),
+    id: () => plan.id
+  }, {
+    persist: false,
+    claimedRecovery: true
+  });
 }
 
 export async function applyIntegrationPlan(
@@ -877,12 +1448,16 @@ export async function applyIntegrationPlanInternal(
       "Integration plan configuration does not match its Harness target"
     );
   }
-  if (hash(afterSource) !== plan.afterFingerprint) {
+  const exactConfigNoop = plan.changes.length === 0;
+  const expectedAfterFingerprint = exactConfigNoop
+    ? before.fingerprint
+    : hash(afterSource);
+  if (expectedAfterFingerprint !== plan.afterFingerprint) {
     throw new IntegrationError("INTEGRATION_DRIFTED", "Integration plan content changed");
   }
   const expectedInstalledFingerprint = harness === "github-copilot"
     ? plan.afterFingerprint
-    : bundleFingerprint(managedBundle(harness));
+    : bundleFingerprint(installedBundle(expectedConfig, harness));
   if (plan.installedEntryFingerprint !== expectedInstalledFingerprint) {
     throw new IntegrationError(
       "INTEGRATION_DRIFTED",
@@ -890,7 +1465,7 @@ export async function applyIntegrationPlanInternal(
     );
   }
   const fullyInstalled = harness === "github-copilot"
-    ? before.exists
+    ? before.exists && before.fingerprint === hash(stableJson(copilotHookConfig()))
     : managedEvents(harness).every((event) => managedGroups(before.config, harness, event).length === 1);
   const expectedBackupPath = harness !== "github-copilot" && before.exists && !fullyInstalled
     ? backupPath(plan.targetPath, new Date(plan.createdAt), plan.id)
@@ -965,7 +1540,7 @@ export async function applyIntegrationPlanInternal(
 
 export async function rollbackIntegrationPlan(
   inputPlan: unknown,
-  options: IntegrationConfigOptions,
+  options: IntegrationMutationConfigOptions,
   dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
   const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
@@ -983,12 +1558,24 @@ export async function rollbackIntegrationPlan(
       "No-op integration plans have no configuration to roll back"
     );
   }
+  await assertLegacyCleanupLease(options);
+  await assertLegacyCleanupAvailable(options.stateDirectory);
   const expectedTarget = integrationTarget(plan.harness, options.home);
   if (plan.targetPath !== expectedTarget) {
     throw new IntegrationError("INTEGRATION_UNSAFE_PATH", "Integration plan target is invalid");
   }
   await assertSafeTarget(plan.targetPath, options.home);
-  await restoreIntegrationTarget(plan, options.home);
+  await dependencies.beforeLegacyConfigMutation();
+  await assertLegacyCleanupLease(options);
+  await restoreIntegrationTarget(
+    plan,
+    options.home,
+    () => assertLegacyCleanupLease(options),
+    async () => {
+      await dependencies.beforeLegacyConfigPublish();
+      await assertLegacyCleanupLease(options);
+    }
+  );
   const now = options.now?.() ?? new Date();
   const record: IntegrationRecord = {
     schemaVersion: 1,
@@ -1002,9 +1589,17 @@ export async function rollbackIntegrationPlan(
     installedEntryFingerprint: plan.installedEntryFingerprint,
     createdAt: now.toISOString()
   };
+  await dependencies.beforeLegacyJournalAppend();
+  await assertLegacyCleanupLease(options);
   try {
-    await dependencies.appendRecord(options.stateDirectory, record);
+    await dependencies.appendRecord(options.stateDirectory, record, {
+      beforePublish: async () => {
+        await dependencies.beforeLegacyJournalPublish();
+        await assertLegacyCleanupLease(options);
+      }
+    });
   } catch (error) {
+    if (leaseOwnershipWasLost(error)) throw error;
     if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
     try {
       await requireExactTargetState({
@@ -1013,11 +1608,12 @@ export async function rollbackIntegrationPlan(
         expectedFingerprint: plan.expectedBeforeFingerprint,
         message: "Harness configuration changed while integration rollback was journaling"
       });
+      await assertLegacyCleanupLease(options);
       await atomicWrite(plan.targetPath, stableJson(plan.afterConfig), options.home, {
         exists: plan.expectedBeforeFingerprint !== hash(""),
         fingerprint: plan.expectedBeforeFingerprint,
         message: "Harness configuration changed while rollback compensation was prepared"
-      });
+      }, () => assertLegacyCleanupLease(options));
     } catch (compensationError) {
       throw new IntegrationError(
         "INTEGRATION_ROLLBACK_FAILED",
@@ -1072,6 +1668,22 @@ async function integrationHookStatus(
           targetPath,
           ...(latest ? { lastChangedAt: latest.createdAt } : {})
         };
+      }
+      if (current.exists) {
+        const tombstoneRecord = await currentCopilotTombstoneRecord({
+          stateDirectory: options.stateDirectory,
+          targetPath,
+          currentFingerprint: current.fingerprint,
+          home: options.home
+        });
+        if (tombstoneRecord !== null) {
+          return {
+            harness,
+            status: "not-installed",
+            targetPath,
+            lastChangedAt: tombstoneRecord.createdAt
+          };
+        }
       }
       if (current.exists || latest?.status === "installed") {
         return {
@@ -1182,14 +1794,16 @@ export async function integrationStatus(
 
 export async function removeIntegration(
   inputHarness: IntegrationHarness,
-  options: IntegrationConfigOptions,
+  options: IntegrationMutationConfigOptions,
   dependencyOverrides: Partial<IntegrationConfigDependencies> = {}
 ): Promise<IntegrationRecord> {
   const dependencies = { ...integrationConfigDefaults, ...dependencyOverrides };
   const harness = integrationHarnessSchema.parse(inputHarness);
   const targetPath = integrationTarget(harness, options.home);
+  await assertLegacyCleanupLease(options);
   await assertSafeTarget(targetPath, options.home);
-  const latest = await latestIntegrationRecord(options.stateDirectory, harness);
+  const journal = await assertLegacyCleanupAvailable(options.stateDirectory);
+  const latest = journal.records.find((record) => record.harness === harness) ?? null;
   if (!latest || latest.status !== "installed") {
     throw new IntegrationError(
       "INTEGRATION_NOT_INSTALLED",
@@ -1198,10 +1812,18 @@ export async function removeIntegration(
   }
   const before = await readConfig(targetPath);
   const commitRemoval = async (record: IntegrationRecord): Promise<IntegrationRecord> => {
+    await dependencies.beforeLegacyJournalAppend();
+    await assertLegacyCleanupLease(options);
     try {
-      await dependencies.appendRecord(options.stateDirectory, record);
+      await dependencies.appendRecord(options.stateDirectory, record, {
+        beforePublish: async () => {
+          await dependencies.beforeLegacyJournalPublish();
+          await assertLegacyCleanupLease(options);
+        }
+      });
       return record;
     } catch (error) {
+      if (leaseOwnershipWasLost(error)) throw error;
       if (journalCommitIsUncertain(error)) throw uncertainJournalError(error, "remove");
       try {
         await requireExactTargetState({
@@ -1210,11 +1832,12 @@ export async function removeIntegration(
           expectedFingerprint: record.afterFingerprint,
           message: "Harness configuration changed while integration removal was journaling"
         });
+        await assertLegacyCleanupLease(options);
         await atomicWrite(targetPath, before.bytes, options.home, {
           exists: harness !== "github-copilot",
           fingerprint: record.afterFingerprint,
           message: "Harness configuration changed while removal restoration was prepared"
-        });
+        }, () => assertLegacyCleanupLease(options));
       } catch (rollbackError) {
         throw new IntegrationError(
           "INTEGRATION_ROLLBACK_FAILED",
@@ -1242,6 +1865,8 @@ export async function removeIntegration(
         "Copilot Hook changed since installation; removal was not applied"
       );
     }
+    await dependencies.beforeLegacyConfigMutation();
+    await assertLegacyCleanupLease(options);
     await unlink(targetPath);
     const now = options.now?.() ?? new Date();
     const record: IntegrationRecord = {
@@ -1276,11 +1901,17 @@ export async function removeIntegration(
   const now = options.now?.() ?? new Date();
   const id = options.id?.() ?? randomUUID();
   const path = backupPath(targetPath, now, `${id}-remove`);
+  await dependencies.beforeLegacyConfigMutation();
+  await assertLegacyCleanupLease(options);
   await writeBackup(path, before.bytes, options.home);
+  await assertLegacyCleanupLease(options);
   await atomicWrite(targetPath, afterSource, options.home, {
     exists: before.exists,
     fingerprint: before.fingerprint,
     message: "Harness configuration changed while integration removal was prepared"
+  }, async () => {
+    await dependencies.beforeLegacyConfigPublish();
+    await assertLegacyCleanupLease(options);
   });
   const record: IntegrationRecord = {
     schemaVersion: 1,

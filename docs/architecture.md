@@ -18,6 +18,7 @@ flowchart LR
   Services --> Installer[Reviewed installer]
   Services --> Evidence[Privacy-safe evidence]
   Services --> Governance[Quarantine / restore]
+  Services --> Integrations[Reviewed Harness integration]
   Services --> Insights[Portfolio insights]
   Inventory --> Store
   Preflight --> Store[Validated local state]
@@ -25,6 +26,7 @@ flowchart LR
   Installer --> Journal[Transactions and backups]
   Evidence --> Store
   Governance --> Vault[Verified private vault + journal]
+  Integrations --> Recovery[Lease + recovery + readiness journal]
   Refresh[Explicit catalog refresh] -->|network boundary| PublicGit[Public HTTPS Git]
   PublicGit --> Catalog
 ```
@@ -37,8 +39,8 @@ flowchart LR
 - `packages/preflight` combines installed and cached catalog candidates, then applies relevance, coverage, risk, redundancy, compatibility, narrow English negative-routing clauses, and installation penalties. Algorithm v8 requires at least two shared positive task terms for non-name matches and owns a versioned trigger-rule table. Its first rule adds one bounded score only for positive `review ... before merge` task intent, the `request` + `code` + `review` Skill-name signature, and the same positive `before merge` routing phrase. Generic name terms and pairs split by any Unicode punctuation/symbol boundary cannot satisfy the rule. One internal polarity module recognizes bounded whole-word task negations (`do not`, straight/curly `don't`, `never`, `avoid`, `without`) and candidate action negations (use/invoke/call/run/apply). Semicolons, sentence punctuation, and line breaks end a clause; comma/colon lists stay negative, while `, but ...` or a colon followed by a bounded positive action opens an explicit contrast. Recognized negated task text contributes neither ordinary relevance, full-name matching, trigger evidence, nor capability gaps. The current rule uses `code` only as a conflict discriminator: negative code-review evidence remains a veto, while positive code review can coexist with a different negative review object. Capability-gap corroboration uses positive matched terms over the complete route-term denominator, so negative metadata cannot raise its relevance gate. The algorithm also deterministically canonicalizes a bounded set of Simplified/Traditional Chinese routing concepts and derives recommendation-neutral capability-gap hints through a separate display path. In that path, a name match must contribute a specific canonical concept; generic single-token names still need the normal specific multi-concept relevance evidence. Positive task aliases, positive candidate metadata, and selected positive coverage project into one canonical namespace. Shared routing does not recover low-confidence unsegmented two-character fragments. It remains lexical rather than general cross-language semantic understanding and has no filesystem or network I/O.
   A negative-name guard excludes a candidate when its full name is negated, or when at least two name terms have greater negative-clause overlap than positive-task overlap. This keeps workflow variants within the same rejected intent without treating a single generic term as a veto. An action word after a colon opens a positive contrast only when the suffix is not itself an action-name list joined by bounded `and`/`or` forms or Unicode punctuation/symbols, and not an optional-comma `instead of` list. A standalone `instead` not followed by `of` can mark the suffix as positive.
 - `packages/evidence` defines strict content-free evidence, policy, lifecycle, metric, breakdown, and readiness schemas plus pure aggregation.
-- `packages/integrations` defines compact Hook protocols, the shared capability matrix, proof-aware Codex/Claude/Copilot configuration plans, independent Hook/companion status, trust status, and a fail-closed public apply boundary. Transaction and recovery primitives remain internal migration fixtures until the companion lifecycle is activated.
-- `packages/store` owns validated atomic reports, private reviewed-plan envelopes, catalog metadata, bounded history, labels, fragment-based integration records, the shared portfolio mutation lease, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
+- `packages/integrations` defines compact Hook protocols, the shared capability matrix, proof-aware Codex/Claude/Copilot configuration plans, independent Hook/companion status, reviewed create/upgrade/no-op/disconnect operations, companion ownership proofs, and the recoverable integration coordinator.
+- `packages/store` owns validated atomic reports, private reviewed-plan envelopes, catalog metadata, bounded history, labels, integration recovery/readiness/configuration journals, the shared portfolio mutation lease, privacy-reduced preflights, private HMAC salt, bounded lifecycle events, export, compaction, and erase.
   Fragment snapshot reads distinguish ordinary concurrent cleanup from replacement by immediately resampling a mismatched path: only proven absence becomes a bounded whole-snapshot retry; a still-present same-name path remains a fail-closed replacement.
 - `packages/installer` owns persistent private source staging, ZIP/Git safeguards, inspection, destination plans, atomic transactions, journaling, and rollback.
 - `packages/governance` owns exact quarantine/restore plans, verified vault transactions, failure recovery, and the append-only governance journal.
@@ -76,7 +78,7 @@ The browser never reads the filesystem directly. Mutation requests require a ran
 
 Catalog entries contain routing metadata, fingerprints, scripts, findings, compatibility, source ID, and revision—not full Skill bodies. “Vendor”, “community”, and “user” are source classifications, not safety decisions. Before an available candidate can be installed, Skill Steward checks out the recorded revision, reinspects it, compares identity and fingerprint, and generates a separate destination plan. No recommendation is committed without confirmation.
 
-Integration plans model Codex and Claude Code changes as structural JSON merges and model Copilot through its dedicated managed Hook file. In the current Alpha those plans are inspection evidence, not permission to write. Existing v1/v2 records under `integration-records/` and the read-compatible legacy `integrations.json` can prove ownership and consumer state. A narrow cleanup path may remove a provably managed Hook installed by an earlier Alpha, but it retains the companion Skill until consumer-aware removal is enabled.
+Integration plans model Codex and Claude Code changes as structural JSON merges and model Copilot through its dedicated managed Hook file. A plan binds the expected Harness, Hook configuration, packaged companion tree, ownership proof, journal head, and consumer set. Existing v1/v2 records under `integration-records/` and the read-compatible legacy `integrations.json` can prove ownership and consumer state. Disconnect removes only the reviewed managed Hook and retains the shared companion Skill; reconnect accepts a retained tree only when lifecycle evidence and its semantic bundle fingerprint still agree.
 
 Evidence defaults to `minimal`. A fingerprint-bound, expiring plan is required before enabling `learning`, which adds numeric candidate features and HMAC-pseudonymous lifecycle events. Raw prompts, terms, paths, Harness IDs, transcripts, assistant content, and tool data are not valid evidence schema fields. The 32-byte salt is private, is never exported, and is removed only by an exact evidence-erase plan.
 
@@ -84,19 +86,25 @@ Governance mutations also require exact ten-minute plans. Quarantine verifies a 
 
 ## Reviewed mutation flow
 
-CLI installation, evidence-policy, evidence-erasure, quarantine, restore, and integration previews write a strict envelope under `reviewed-plans/`. The envelope contains an opaque ID, kind, creation and expiry times, and the exact validated domain payload. Files are private, published atomically, and claimed before use; a successful claim is the single-use boundary. Enabled mutation commands therefore accept `--plan <id> --confirm` instead of regenerating work from request arguments. Integration apply uses the same claim only to prove revalidation and refusal in the current Alpha.
+CLI installation, evidence-policy, evidence-erasure, quarantine, restore, and integration previews write a strict envelope under `reviewed-plans/`. The envelope contains an opaque ID, kind, creation and expiry times, and the exact validated domain payload. Files are private, published atomically, and claimed before use; a successful claim is the single-use boundary. Mutation commands therefore accept `--plan <id> --confirm` instead of regenerating work from request arguments. Integration apply and disconnect additionally bind the Harness expected by the public caller inside the same lease that claims the plan.
 
 Catalog installation keeps the inspected source under `staging/<plan-id>/` across processes. Apply derives the destination again from the reviewed Harness, scope, workspace, and target name; verifies physical containment plus source and destination fingerprints; and removes only its own staging directory after success, terminal failure, or proven expiry. It does not fetch the source again at apply time.
 
 Installation apply and rollback use a state-scoped cross-process lease. CLI apply enters the lease before claiming its single-use plan and holds it through commit, journal append, staging cleanup, and portfolio refresh; dashboard commit and rollback use the same coordinator. After copying and verifying the source, the installer rechecks the destination immediately before backup and replacement. A stale concurrent plan therefore stops on destination drift, while a bounded busy result leaves an unclaimed CLI plan available for retry.
 
-## Integration review-only boundary
+## Integration transaction boundary
 
-Public integration apply is review-only in the current Alpha: it acquires `integration-mutation.lease`, claims the exact single-use plan, revalidates the packaged source, target path, ownership proof, expected companion tree, Harness configuration, record head, and consumer set, and then refuses every action—including `none`—before any companion staging or Harness configuration write. A refused plan is consumed, and CLI/API plan output reports `applyAvailable: false`, a null apply command, and `COMPANION_TRANSACTION_NOT_ENABLED`.
+Public integration apply acquires `integration-mutation.lease`, peeks and claims the exact single-use plan, validates the expected Harness, and revalidates the packaged source, target path, ownership proof, expected companion tree, Harness configuration, record head, and consumer set. Companion `create` and `upgrade` require the packaged no-replace native helper for the current platform. A `none` action can proceed without it only when no filesystem creation is needed.
 
-The Dashboard exposes the same plan as a read-only preview and does not render Apply or Remove controls. Transaction-safe companion create/upgrade, successful v2 lifecycle finalize, readiness persistence/compensation, and consumer-aware companion removal are not current public behavior. Internal failure-injection fixtures exercise migration code, but they are not evidence that the public API can mutate an integration.
+The coordinator writes a durable recovery intent before its first business mutation. It stages and verifies the companion, publishes the Harness configuration, generates and publishes the readiness report, appends the integration record, then closes recovery state and cleans temporary artifacts. A failure before commit compensates in reverse order. Uncertain I/O, lease loss, or failed compensation produces a path-free `recovery-required` receipt and preserves recovery evidence rather than guessing that the disk is safe.
 
-Integration history readers use private, immutable fragments under `integration-records/` rather than trusting a shared rewrite-prone file. Readers tolerate a fragment disappearing during bounded cleanup but reject malformed, replaced, contradictory, or shadowed lifecycle evidence. Product lifecycle writers remain on the legacy-compatible boundary until the transaction activation stage.
+Disconnect follows the same reviewed-plan and lease contract but does not mutate the shared companion tree. It removes only the selected managed Hook and records an empty consumer tombstone when the last Harness disconnects. A later reconnect can reuse that retained tree only through lifecycle-proven ownership and an exact semantic bundle fingerprint; stale, unreadable, tampered, or unproved content is drift.
+
+CLI, loopback API, and Dashboard call the same high-level coordinator. Public exports intentionally omit raw recovery stores, native filesystem primitives, low-level inspectors, and proof constructors. The shared public error serializer allow-lists stable fields and never returns local paths. The Dashboard renders action-specific review and confirmation states and has no Apply, Retry, or Force control for blocked plans.
+
+Integration history readers use private, immutable fragments under `integration-records/` rather than trusting a shared rewrite-prone file. Readers tolerate a fragment disappearing during bounded cleanup but reject malformed, replaced, contradictory, or shadowed lifecycle evidence.
+
+POSIX journal publication fsyncs the verified records directory before returning its opaque commit receipt. Windows does not provide the same directory-handle fsync through Node, so the compatibility journal revalidates directory device, inode, physical containment, fragment identity, and complete journal state without calling the unsupported operation. This does not activate Windows integration mutation; plans remain unavailable there until the later platform gate.
 
 ## Raw evidence attribution
 
@@ -107,6 +115,10 @@ The raw evidence write boundary accepts normalized Harness and delivery values f
 The CLI build maps every bundled runtime package and injected Web runtime to a declared license and attributable text. It emits `THIRD_PARTY_NOTICES.txt` plus `third-party-manifest.json`; package-level `README.md` and `LICENSE` are shipped beside `dist/`. The source-controlled `runtime-audit.json` locks the complete reviewed dependency set and license-text digests. Normal builds verify this lock, while an explicit maintainer command is required to update it.
 
 The artifact verifier parses real npm and pnpm tarballs without extracting them, rejects unsafe archive metadata, and compares every regular file and the normalized packed manifest with the trusted package build tree. CI also checks dry-run contents and notice coverage, so internally consistent but incomplete package metadata cannot replace the complete runtime audit.
+
+The six optional native no-replace packages use a separate matrix and protected publish environment. Before any registry write, the publish job validates the complete six-package set, exact OS/CPU/libc metadata, exact four-file tarball shape, and each existing registry version's SHA-512 integrity. A rerun skips only a byte-identical published version; mismatched bytes, non-404 registry failures, duplicate artifacts, or an incomplete set stop before further publication. npm trusted publishing is the steady-state credential path, using pinned Node and npm versions that satisfy its OIDC client requirements; [the publication runbook](native-publication.md) confines a short-lived token to the one-time creation of the initially absent package names.
+
+Lease waiters may create and remove private temporary owner entries inside the state directory. Directory proofs therefore bind directory type, device, inode, and physical path rather than treating normal child-entry `ctime` changes as directory replacement. Lease ownership separately revalidates the exact lease inode, owner token, heartbeat, private state-directory mode, and physical state path before mutation.
 
 ## Local state
 
@@ -124,6 +136,7 @@ The default state directory is `~/.skill-steward`, configurable with `SKILL_STEW
 | `reviewed-plans/` | Private, expiring, atomically claimed exact mutation plans |
 | `staging/` | Private inspected installation sources retained until apply or proven expiry |
 | `integration-records/` | Immutable integration journal fragments with bounded cleanup |
+| `integration-recovery/` | Private append-only recovery intents, artifact bindings, and terminal transaction state |
 | `integration-mutation.lease` | Private cross-process owner and heartbeat shared by installation and integration mutations |
 | `integrations.json` | Read-compatible legacy integration journal, migrated through current readers |
 | `installations.jsonl` | Installation and rollback transaction journal |

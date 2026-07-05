@@ -4,6 +4,8 @@ import {
   companionSubplanSchema,
   companionTreeManifestSchema,
   createCompanionTreeManifest,
+  deriveCompanionTransactionAvailability,
+  type CompanionSubplan,
   type CompanionTreeEntry
 } from "../src/companion-domain.js";
 
@@ -275,4 +277,75 @@ describe("companionSubplanSchema", () => {
       source: { ...plan.source, fingerprint: fingerprint("e") }
     }).success).toBe(false);
   });
+});
+
+function availabilityFor(
+  companion: CompanionSubplan,
+  platform: NodeJS.Platform
+) {
+  return deriveCompanionTransactionAvailability(companion, platform);
+}
+
+describe("deriveCompanionTransactionAvailability", () => {
+  it.each([
+    ["create", "Create companion Skill"],
+    ["upgrade", "Upgrade companion Skill"],
+    ["none", "Connect Harness to companion Skill"]
+  ] as const)("marks exact POSIX %s evidence available", (
+    action,
+    actionLabel
+  ) => {
+    const companion = companionSubplanSchema.parse(subplan(action));
+    expect(availabilityFor(companion, "darwin")).toEqual({
+      state: "available",
+      action,
+      actionLabel,
+      transactionEligible: true,
+      applyAvailable: true,
+      unavailableReason: null
+    });
+  });
+
+  it("returns the bound evidence reason for an exact conflict", () => {
+    const companion = companionSubplanSchema.parse(subplan("conflict"));
+    expect(availabilityFor(companion, "linux")).toEqual({
+      state: "blocked",
+      action: "conflict",
+      actionLabel: "Resolve companion conflict",
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason: "COMPANION_TREE_UNREADABLE"
+    });
+  });
+
+  it("returns the stable source reason for unavailable conflict evidence", () => {
+    const companion = companionSubplanSchema.parse(unavailableSubplan());
+    expect(availabilityFor(companion, "linux")).toEqual({
+      state: "blocked",
+      action: "conflict",
+      actionLabel: "Resolve companion conflict",
+      transactionEligible: false,
+      applyAvailable: false,
+      unavailableReason: "COMPANION_SOURCE_UNPROVABLE"
+    });
+  });
+
+  it.each(["create", "upgrade", "none"] as const)(
+    "keeps exact %s evidence unavailable on Windows",
+    (action) => {
+      const companion = companionSubplanSchema.parse(subplan(action));
+      expect(availabilityFor(companion, "win32")).toEqual({
+        state: "blocked",
+        action,
+        actionLabel: action === "create"
+          ? "Create companion Skill"
+          : action === "upgrade"
+            ? "Upgrade companion Skill"
+            : "Connect Harness to companion Skill",
+        transactionEligible: false,
+        applyAvailable: false,
+        unavailableReason: "INTEGRATION_PLATFORM_UNSUPPORTED"
+      });
+    }
+  );
 });
