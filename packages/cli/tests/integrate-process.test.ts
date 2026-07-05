@@ -203,7 +203,7 @@ describe("integration CLI source processes", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("serializes reviewed replacements before claim and destination revalidation", async () => {
+  it("serializes reviewed replacements across the bounded lease wait", async () => {
     const base = await mkdtemp(join(tmpdir(), "steward-cli-install-lease-process-"));
     const home = join(base, "home");
     const state = join(base, "state");
@@ -245,7 +245,17 @@ describe("integration CLI source processes", () => {
     const results = await Promise.all([slow, fast]);
 
     expect(results.map(({ code }) => code).sort()).toEqual([0, 1]);
-    expect(results.find(({ code }) => code === 1)?.stderr).toContain("DESTINATION_DRIFT");
+    const failed = results.find(({ code }) => code === 1)!;
+    if (failed.stderr.includes("INSTALLATION_BUSY")) {
+      await expect(access(join(state, "reviewed-plans", `${fastPlan}.json`)))
+        .resolves.toBeUndefined();
+      await expect(access(join(state, "staging", fastPlan))).resolves.toBeUndefined();
+      const retried = await runCli(["install", "--plan", fastPlan, "--confirm"], options);
+      expect(retried.code).toBe(1);
+      expect(retried.stderr).toContain("DESTINATION_DRIFT");
+    } else {
+      expect(failed.stderr).toContain("DESTINATION_DRIFT");
+    }
     expect(await readFile(join(destination, "SKILL.md"), "utf8"))
       .toContain("slow replacement");
     const history = await readInstallationHistory(state);
