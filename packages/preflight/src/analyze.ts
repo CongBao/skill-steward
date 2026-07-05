@@ -247,9 +247,8 @@ function highestSeverity(findings: Finding[]): Severity | null {
 
 function matchesName(
   taskTerms: Set<string>,
-  candidate: NormalizedPreflightCandidate
+  nameTerms: readonly string[]
 ): boolean {
-  const nameTerms = tokenize(candidate.name.replace(/[-_]+/g, " ")).terms;
   return nameTerms.length > 0 && nameTerms.every((term) => taskTerms.has(term));
 }
 
@@ -294,12 +293,11 @@ function anchoredTriggerPhrases(value: string): Map<string, string> {
 function highConfidenceTrigger(
   taskTerms: Set<string>,
   taskPhrases: ReadonlyMap<string, string>,
-  candidate: NormalizedPreflightCandidate,
+  nameTerms: readonly string[],
   positiveDescription: string
 ): string | undefined {
-  const nameTerms = new Set(tokenize(
-    candidate.name.replace(/[-_]+/g, " ")
-  ).terms);
+  if (taskPhrases.size === 0) return undefined;
+  const nameTermSet = new Set(nameTerms);
   const descriptionPhrases = anchoredTriggerPhrases(
     positiveDescription
   );
@@ -307,7 +305,7 @@ function highConfidenceTrigger(
     if (
       taskPhrases.has(rule.key) &&
       descriptionPhrases.has(rule.key) &&
-      rule.requiredNameTerms.every((term) => nameTerms.has(term)) &&
+      rule.requiredNameTerms.every((term) => nameTermSet.has(term)) &&
       rule.taskIntentTerms.every((term) => taskTerms.has(term))
     ) {
       return rule.display;
@@ -318,14 +316,12 @@ function highConfidenceTrigger(
 
 function negativeTaskIntentMatch(
   clauses: readonly string[],
-  candidate: NormalizedPreflightCandidate,
+  nameTerms: readonly string[],
   positiveTaskTerms: Set<string>,
   positiveTaskPhrases: ReadonlyMap<string, string>
 ): Set<string> {
   const matched = new Set<string>();
-  const nameTerms = tokenize(
-    candidate.name.replace(/[-_]+/g, " ")
-  ).terms;
+  if (clauses.length === 0) return matched;
   for (const rule of HIGH_CONFIDENCE_TRIGGER_RULES) {
     if (!rule.requiredNameTerms.every((term) => nameTerms.includes(term))) continue;
     for (const clause of clauses) {
@@ -346,7 +342,7 @@ function negativeTaskIntentMatch(
       }
     }
   }
-  if (!matchesName(positiveTaskTerms, candidate)) {
+  if (!matchesName(positiveTaskTerms, nameTerms)) {
     const positiveNameOverlap = nameTerms.filter(
       (term) => positiveTaskTerms.has(term)
     ).length;
@@ -472,15 +468,16 @@ function displayCapabilityGaps(
 function negativeTaskMatch(
   taskTerms: Set<string>,
   taskPhrases: ReadonlyMap<string, string>,
-  candidate: NormalizedPreflightCandidate,
+  clauses: readonly string[],
   positiveDescription: string
 ): Set<string> {
   const matched = new Set<string>();
+  if (clauses.length === 0) return matched;
   const positiveDescriptionTerms = new Set(tokenize(positiveDescription).terms);
   const positiveDescriptionPhrases = anchoredTriggerPhrases(
     positiveDescription
   );
-  for (const clause of negativeRoutingClauses(candidate.description)) {
+  for (const clause of clauses) {
     const clauseTerms = tokenize(clause).terms;
     const clauseTermSet = new Set(clauseTerms);
     const clauseMatches = clauseTerms
@@ -516,29 +513,36 @@ function scoreCandidates(
   task: string,
   normalizedCandidates: NormalizedPreflightCandidate[]
 ): { candidates: ScoredCandidate[]; taskTerms: Set<string> } {
-  const positiveTask = positiveTaskText(task);
+  const taskNegativeClauses = negativeTaskClauses(task);
+  const positiveTask = taskNegativeClauses.length === 0
+    ? task
+    : positiveTaskText(task);
   const taskTerms = new Set(tokenize(positiveTask).terms);
   const taskPhrases = anchoredTriggerPhrases(positiveTask);
-  const taskNegativeClauses = negativeTaskClauses(task);
   const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
-    const positiveDescription = positiveRoutingText(candidate.description);
+    const normalizedName = candidate.name.replace(/[-_]+/g, " ");
+    const nameTerms = tokenize(normalizedName).terms;
+    const routingNegativeClauses = negativeRoutingClauses(candidate.description);
+    const positiveDescription = routingNegativeClauses.length === 0
+      ? candidate.description
+      : positiveRoutingText(candidate.description);
     const routeTerms = new Set(
-      tokenize(`${candidate.name.replace(/[-_]+/g, " ")} ${candidate.description}`).terms
+      tokenize(`${normalizedName} ${candidate.description}`).terms
     );
     const matchedTaskTerms = intersection(taskTerms, routeTerms);
-    const positiveRouteTerms = new Set(tokenize(
-      `${candidate.name.replace(/[-_]+/g, " ")} ${positiveDescription}`
-    ).terms);
+    const positiveRouteTerms = positiveDescription === candidate.description
+      ? routeTerms
+      : new Set(tokenize(`${normalizedName} ${positiveDescription}`).terms);
     const positiveMatchedTaskTerms = intersection(taskTerms, positiveRouteTerms);
     const negativeRouteTerms = negativeTaskMatch(
       taskTerms,
       taskPhrases,
-      candidate,
+      routingNegativeClauses,
       positiveDescription
     );
     const negativeIntentTerms = negativeTaskIntentMatch(
       taskNegativeClauses,
-      candidate,
+      nameTerms,
       taskTerms,
       taskPhrases
     );
@@ -548,11 +552,11 @@ function scoreCandidates(
     ]);
     const taskCoverage = ratio(matchedTaskTerms.size, taskTerms.size);
     const skillPrecision = ratio(matchedTaskTerms.size, routeTerms.size);
-    const nameMatch = matchesName(taskTerms, candidate);
+    const nameMatch = matchesName(taskTerms, nameTerms);
     const matchedHighConfidenceTrigger = highConfidenceTrigger(
       taskTerms,
       taskPhrases,
-      candidate,
+      nameTerms,
       positiveDescription
     );
     const projectScopeFit = candidate.scope === "project";
