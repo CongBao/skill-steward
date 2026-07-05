@@ -146,6 +146,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         && destination.includes(".history-gc.")
       ) {
         fault.replaceHistoryGcSourceBeforeLink = false;
+        await original.link(
+          source,
+          join(dirname(dirname(dirname(source))), ".retained-history-gc-source")
+        );
         await original.unlink(source);
         await original.writeFile(source, "external history replacement\n", { mode: 0o600 });
       }
@@ -155,6 +159,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         && destination.endsWith(".finalize.backup.cleanup.claim")
       ) {
         fault.replaceHistoryIndexResidueBeforeLink = false;
+        await original.link(
+          source,
+          join(dirname(dirname(dirname(source))), ".retained-history-index-residue")
+        );
         await original.unlink(source);
         await original.writeFile(source, "external index residue replacement\n", { mode: 0o600 });
       }

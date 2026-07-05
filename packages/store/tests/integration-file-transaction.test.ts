@@ -121,6 +121,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
                 const bytes = await original.readFile(path);
                 const mode = Number((await original.lstat(path)).mode & 0o777);
                 fault.replaceOwnedAfterCloseSuffix = null;
+                await original.link(
+                  path,
+                  join(dirname(dirname(path)), ".retained-owned-after-close")
+                );
                 await original.unlink(path);
                 await original.writeFile(path, bytes, { mode });
               }
@@ -148,6 +152,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
                 if (backupName) {
                   const backupPath = join(parent, backupName);
                   const bytes = await original.readFile(backupPath);
+                  await original.link(
+                    backupPath,
+                    join(dirname(parent), ".retained-backup-after-temp-close")
+                  );
                   await original.unlink(backupPath);
                   await original.writeFile(backupPath, bytes, { mode: 0o600 });
                 }
@@ -172,6 +180,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           throw Object.assign(new Error("injected link before commit"), { code: "EIO" });
         }
         if (mode === "swap-source-before") {
+          await original.link(
+            source,
+            join(dirname(dirname(source)), ".retained-link-cleanup-source")
+          );
           await original.unlink(source);
           await original.writeFile(source, "external cleanup replacement\n", { mode: 0o600 });
         }
@@ -218,6 +230,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
             throw new Error("injected source disappearance");
           }
           if (mode === "swap-source-before") {
+            await original.link(
+              source,
+              join(dirname(dirname(source)), ".retained-rename-cleanup-source")
+            );
             await original.unlink(source);
             await original.writeFile(source, "external cleanup replacement\n", { mode: 0o600 });
           }
@@ -2130,6 +2146,7 @@ describe("integration file transaction", () => {
       })).rejects.toMatchObject({ code: "INTEGRATION_CONFIGURATION_UNCERTAIN" });
       const discardName = (await readdir(boundary)).find((name) => name.endsWith(".restore.discard"))!;
       const discardPath = join(boundary, discardName);
+      await link(targetPath, join(root, ".retained-transaction-inode"));
       await unlink(targetPath);
       await unlink(discardPath);
       await writeFile(targetPath, "after\n", { mode: 0o600 });

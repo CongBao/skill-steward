@@ -1066,6 +1066,7 @@ describe("integration recovery store", () => {
       transitionedAt: "2026-07-05T00:00:01.000Z",
       artifactProofAdditions: [proof]
     });
+    await link(artifactPath, join(dirname(artifactPath), ".retained-stage-proof"));
     await unlink(artifactPath);
     await writeFile(artifactPath, "replacement\n", { mode: 0o600 });
     const replacement = await lstat(artifactPath, { bigint: true });
