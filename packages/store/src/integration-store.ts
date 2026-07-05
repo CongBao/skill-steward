@@ -586,10 +586,12 @@ async function syncRecordsDirectory(
   context: IntegrationStoreContext
 ): Promise<void> {
   await assertSameRecordsStorage(storage, context);
+  if (context.platform === "win32") {
+    return;
+  }
   const handle = await open(
     storage.directory,
-    constants.O_RDONLY
-      | (context.platform === "win32" ? 0 : constants.O_DIRECTORY | constants.O_NOFOLLOW)
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
   );
   let primary: unknown;
   try {

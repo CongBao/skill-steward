@@ -1731,7 +1731,7 @@ describe("integration store", () => {
       .resolves.toBe("untouched\n");
   });
 
-  it("uses Windows-compatible containment without POSIX flags or mode equality", async () => {
+  it("uses Windows-compatible containment without POSIX flags, mode equality, or directory fsync", async () => {
     const state = await mkdtemp(join(tmpdir(), "steward-integration-windows-"));
     const directory = join(state, "integration-records");
     await mkdir(directory, { mode: 0o755 });
@@ -1756,6 +1756,7 @@ describe("integration store", () => {
       state,
       windowsV2
     );
+    expect(recordsSyncGate.events).not.toContain("records-sync");
     await expect(windowsStore.latestIntegrationRecord(state, "codex"))
       .resolves.toEqual(windowsV2);
     expect((await stat(directory)).mode & 0o777).toBe(inheritedMode);

@@ -104,6 +104,8 @@ CLI, loopback API, and Dashboard call the same high-level coordinator. Public ex
 
 Integration history readers use private, immutable fragments under `integration-records/` rather than trusting a shared rewrite-prone file. Readers tolerate a fragment disappearing during bounded cleanup but reject malformed, replaced, contradictory, or shadowed lifecycle evidence.
 
+POSIX journal publication fsyncs the verified records directory before returning its opaque commit receipt. Windows does not provide the same directory-handle fsync through Node, so the compatibility journal revalidates directory device, inode, physical containment, fragment identity, and complete journal state without calling the unsupported operation. This does not activate Windows integration mutation; plans remain unavailable there until the later platform gate.
+
 ## Raw evidence attribution
 
 The raw evidence write boundary accepts normalized Harness and delivery values from CLI, dashboard, or Hook callers, then stores only the allow-listed privacy-reduced record. Explicit CLI and dashboard delivery can therefore contribute to provenance-linked installation conversion in minimal mode without storing task text or treating lifecycle completion as task success. Older records without attribution remain readable as `unknown`.
