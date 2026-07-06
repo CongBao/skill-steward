@@ -9,7 +9,7 @@ import { expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const packageDirectory = process.cwd();
 const root = resolve(packageDirectory, "../..");
-const verifier = join(packageDirectory, "tests", "verify-packed-artifact.mjs");
+const verifier = join(root, "scripts", "verify-cli-package.mjs");
 const release = JSON.parse(await readFile(join(root, "release-contract.json"), "utf8")) as {
   version: string;
 };

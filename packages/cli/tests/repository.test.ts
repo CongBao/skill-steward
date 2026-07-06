@@ -34,6 +34,7 @@ const required = [
   ".github/workflows/ci.yml",
   "docs/architecture.md",
   "docs/release-contract.md",
+  "docs/cli-publication.md",
   "release-contract.json",
   "docs/product-review-2026-07-03.md",
   ...englishScreenshots.map((name) => `docs/images/${name}`),
@@ -148,6 +149,24 @@ describe("open-source repository", () => {
     expect(readme).toContain("Status: active alpha");
     expect(readme).toContain("npm package is not published yet");
     expect(readme).not.toMatch(/Status:\s*Beta|npm install --global skill-steward/u);
+  });
+
+  it("documents protected CLI publication without claiming that npm is already available", async () => {
+    const guide = await readFile(join(root, "docs/cli-publication.md"), "utf8");
+    expect(guide).toContain("Native packages come first");
+    expect(guide).toContain("cli-publish");
+    expect(guide).toContain("NPM_BOOTSTRAP_TOKEN");
+    expect(guide).toContain("cli-package-publication.yml");
+    expect(guide).toContain("trusted publishing");
+    expect(guide).toContain("Linux, macOS, and Windows");
+    expect(guide).toContain("byte-identical");
+    expect(guide).toContain("does not publish anything");
+
+    for (const readmePath of ["README.md", "README.zh-CN.md"]) {
+      const readme = await readFile(join(root, readmePath), "utf8");
+      expect(readme).toMatch(/npm[^\n]*(?:not published|尚未发布)/iu);
+      expect(readme).not.toMatch(/npm install (?:--global|-g) skill-steward/u);
+    }
   });
 
   it("ships a substantive README with valid local links and real screenshots", async () => {
@@ -507,7 +526,7 @@ describe("open-source repository", () => {
       .toBe(await readFile(join(root, "LICENSE"), "utf8"));
     await expect(access(join(
       root,
-      "packages/cli/tests/verify-packed-artifact.mjs"
+      "scripts/verify-cli-package.mjs"
     ))).resolves.toBeUndefined();
   });
 
@@ -515,7 +534,7 @@ describe("open-source repository", () => {
     const workflow = await readFile(join(root, ".github/workflows/ci.yml"), "utf8");
     expect(workflow).toContain("npm pack --dry-run --ignore-scripts --json");
     expect(workflow).toContain("npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm");
-    expect(workflow).toContain("verify-packed-artifact.mjs");
+    expect(workflow).toContain("verify-cli-package.mjs");
     expect(workflow).toContain("artifacts/npm/skill-steward-");
     expect(workflow).toContain("artifacts/pnpm/skill-steward-");
     expect(workflow).toContain("windows-security:");

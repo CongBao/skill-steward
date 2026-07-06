@@ -25,3 +25,5 @@ Before approving any deployment, verify:
 - all six matrix builds and packed-tarball checks passed;
 - the version, channel, and npm tag in `release-contract.json` are intentional and `pnpm release:check` passes;
 - the workflow and first-party actions are unchanged or separately reviewed.
+
+Publish and verify all six native packages before the CLI. The [CLI publication workflow](cli-publication.md) refuses to publish until every native package exists at the exact release-contract version.
