@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { scanInventory } from "@skill-steward/engine";
+import { harnessIdSchema, scanInventory } from "@skill-steward/engine";
 import { normalizeEvidenceHarness } from "@skill-steward/evidence";
 import {
   analyzePreflight,
@@ -118,6 +118,25 @@ function exclusionReason(
   return candidate.reasons.at(-1)?.detail ?? "lower marginal value";
 }
 
+function explicitInstallHarness(value: string | undefined): string | undefined {
+  const parsed = harnessIdSchema.safeParse(value);
+  return parsed.success && parsed.data !== "unknown" ? parsed.data : undefined;
+}
+
+function installPreviewScope(
+  candidate: PreflightResult["candidates"][number]
+): { label: string; arguments: string } {
+  if (candidate.scope === "global") {
+    return { label: "Global reviewed preview", arguments: "--scope global" };
+  }
+  return {
+    label: candidate.scope === "project"
+      ? "Project reviewed preview"
+      : "Project reviewed preview (unknown candidate scope; current workspace only)",
+    arguments: "--scope project"
+  };
+}
+
 const harnessDisplayNames: Readonly<Record<string, string>> = Object.freeze({
   codex: "Codex",
   claude: "Claude Code",
@@ -166,7 +185,7 @@ function duplicateCandidateDisplayNames(
 
 export function renderPreflightHuman(
   result: PreflightResult,
-  options: { feedbackAvailable?: boolean } = {}
+  options: { feedbackAvailable?: boolean; harness?: string } = {}
 ): string {
   const selected = result.candidates.filter(({ decision }) => decision === "use");
   const install = result.candidates.filter(({ decision }) => decision === "install");
@@ -174,6 +193,7 @@ export function renderPreflightHuman(
     ({ decision }) => decision === "excluded"
   );
   const displayNames = duplicateCandidateDisplayNames(result.candidates);
+  const installHarness = explicitInstallHarness(options.harness);
   const lines = ["Task Preflight", `Run ID: ${result.id}`, "", "Use now:"];
   if (selected.length === 0) {
     lines.push("- none matched the deterministic relevance threshold");
@@ -202,6 +222,8 @@ export function renderPreflightHuman(
         )} — relevance ${percentage(candidate.relevance)}, ` +
         `${candidate.contextTokens} estimated tokens`
       );
+      const candidateId = terminalSafeText(candidate.candidateId);
+      lines.push(`  Candidate ID: ${candidateId}`);
       if (candidate.source) {
         lines.push(
           `  source ${terminalSafeText(candidate.source.sourceId)} [${candidate.source.trust}], ` +
@@ -213,6 +235,19 @@ export function renderPreflightHuman(
       }
       for (const reason of candidate.reasons) {
         lines.push(renderReason(reason.code, reason.detail));
+      }
+      if (installHarness) {
+        const previewScope = installPreviewScope(candidate);
+        lines.push(
+          `  ${previewScope.label}:`,
+          `  skill-steward install --catalog-candidate ${candidateId} ` +
+          `--harness ${terminalSafeText(installHarness)} ${previewScope.arguments} ` +
+          `--preflight ${terminalSafeText(result.id)}`
+        );
+      } else {
+        lines.push(
+          "  Next: rerun Preflight with --harness <id> to get a reviewed install preview."
+        );
       }
     }
   }
@@ -357,7 +392,10 @@ export async function preflightCommand(
       ? `${JSON.stringify(compact)}\n`
       : options.json
         ? `${JSON.stringify(result, null, 2)}\n`
-        : renderPreflightHuman(result, { feedbackAvailable: evidenceAvailable })
+        : renderPreflightHuman(result, {
+            feedbackAvailable: evidenceAvailable,
+            ...(request.harness ? { harness: request.harness } : {})
+          })
     );
     return 0;
   } catch (error) {

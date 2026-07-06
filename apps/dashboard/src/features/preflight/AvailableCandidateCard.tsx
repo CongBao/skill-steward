@@ -7,14 +7,17 @@ import {
 } from "../../api/client.js";
 import { SeverityBadge } from "../../components/SeverityBadge.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
+import { installerSearch } from "../installer/installRoute.js";
 import { preflightReasonDetail } from "./reasonDetail.js";
 
 export function AvailableCandidateCard({
   candidate,
-  preflightId
+  preflightId,
+  targetHarness
 }: {
   candidate: PreflightCandidate;
   preflightId?: string;
+  targetHarness?: string;
 }) {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -23,7 +26,10 @@ export function AvailableCandidateCard({
       candidate.catalogSkillId ?? candidate.candidateId,
       preflightId
     ),
-    onSuccess: (installationPreview) => navigate("/skills", { state: { installationPreview } })
+    onSuccess: (installationPreview) => navigate({
+      pathname: "/skills",
+      search: installerSearch(installationPreview.catalogCandidateId, targetHarness ?? "")
+    }, { state: { installationPreview } })
   });
   const source = candidate.source;
   const trust = source?.trust ?? "user";
@@ -57,7 +63,7 @@ export function AvailableCandidateCard({
           <Download size={15} />{inspect.isPending ? t("preflight.inspectingInstallation") : t("preflight.inspectInstallation")}
         </button> : null}
       </footer>
-      {inspect.error ? <p className="form-error" role="alert">{inspect.error.message}</p> : null}
+      {inspect.error ? <p className="form-error" role="alert">{t("preflight.inspectError")}</p> : null}
     </article>
   );
 }

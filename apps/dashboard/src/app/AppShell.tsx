@@ -4,23 +4,22 @@ import {
   Sun,
   SunMoon
 } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
-import { runScan } from "../api/client.js";
 import { Sidebar } from "../components/Sidebar.js";
+import {
+  ScanProvider,
+  ScanStatusAlert,
+  useScan
+} from "../features/scan/ScanProvider.js";
 import { useI18n } from "../i18n/catalog.js";
 import { usePreferences, type ThemePreference } from "../theme/preferences.js";
 
 const themeOrder: ThemePreference[] = ["system", "light", "dark"];
 
-export function AppShell() {
+function AppShellContent() {
   const { locale, t } = useI18n();
   const { preferences, update } = usePreferences();
-  const queryClient = useQueryClient();
-  const scan = useMutation({
-    mutationFn: runScan,
-    onSuccess: (data) => queryClient.setQueryData(["dashboard"], data)
-  });
+  const scan = useScan();
   const nextTheme = themeOrder[(themeOrder.indexOf(preferences.theme) + 1) % themeOrder.length] ?? "system";
   const ThemeIcon = preferences.theme === "light" ? Sun : preferences.theme === "dark" ? MoonStar : SunMoon;
   return (
@@ -53,7 +52,7 @@ export function AppShell() {
             type="button"
             aria-label={t("app.scanNow")}
             disabled={scan.isPending}
-            onClick={() => scan.mutate()}
+            onClick={scan.run}
           >
             <ScanLine size={16} aria-hidden="true" />
             <span className="button-label">
@@ -62,10 +61,15 @@ export function AppShell() {
           </button>
         </div>
       </header>
+      <div className="global-scan-status"><ScanStatusAlert /></div>
       <div className="workspace">
         <Sidebar />
         <main className="content"><Outlet /></main>
       </div>
     </div>
   );
+}
+
+export function AppShell() {
+  return <ScanProvider><AppShellContent /></ScanProvider>;
 }

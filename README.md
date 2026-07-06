@@ -68,16 +68,20 @@ Screenshots in this README use the English locale. The [Chinese README](README.z
 ### Requirements
 
 - Node.js 22 or newer
-- pnpm 10 or newer for source development
+- pnpm 10 or newer to build the local package
 
-### Run from source
+### Install the verified local CLI package
+
+Until the npm package is published, build and install the same verified tarball that the repository tests. The first-value commands below then use one global `skill-steward` binary from start to finish.
 
 ```bash
 git clone https://github.com/CongBao/skill-steward.git
 cd skill-steward
 pnpm install --frozen-lockfile
-pnpm check
-node packages/cli/dist/main.js dashboard
+package_dir="$(mktemp -d)"
+pnpm --filter skill-steward pack --pack-destination "$package_dir"
+npm install --global "$package_dir"/skill-steward-*.tgz
+skill-steward --version
 ```
 
 SSH works too:
@@ -86,22 +90,9 @@ SSH works too:
 git clone git@github.com:CongBao/skill-steward.git
 ```
 
-Use `--no-open` to print the loopback URL without opening a browser:
-
-```bash
-node packages/cli/dist/main.js dashboard --no-open --port 4762
-```
-
-### Install a locally packed CLI
-
-```bash
-mkdir -p artifacts
-pnpm --filter skill-steward pack --pack-destination artifacts
-npm install --global ./artifacts/skill-steward-*.tgz
-skill-steward dashboard
-```
-
 If an older global build is already installed, repack and reinstall it before testing repository changes. Check the active binary with `skill-steward --version`.
+
+For source-development setup and the full contributor quality checks, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The packed CLI includes its package `README.md`, MIT `LICENSE`, generated `THIRD_PARTY_NOTICES.txt`, and a machine-readable third-party manifest. The artifact verifier checks real npm and pnpm tarballs against the trusted build tree and the source-controlled `runtime-audit.json`; normal builds fail rather than silently rewriting that audit.
 
@@ -117,7 +108,9 @@ skill-steward preflight \
 skill-steward dashboard
 ```
 
-This path does not change any Skill or Harness configuration. It does write the latest local report and privacy-reduced Preflight evidence under `~/.skill-steward`; the raw task is not stored. For installation, integration, policy, or governance changes, stop at the preview and apply only the exact command it prints.
+Any available catalog recommendation always shows its Candidate ID. Because this example supplies an explicit supported Harness, it also prints a complete reviewed preview command. When the catalog does not declare a scope, that command targets only the current project with `--scope project`; the CLI resolves the omitted workspace to the current directory. It never guesses a Harness or silently widens the destination to global scope.
+
+This path does not change any Skill or Harness configuration. It does write the latest local report and privacy-reduced Preflight evidence under `~/.skill-steward`; the raw task is not stored. An installation preview creates a plan but does not install anything. Apply only the exact `--plan <id> --confirm` command it prints after review. The same preview-first rule applies to integration, policy, and governance changes.
 
 For a headless inventory or report:
 

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,6 +15,7 @@ import {
   compactPreflightResultSchema,
   type PreflightResult
 } from "@skill-steward/preflight";
+import { fingerprintDirectory } from "@skill-steward/installer";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   preflightCommand,
@@ -64,6 +65,18 @@ async function fixture(): Promise<Fixture> {
 }
 
 async function seedCatalog(current: Fixture): Promise<void> {
+  const candidateDirectory = join(current.base, "catalog-candidate");
+  await mkdir(candidateDirectory, { recursive: true });
+  await writeFile(
+    join(candidateDirectory, "SKILL.md"),
+    "---\nname: testing-review\ndescription: Find missing tests and test regressions\n---\nReview tests.\n"
+  );
+  const fingerprint = await fingerprintDirectory(candidateDirectory);
+  current.context.catalogStage = async (destination) => {
+    const staged = join(destination, "source");
+    await cp(candidateDirectory, staged, { recursive: true });
+    return { sourceDirectory: staged, commitSha: "a".repeat(40) };
+  };
   const source = {
     id: "fixture-catalog",
     name: "Fixture catalog",
@@ -91,7 +104,7 @@ async function seedCatalog(current: Fixture): Promise<void> {
       relativePath: "testing",
       name: "testing-review",
       description: "Find missing tests and test regressions",
-      fingerprint: `sha256:${"e".repeat(64)}`,
+      fingerprint,
       estimatedTokens: 180,
       scripts: [],
       executables: [],
@@ -100,6 +113,76 @@ async function seedCatalog(current: Fixture): Promise<void> {
       compatibility: "declared"
     }]
   });
+}
+
+type CandidateHarness = PreflightResult["candidates"][number]["compatibleHarnesses"][number];
+type CandidateScope = PreflightResult["candidates"][number]["scope"];
+
+function installRecommendationResult(
+  candidateId = "testing-available",
+  compatibleHarnesses: CandidateHarness[] = ["codex"],
+  scope: CandidateScope = "unknown"
+): PreflightResult {
+  return {
+    schemaVersion: 5,
+    algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
+    id: "run-install",
+    generatedAt: "2026-07-03T00:00:00.000Z",
+    portfolioFingerprint: `sha256:${"a".repeat(64)}`,
+    taskHash: `sha256:${"b".repeat(64)}`,
+    taskCharacterCount: 28,
+    taskTermCount: 4,
+    useCandidateIds: [],
+    installCandidateIds: [candidateId],
+    candidates: [{
+      candidateId,
+      catalogSkillId: candidateId,
+      availability: "available",
+      name: "testing-review",
+      description: "Find missing tests and regressions",
+      scope,
+      compatibleHarnesses,
+      compatibility: "declared",
+      scripts: [],
+      executables: [],
+      highestSeverity: null,
+      relevance: 0.8,
+      uniqueCoverage: 0.6,
+      riskPenalty: 0,
+      redundancyPenalty: 0,
+      installPenalty: 0.05,
+      contextTokens: 180,
+      features: {
+        taskCoverage: 0.8,
+        skillPrecision: 0.75,
+        nameMatch: false,
+        projectScopeFit: false,
+        capabilityCoverage: 0.8,
+        capabilityPrecision: 0.75,
+        triggerConfidence: "exact"
+      },
+      decision: "install",
+      source: {
+        sourceId: "fixture-catalog",
+        trust: "user",
+        url: "https://example.com/skills.git",
+        revision: "a".repeat(40),
+        relativePath: "testing"
+      },
+      reasons: [{
+        code: "INSTALL_REQUIRED",
+        detail: "Install preview is required before use."
+      }]
+    }],
+    conflicts: [],
+    inventoryWarnings: [],
+    capabilityGaps: [],
+    installedCoverage: 0,
+    projectedCoverage: 0.8,
+    selectedContextTokens: 0,
+    plausibleContextTokens: 180,
+    estimatedContextSaved: 0
+  };
 }
 
 describe("preflight command", () => {
@@ -138,13 +221,21 @@ describe("preflight command", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(current.stdout.join("")).toContain("security-review");
-    expect(current.stdout.join("")).toMatch(/Run ID: [a-f0-9-]+/u);
-    expect(current.stdout.join("")).toContain("Task match:");
-    expect(current.stdout.join("")).not.toContain("TASK_TERM_MATCH:");
-    expect(current.stdout.join("")).toContain("Consider installing");
-    expect(current.stdout.join("")).toContain("testing-review");
-    expect(current.stdout.join("")).toContain("Estimated context saved");
+    const output = current.stdout.join("");
+    expect(output).toContain("security-review");
+    expect(output).toMatch(/Run ID: [a-f0-9-]+/u);
+    expect(output).toContain("Task match:");
+    expect(output).not.toContain("TASK_TERM_MATCH:");
+    expect(output).toContain("Consider installing");
+    expect(output).toContain("testing-review");
+    expect(output).toContain("Candidate ID: testing-available");
+    const installCommand = output.split("\n").find((line) =>
+      line.trimStart().startsWith("skill-steward install --catalog-candidate")
+    );
+    expect(installCommand?.trim()).toMatch(
+      /^skill-steward install --catalog-candidate testing-available --harness codex --scope project --preflight [A-Za-z0-9._:@+-]+$/u
+    );
+    expect(output).toContain("Estimated context saved");
     expect(await readLatestReport(current.stateDir)).toMatchObject({
       schemaVersion: 2,
       skills: [expect.objectContaining({ name: "security-review" })]
@@ -155,6 +246,92 @@ describe("preflight command", () => {
       harness: "codex",
       delivery: "cli"
     });
+
+    current.stdout.splice(0);
+    const previewArguments = installCommand?.trim().split(/\s+/u).slice(1) ?? [];
+    expect(await run([...previewArguments, "--json"], current.context)).toBe(0);
+    expect(JSON.parse(current.stdout.join(""))).toMatchObject({
+      status: "ready",
+      provenance: {
+        preflightId: expect.any(String),
+        candidateId: "testing-available"
+      }
+    });
+  });
+
+  it.each([
+    ["codex", "codex"],
+    ["claude", "claude"],
+    ["github-copilot", "github-copilot"]
+  ] as const)(
+    "prints an exact reviewed install preview for explicit %s Preflight",
+    (harness, compatibleHarness) => {
+      const output = renderPreflightHuman(
+        installRecommendationResult("testing-available", [compatibleHarness]),
+        { harness }
+      );
+
+      expect(output).toContain("Candidate ID: testing-available");
+      expect(output).toContain(
+        `skill-steward install --catalog-candidate testing-available ` +
+        `--harness ${harness} --scope project --preflight run-install`
+      );
+      expect(output).toContain("reviewed preview");
+      expect(output).not.toContain("--confirm");
+    }
+  );
+
+  it.each([
+    ["global", "--scope global"],
+    ["project", "--scope project"]
+  ] as const)(
+    "preserves a declared %s scope in the install preview",
+    (scope, args) => {
+      const output = renderPreflightHuman(
+        installRecommendationResult("testing-available", ["codex"], scope),
+        { harness: "codex" }
+      );
+
+      expect(output).toContain(
+        `skill-steward install --catalog-candidate testing-available ` +
+        `--harness codex ${args} --preflight run-install`
+      );
+      expect(output).not.toContain("--workspace");
+    }
+  );
+
+  it("prints candidate identity without guessing a Harness", () => {
+    const output = renderPreflightHuman(installRecommendationResult());
+
+    expect(output).toContain("Candidate ID: testing-available");
+    expect(output).toContain("rerun Preflight with --harness <id>");
+    expect(output).not.toContain("skill-steward install --catalog-candidate");
+    expect(output).not.toContain("--harness codex");
+  });
+
+  it.each(["unknown", "not-a-harness"])(
+    "does not print an install preview for unsupported Harness %s",
+    (harness) => {
+      const output = renderPreflightHuman(installRecommendationResult(), {
+        harness
+      });
+
+      expect(output).toContain("Candidate ID: testing-available");
+      expect(output).toContain("rerun Preflight with --harness <id>");
+      expect(output).not.toContain("skill-steward install --catalog-candidate");
+    }
+  );
+
+  it("keeps install handoff identifiers terminal-safe", () => {
+    const unsafeId = "testing\u001b[2J\nspoof";
+    const output = renderPreflightHuman(
+      installRecommendationResult(unsafeId),
+      { harness: "codex" }
+    );
+
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toContain("\nspoof");
+    expect(output).toContain("testing\\u{001b}[2J\\u{000a}spoof");
   });
 
   it("renders a readable lifecycle-trigger explanation for a long review task", async () => {

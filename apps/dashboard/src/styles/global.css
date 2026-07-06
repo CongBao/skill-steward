@@ -16,12 +16,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent);
   outline-offset: 2px;
 }
-.app-shell { min-height: 100vh; display: grid; grid-template-rows: 56px minmax(0, 1fr); }
+.app-shell { min-height: 100vh; display: grid; grid-template-rows: 56px auto minmax(0, 1fr); }
 .topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; background: color-mix(in srgb, var(--surface) 94%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(16px); }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 780; letter-spacing: -0.03em; }
 .brand-mark { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; color: white; background: linear-gradient(135deg, #123d2d, #49a87c); box-shadow: 0 5px 15px rgba(23, 91, 64, 0.22); }
 .brand-context { color: var(--muted); font-size: 12px; font-weight: 500; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
+.global-scan-status { min-width: 0; }
+.global-scan-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 10px 18px; border-bottom: 1px solid color-mix(in srgb, var(--danger) 38%, var(--line)); color: var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
+.global-scan-alert > svg { flex: none; }
+.global-scan-alert strong { display: block; font-size: 12px; }
+.global-scan-alert p { margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .button { min-height: 34px; border: 1px solid var(--line); border-radius: 9px; padding: 0 11px; color: var(--ink); background: var(--surface); cursor: pointer; }
 .button:hover { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
 .button.primary { display: inline-flex; align-items: center; gap: 7px; border-color: var(--brand); color: white; background: var(--brand); font-weight: 700; }
@@ -44,4 +49,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .topbar { padding-inline: 10px; }
   .button-label { display: none; }
   .content { padding: 15px 12px 24px; }
+  .global-scan-alert { grid-template-columns: auto minmax(0, 1fr); padding-inline: 12px; }
+  .global-scan-alert .button { grid-column: 1 / -1; width: 100%; }
 }

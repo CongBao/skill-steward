@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import {
   DEFAULT_PREFERENCES,
   PREFERENCES_KEY,
@@ -178,13 +178,18 @@ const result = {
   estimatedContextSaved: 180
 };
 
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}{location.search}</output>;
+}
+
 function wrapper() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } }
   });
   return ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>
-      <PreferencesProvider><MemoryRouter>{children}</MemoryRouter></PreferencesProvider>
+      <PreferencesProvider><MemoryRouter>{children}<LocationProbe /></MemoryRouter></PreferencesProvider>
     </QueryClientProvider>
   );
 }
@@ -221,6 +226,43 @@ function fetchMock() {
 }
 
 describe("PreflightPage v2", () => {
+  it.each([
+    ["Codex", "codex"],
+    ["Claude Code", "claude"],
+    ["GitHub Copilot", "github-copilot"]
+  ])("carries the selected %s target in a reload-safe installation URL", async (_label, harness) => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock());
+    render(<PreflightPage />, { wrapper: wrapper() });
+
+    await user.selectOptions(screen.getByLabelText("Target harness"), harness);
+    await user.type(screen.getByRole("textbox", { name: "Task to analyze" }), "Review security and missing tests");
+    await user.click(screen.getByRole("button", { name: "Analyze task" }));
+    await user.click(await screen.findByRole("button", { name: "Inspect test-review" }));
+
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(
+      `/skills?installCandidate=testing&harness=${harness}`
+    ));
+  });
+
+  it("keeps an analyzed result bound to the Harness used for that analysis", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock());
+    render(<PreflightPage />, { wrapper: wrapper() });
+
+    await user.selectOptions(screen.getByLabelText("Target harness"), "claude");
+    await user.type(screen.getByRole("textbox", { name: "Task to analyze" }), "Review security and missing tests");
+    await user.click(screen.getByRole("button", { name: "Analyze task" }));
+    await screen.findByText("Consider installing");
+
+    await user.selectOptions(screen.getByLabelText("Target harness"), "codex");
+    await user.click(screen.getByRole("button", { name: "Inspect test-review" }));
+
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(
+      "/skills?installCandidate=testing&harness=claude"
+    ));
+  });
+
   it("renders four decision groups and inspects available candidates", async () => {
     const user = userEvent.setup();
     const mockedFetch = fetchMock();
@@ -280,6 +322,30 @@ describe("PreflightPage v2", () => {
         candidateIds: ["security", "testing", "resume"]
       })
     }));
+  });
+
+  it("offers local inventory and optional Catalog settings when no candidate matches", async () => {
+    const user = userEvent.setup();
+    const noMatchResult = {
+      ...result,
+      useCandidateIds: [],
+      installCandidateIds: [],
+      candidates: result.candidates.map((candidate) => ({ ...candidate, decision: "excluded" })),
+      capabilityGaps: []
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: noMatchResult, error: null, meta: { apiVersion: 1 } })
+    })));
+    render(<PreflightPage />, { wrapper: wrapper() });
+
+    await user.type(screen.getByRole("textbox", { name: "Task to analyze" }), "Plan an unfamiliar workflow with no matching Skill");
+    await user.click(screen.getByRole("button", { name: "Analyze task" }));
+
+    expect(await screen.findByRole("heading", { name: "No relevant Skills found" })).toBeVisible();
+    expect(screen.getByText(/Catalog sources are optional and are not enabled or trusted automatically/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Skills inventory" })).toHaveAttribute("href", "/skills");
+    expect(screen.getByRole("link", { name: "Review optional Catalog sources" })).toHaveAttribute("href", "/settings#catalog-sources");
   });
 
   it("localizes the discovery groups in Chinese", async () => {

@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Check } from "lucide-react";
+import { useEffect } from "react";
+import { useInRouterContext, useLocation } from "react-router-dom";
 import { fetchDashboard } from "../../api/client.js";
 import { KpiCard } from "../../components/KpiCard.js";
 import { formatKpiValue } from "../../components/kpiFormatting.js";
@@ -17,9 +19,27 @@ import "./settings.css";
 
 const KPI_IDS = ["health-score", "open-findings", "installed-skills", "estimated-context", "harness-coverage", "inventory-coverage", "bundle-size", "tracked-files", "broken-references", "overlap-groups", "parse-failures", "scope-distribution", "portfolio-change", "health-trend", "largest-skill", "root-availability", "finding-confidence"];
 
+function SettingsHashFocus() {
+  const { hash } = useLocation();
+  useEffect(() => {
+    const id = hash === "#catalog-sources"
+      ? "catalog-sources"
+      : hash === "#harness-integrations"
+        ? "harness-integrations"
+        : null;
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "start" });
+  }, [hash]);
+  return null;
+}
+
 export function SettingsPage() {
   const { locale, t } = useI18n();
   const { preferences, update } = usePreferences();
+  const inRouter = useInRouterContext();
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const toggle = (id: string) => {
     const enabled = preferences.enabledKpis.includes(id);
@@ -47,9 +67,9 @@ export function SettingsPage() {
   const kpisById = new Map((dashboard.data?.kpis ?? []).map((kpi) => [kpi.id, kpi]));
 
   return (
-    <><PageHeader title={t("page.settings.title")} description={t("page.settings.description")} actions={<button className="button" onClick={restore}>{t("settings.restore")}</button>} />
+    <>{inRouter ? <SettingsHashFocus /> : null}<PageHeader title={t("page.settings.title")} description={t("page.settings.description")} actions={<button className="button" onClick={restore}>{t("settings.restore")}</button>} />
       <div className="settings-layout"><div className="settings-stack">
-        <section className="settings-card"><header><h2>{t("settings.appearance")}</h2></header><div className="settings-fields"><label>{t("settings.language")}<select value={preferences.locale} onChange={(event) => update({ locale: event.target.value as "en-US" | "zh-CN" })}><option value="en-US">English</option><option value="zh-CN">中文</option></select></label><label>{t("settings.theme")}<select value={preferences.theme} onChange={(event) => update({ theme: event.target.value as "system" | "light" | "dark" })}><option value="system">{t("theme.system")}</option><option value="light">{t("theme.light")}</option><option value="dark">{t("theme.dark")}</option></select></label><label>{t("settings.sidebar")}<select value={preferences.sidebar} onChange={(event) => update({ sidebar: event.target.value as "auto" | "expanded" | "collapsed" })}><option value="auto">{t("settings.auto")}</option><option value="expanded">{t("settings.expanded")}</option><option value="collapsed">{t("settings.collapsed")}</option></select></label></div></section>
+        <section className="settings-card"><header><h2>{t("settings.appearance")}</h2></header><div className="settings-fields"><label>{t("settings.language")}<select value={preferences.locale} onChange={(event) => update({ locale: event.target.value as "en-US" | "zh-CN" })}><option value="en-US">English</option><option value="zh-CN">中文</option></select></label><label>{t("settings.theme")}<select value={preferences.theme} onChange={(event) => update({ theme: event.target.value as "system" | "light" | "dark" })}><option value="system">{t("theme.system")}</option><option value="light">{t("theme.light")}</option><option value="dark">{t("theme.dark")}</option></select></label><label>{t("settings.sidebar")}<select value={preferences.sidebar} onChange={(event) => update({ sidebar: event.target.value as "auto" | "expanded" | "collapsed" })}><option value="auto">{t("settings.auto")}</option><option value="expanded">{t("settings.expanded")}</option><option value="collapsed">{t("settings.collapsed")}</option></select></label></div><label className="settings-guide-preference"><input aria-label={t("settings.firstValueGuide")} type="checkbox" checked={preferences.showFirstValueGuide} onChange={(event) => update({ showFirstValueGuide: event.target.checked })} /><span><strong>{t("settings.firstValueGuide")}</strong><small>{t("settings.firstValueGuideCopy")}</small></span></label></section>
         <InventoryCoveragePanel inventory={dashboard.data?.inventory} loading={dashboard.isLoading} error={dashboard.isError} />
         <HarnessIntegrationsPanel />
         <DataPolicyPanel />

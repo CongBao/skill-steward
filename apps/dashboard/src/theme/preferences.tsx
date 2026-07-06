@@ -16,6 +16,7 @@ export interface DashboardPreferencesV1 {
   locale: Locale;
   theme: ThemePreference;
   sidebar: SidebarPreference;
+  showFirstValueGuide: boolean;
   kpiCount: number;
   kpiOrder: string[];
   enabledKpis: string[];
@@ -41,6 +42,7 @@ export const DEFAULT_PREFERENCES: DashboardPreferencesV1 = {
   locale: initialLocale,
   theme: "system",
   sidebar: "auto",
+  showFirstValueGuide: true,
   kpiCount: 6,
   kpiOrder: recommendedKpis,
   enabledKpis: recommendedKpis
@@ -54,6 +56,7 @@ export function parsePreferences(value: unknown): DashboardPreferencesV1 {
     (input.locale !== "en-US" && input.locale !== "zh-CN") ||
     !["system", "light", "dark"].includes(input.theme ?? "") ||
     !["auto", "expanded", "collapsed"].includes(input.sidebar ?? "") ||
+    (input.showFirstValueGuide !== undefined && typeof input.showFirstValueGuide !== "boolean") ||
     !Number.isInteger(input.kpiCount) ||
     (input.kpiCount ?? 0) < 3 ||
     (input.kpiCount ?? 0) > 17 ||
@@ -64,7 +67,10 @@ export function parsePreferences(value: unknown): DashboardPreferencesV1 {
   ) {
     return DEFAULT_PREFERENCES;
   }
-  return input as DashboardPreferencesV1;
+  return {
+    ...(input as DashboardPreferencesV1),
+    showFirstValueGuide: input.showFirstValueGuide ?? true
+  };
 }
 
 export function resolveTheme(

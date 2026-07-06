@@ -2,7 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { PreferencesProvider } from "../../theme/preferences.js";
+import { MemoryRouter } from "react-router-dom";
+import {
+  DEFAULT_PREFERENCES,
+  PREFERENCES_KEY,
+  PreferencesProvider
+} from "../../theme/preferences.js";
 import { SettingsPage } from "./SettingsPage.js";
 
 const dashboard = {
@@ -21,6 +26,15 @@ const dashboard = {
   roots: []
 };
 
+function renderSettingsPage(initialEntry = "/settings") {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <PreferencesProvider><MemoryRouter initialEntries={[initialEntry]}><SettingsPage /></MemoryRouter></PreferencesProvider>
+    </QueryClientProvider>
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => ({
@@ -38,12 +52,7 @@ beforeEach(() => {
 });
 
 it("previews live dashboard KPI values with the Overview formatting", async () => {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={queryClient}>
-      <PreferencesProvider><SettingsPage /></PreferencesProvider>
-    </QueryClientProvider>
-  );
+  renderSettingsPage();
 
   expect(await screen.findByRole("article", { name: "Health score: 81" })).toBeVisible();
   expect(screen.getByRole("article", { name: "Open findings: —" })).toBeVisible();
@@ -92,12 +101,7 @@ it("treats health as unscored when the latest scan found no Skills", async () =>
       meta: { apiVersion: 1 }
     })
   })));
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={queryClient}>
-      <PreferencesProvider><SettingsPage /></PreferencesProvider>
-    </QueryClientProvider>
-  );
+  renderSettingsPage();
 
   expect(await screen.findByRole("article", { name: "Installed Skills: 0" })).toBeVisible();
   expect(screen.getByRole("article", { name: "Health score: —" })).toBeVisible();
@@ -111,12 +115,7 @@ it("treats health as unscored when the latest scan found no Skills", async () =>
 
 it("configures KPI count and catalog, then restores recommendations", async () => {
   const user = userEvent.setup();
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={queryClient}>
-      <PreferencesProvider><SettingsPage /></PreferencesProvider>
-    </QueryClientProvider>
-  );
+  renderSettingsPage();
 
   expect(screen.getByRole("spinbutton", { name: "Visible KPI count" })).toHaveValue(6);
   expect(screen.getByRole("checkbox", { name: "Bundle size" })).not.toBeChecked();
@@ -128,4 +127,36 @@ it("configures KPI count and catalog, then restores recommendations", async () =
   await user.click(screen.getByRole("button", { name: "Restore recommended" }));
   expect(screen.getByRole("spinbutton", { name: "Visible KPI count" })).toHaveValue(6);
   expect(screen.getByRole("checkbox", { name: "Bundle size" })).not.toBeChecked();
+});
+
+it("restores a dismissed first-value guide through the local Settings preference", async () => {
+  const user = userEvent.setup();
+  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({
+    ...DEFAULT_PREFERENCES,
+    showFirstValueGuide: false
+  }));
+  renderSettingsPage();
+
+  const preference = screen.getByRole("checkbox", { name: "Show first-value guide" });
+  expect(preference).not.toBeChecked();
+
+  await user.click(preference);
+
+  expect(preference).toBeChecked();
+  expect(JSON.parse(localStorage.getItem(PREFERENCES_KEY) ?? "{}").showFirstValueGuide).toBe(true);
+});
+
+it.each([
+  ["catalog-sources", "Discovery sources"],
+  ["harness-integrations", "Harness integrations"]
+])("focuses and scrolls the allowlisted #%s deep link", async (hash, heading) => {
+  const scrollIntoView = vi.fn();
+  HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+  renderSettingsPage(`/settings#${hash}`);
+
+  const section = (await screen.findByRole("heading", { name: heading })).closest("section");
+  expect(section).toHaveAttribute("id", hash);
+  await vi.waitFor(() => expect(section).toHaveFocus());
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
 });
