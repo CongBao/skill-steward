@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const binary = fileURLToPath(new URL("../dist/main.js", import.meta.url));
 const packageJson = fileURLToPath(new URL("../package.json", import.meta.url));
+const releaseContract = fileURLToPath(new URL("../../../release-contract.json", import.meta.url));
 
 function runWithInput(
   args: string[],
@@ -51,9 +52,12 @@ describe("built CLI", () => {
     const manifest = JSON.parse(await readFile(packageJson, "utf8")) as {
       version: string;
     };
+    const contract = JSON.parse(await readFile(releaseContract, "utf8")) as {
+      version: string;
+    };
     const { stdout } = await execFileAsync(process.execPath, [binary, "--version"]);
 
-    expect(manifest.version).toBe("0.5.0-alpha.4");
+    expect(manifest.version).toBe(contract.version);
     expect(stdout.trim()).toBe(manifest.version);
   });
 

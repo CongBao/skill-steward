@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { checkReleaseContract } from "./release-contract.mjs";
 
 const exactFiles = ["LICENSE", "README.md", "package.json", "rename_noreplace.node"];
 const exactArchiveFiles = exactFiles.map((file) => `package/${file}`);
@@ -22,6 +23,7 @@ export function verifyNativeRenamePackage(artifact, platform, arch, libc) {
     platform === "linux" ? `-${libc}` : ""
   }`;
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const release = checkReleaseContract(repositoryRoot);
   const expectedManifest = JSON.parse(readFileSync(join(
     repositoryRoot,
     "packages",
@@ -58,7 +60,7 @@ export function verifyNativeRenamePackage(artifact, platform, arch, libc) {
     const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     const metadataValid = isDeepStrictEqual(manifest, expectedManifest)
       && manifest.name === expectedName
-      && manifest.version === "0.5.0-alpha.4"
+      && manifest.version === release.version
       && manifest.type === "commonjs"
       && manifest.main === "rename_noreplace.node"
       && exactArray(manifest.os, [platform])

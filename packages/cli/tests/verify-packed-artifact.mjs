@@ -8,6 +8,7 @@ import {
   sha256,
   validateRuntimeAuditSnapshot
 } from "../runtime-audit.mjs";
+import { checkReleaseContract } from "../../../scripts/release-contract.mjs";
 
 const BLOCK_SIZE = 512;
 const REQUIRED_FILES = [
@@ -19,6 +20,7 @@ const REQUIRED_FILES = [
 ];
 const defaultTrustedPackageDirectory = fileURLToPath(new URL("../", import.meta.url));
 const runtimeAuditPath = fileURLToPath(new URL("../runtime-audit.json", import.meta.url));
+const release = checkReleaseContract(fileURLToPath(new URL("../../../", import.meta.url)));
 const PNPM_REMOVED_LIFECYCLES = new Set([
   "postpack",
   "postpublish",
@@ -193,12 +195,12 @@ function assertMetadata(packageJson) {
     throw new Error("Packed package publication metadata is incomplete");
   }
   const expectedNativeHelpers = {
-    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-alpha.4"
+    "@skill-steward/rename-noreplace-darwin-arm64": release.version,
+    "@skill-steward/rename-noreplace-darwin-x64": release.version,
+    "@skill-steward/rename-noreplace-linux-arm64-gnu": release.version,
+    "@skill-steward/rename-noreplace-linux-arm64-musl": release.version,
+    "@skill-steward/rename-noreplace-linux-x64-gnu": release.version,
+    "@skill-steward/rename-noreplace-linux-x64-musl": release.version
   };
   if (JSON.stringify(packageJson.optionalDependencies) !== JSON.stringify(expectedNativeHelpers)) {
     throw new Error("Packed package native no-replace helpers are incomplete");

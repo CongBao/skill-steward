@@ -20,6 +20,7 @@ it("builds native packages on pull requests but publishes only reviewed main art
   expect(publish).toContain("id-token: write");
   expect(publish).toContain("actions/checkout@");
   expect(publish).toContain("node scripts/publish-native-rename-packages.mjs artifacts/native/*.tgz");
+  expect((workflow.match(/node scripts\/release-contract\.mjs check/g) ?? [])).toHaveLength(2);
   expect(publish).not.toContain("for artifact in artifacts/native/*.tgz");
   expect(workflow).toContain("authentication:");
   expect(workflow).toContain("trusted-publisher");
@@ -49,7 +50,10 @@ it("builds native packages on pull requests but publishes only reviewed main art
   expect(publisher).toContain("Published ${spec} exists with different bytes; refusing to continue");
   expect(publisher).toMatch(/E404/);
   expect(publisher).toContain('"--tag"');
-  expect(publisher).toContain('"alpha"');
+  expect(publisher).toContain("release.npmTag");
+  expect(publisher).not.toMatch(/["']alpha["']/u);
+  expect(publisher.indexOf("checkReleaseContract"))
+    .toBeLessThan(publisher.indexOf("runNpm([\"view\""));
   expect(publisher).toContain('"--provenance"');
   expect(publisher).toContain("https://registry.npmjs.org");
 });

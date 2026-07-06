@@ -29,6 +29,12 @@ node packages/cli/dist/main.js dashboard --no-open --port 4762
 - Add or update security tests for filesystem or installation behavior.
 - Run `pnpm check` and `git diff --check` before requesting review.
 
+## Release identity changes
+
+The CLI and six native packages share one reviewed [release contract](docs/release-contract.md). Do not edit their manifest versions or npm tags independently. Update `release-contract.json`, run `pnpm release:sync`, review every generated manifest change, and finish with `pnpm release:check` and `CI=true pnpm check`.
+
+`release:sync` is never part of build or pack. Running the check or synchronizer does not publish a package or create a GitHub Release.
+
 ## Commits and pull requests
 
 Use a concise imperative commit subject, such as `feat: validate zip entry paths`. A pull request should explain the user outcome, security impact, tests run, screenshots for visible changes, and any compatibility trade-offs.

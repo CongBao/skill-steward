@@ -2,7 +2,7 @@
 
 Use anonymous or synthetic Skills unless the participant has reviewed what will be visible. Do not upload reports, prompts, or state files.
 
-Target build: `0.5.0-alpha.4`. This is still an Alpha protocol for a local Harness companion, not a Harness. Native semantics are tested only on the documented core adapter surfaces below.
+Target build: the active Alpha version in [`release-contract.json`](../release-contract.json). Confirm it with `pnpm release:check`. This is still an Alpha protocol for a local Harness companion, not a Harness. Native semantics are tested only on the documented core adapter surfaces below.
 
 ## Current test matrix
 
@@ -10,7 +10,7 @@ Run each row from a clean checkout. Manual mutation journeys must use a disposab
 
 | Area | Executable check | Expected result |
 |---|---|---|
-| Public contract and CLI version | `CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts` | Both READMEs state the bounded native/compact contracts, help exposes reviewed-plan syntax, and the binary reports `0.5.0-alpha.4`. |
+| Public contract and CLI version | `pnpm release:check && CI=true pnpm --filter skill-steward exec vitest run tests/repository.test.ts tests/binary.test.ts tests/release-contract.test.mjs` | Both READMEs state the bounded native/compact contracts, help exposes reviewed-plan syntax, and the binary reports the checked contract version. |
 | Native adapter coverage and current-workspace snapshot limitation | `CI=true pnpm --filter @skill-steward/engine exec vitest run tests/codex-inventory.test.ts tests/claude-inventory.test.ts tests/copilot-inventory.test.ts tests/inventory-workspace.test.ts tests/visibility-resolution.test.ts` | Documented local sources reach exact terminal statuses; Harness coverage and Skill exposure resolve separately; scans cover the chosen workspace ancestors and user scopes without crawling unrelated workspaces. |
 | Capability-aware Preflight quality and compact handoff | `CI=true pnpm test:preflight-quality && CI=true pnpm --filter @skill-steward/preflight test` | Algorithm v9/result schema v5 passes the public 28-case bilingual quality gate and all prior routing regressions; compact schema v4 stays within 4,096 UTF-8 bytes and nulls unavailable feedback. |
 | Native governance refusal | `CI=true pnpm --filter skill-steward exec vitest run tests/govern.test.ts tests/preflight.test.ts` | Native plugin-managed Skills remain visible but cannot enter quarantine/restore plans; direct Skills remain eligible; compact CLI output stays bounded. |
@@ -26,7 +26,7 @@ Run each row from a clean checkout. Manual mutation journeys must use a disposab
 
 ## Build and first run
 
-Before judging repository behavior through a global install, rebuild, repack, and reinstall the current checkout even when `skill-steward --version` already matches `packages/cli/package.json`; two different Alpha builds can share a version before release. Both must report `0.5.0-alpha.4`, but version equality alone is not freshness proof. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
+Before judging repository behavior through a global install, rebuild, repack, and reinstall the current checkout even when `skill-steward --version` already matches `release-contract.json`; two different Alpha builds can share a version before release. The binary and all six optional dependencies must match the checked contract, but version equality alone is not freshness proof. The documented pack command must rebuild workspace dependencies from a clean checkout; do not rely on a prior `pnpm build`. Start once with a clean `SKILL_STEWARD_HOME` and confirm the first-use path explains scan, Preflight, and dashboard without assuming existing state.
 
 Scan an empty set of Skill roots. The result must be unscored and actionable: it must not report health 100. KPI settings must use the current dashboard snapshot and must not present example values as current measurements.
 

@@ -10,6 +10,9 @@ const execFileAsync = promisify(execFile);
 const packageDirectory = process.cwd();
 const root = resolve(packageDirectory, "../..");
 const verifier = join(packageDirectory, "tests", "verify-packed-artifact.mjs");
+const release = JSON.parse(await readFile(join(root, "release-contract.json"), "utf8")) as {
+  version: string;
+};
 
 async function packageJson(): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8"));
@@ -77,7 +80,7 @@ it("packages the built dashboard alongside the CLI binary", async () => {
 
 it("declares complete public package metadata", async () => {
   expect(await packageJson()).toMatchObject({
-    version: "0.5.0-alpha.4",
+    version: release.version,
     description: "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
     repository: {
       type: "git",
@@ -107,12 +110,12 @@ it("declares the exact private native no-replace platform packages as optional",
     optionalDependencies?: Record<string, string>;
   };
   expect(manifest.optionalDependencies).toEqual({
-    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-alpha.4"
+    "@skill-steward/rename-noreplace-darwin-arm64": release.version,
+    "@skill-steward/rename-noreplace-darwin-x64": release.version,
+    "@skill-steward/rename-noreplace-linux-arm64-gnu": release.version,
+    "@skill-steward/rename-noreplace-linux-arm64-musl": release.version,
+    "@skill-steward/rename-noreplace-linux-x64-gnu": release.version,
+    "@skill-steward/rename-noreplace-linux-x64-musl": release.version
   });
 });
 
@@ -332,7 +335,7 @@ Use when reviewing code changes for missing tests and regressions.
   const bare = await execFileAsync(binary, [], { cwd: workspace, env: environment });
   expect(bare.stdout).toContain("Usage: skill-steward");
   const version = await execFileAsync(binary, ["--version"], { cwd: workspace, env: environment });
-  expect(version.stdout.trim()).toBe("0.5.0-alpha.4");
+  expect(version.stdout.trim()).toBe(release.version);
   const dashboardHelp = await execFileAsync(binary, ["dashboard", "--help"], {
     cwd: workspace,
     env: environment
