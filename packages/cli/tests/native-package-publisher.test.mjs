@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { checkReleaseContract } from "../../../scripts/release-contract.mjs";
 
@@ -81,17 +81,23 @@ if (args[0] === "publish") process.exit(0);
 process.exit(2);
 `);
   await chmod(executable, 0o755);
-  return bin;
+  return executable;
 }
 
 async function runPublisher(root, artifacts, published, { checkOnly = false } = {}) {
-  const bin = await fakeNpm(root);
+  const npmCli = await fakeNpm(root);
   const log = join(root, "npm-calls.jsonl");
-  const result = spawnSync(process.execPath, [publisher, ...(checkOnly ? ["--check-only"] : []), ...artifacts], {
+  const result = spawnSync(process.execPath, [
+    publisher,
+    "--npm-cli",
+    npmCli,
+    ...(checkOnly ? ["--check-only"] : []),
+    ...artifacts
+  ], {
     encoding: "utf8",
     env: {
       ...process.env,
-      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      PATH: process.env.PATH ?? "",
       NPM_CALL_LOG: log,
       PUBLISHED_INTEGRITIES: JSON.stringify(published)
     }
