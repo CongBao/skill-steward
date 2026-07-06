@@ -9,6 +9,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Reviewed Harness integration apply is now active for Codex, Claude Code, and GitHub Copilot CLI across the CLI, loopback API, and dashboard. One single-use plan binds the Hook configuration, packaged companion tree, ownership proof, current record head, consumer set, readiness report, and history record.
 - Companion create and upgrade use platform-specific no-replace native operations for supported Darwin and Linux architectures. The six optional packages build in a pinned GitHub Actions matrix; missing or unsupported native capability fails closed before mutation.
 - Reviewed disconnect proves the complete post-transition consumer set. It retains the shared companion while another Harness uses it, then removes only the exact recorded installed tree when the last consumer disconnects. A newer package can uninstall an unchanged older tree; modified, unreadable, contradictory, or unproved state stops without force deletion.
+- A manual protected GitHub prerelease path assembles the exact seven npm-served tarballs, generates canonical checksums and a release manifest, attests all nine assets, and resumes only a byte-identical draft. The workflow is present but does not publish a release in this change.
 
 ### Changed
 

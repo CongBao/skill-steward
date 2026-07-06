@@ -313,6 +313,7 @@ Skill Steward is strongest for developers who use several Harnesses and want loc
 - CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use; confirmation never regenerates a plan from request arguments.
 - Installation, integration, and disconnect mutations share a cross-process lease. Integration create/upgrade binds no-replace native filesystem operations, recovery state, readiness publication, Hook configuration, history, and rollback to the same reviewed transaction.
 - Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
+- The repository includes a prerelease workflow designed to require protected review. It reuses the exact npm-served bytes, checks canonical SHA-256/SHA-512 identities, and attests the complete nine-file GitHub asset set before draft finalization. It has not yet produced a public npm or GitHub release, so no protected-environment or public-install result is claimed.
 - Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.
 
 Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boundaries and trust decisions are documented in [docs/architecture.md](docs/architecture.md).
@@ -338,9 +339,9 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 1. Validate additional native adapters only where local precedence, activation, lifecycle, and trust behavior can be tested.
 2. Evaluate reviewed ranking calibration only after the published evidence thresholds are met.
 3. Add scope migration and broader policy baselines on top of the reversible governance journal.
-4. Add signed release artifacts and supply-chain attestations.
+4. Complete the first protected npm and attested GitHub Beta publication, then verify public installation before promoting release status.
 
-See [CHANGELOG.md](CHANGELOG.md) for released behavior and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for the historical Alpha.3 verdict, hands-on evidence, baseline, and priorities.
+See [CHANGELOG.md](CHANGELOG.md), the [attested prerelease guide](docs/github-prerelease.md), and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for released behavior, distribution controls, the historical Alpha.3 verdict, hands-on evidence, baseline, and priorities.
 
 ## Contributing
 

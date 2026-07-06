@@ -2,7 +2,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
+import { verifyNativeRenamePackageBytes } from "../../../scripts/verify-native-rename-package.mjs";
 
 const roots = [];
 const verifier = resolve(process.cwd(), "../..", "scripts/verify-native-rename-package.mjs");
@@ -49,7 +51,9 @@ async function fixture({
   ];
   if (extra) entries.push("package/unexpected.txt");
   if (alternateRoot) entries.push("other/rename_noreplace.node");
-  execFileSync("tar", ["-czf", artifact, "-C", root, ...entries]);
+  execFileSync("tar", ["-czf", artifact, "-C", root, ...entries], {
+    env: { ...process.env, COPYFILE_DISABLE: "1" }
+  });
   return artifact;
 }
 
@@ -68,7 +72,7 @@ it("accepts only the exact platform metadata and four-file native tarball", asyn
 
   const alternateRoot = verify(await fixture({ alternateRoot: true }));
   expect(alternateRoot.status).not.toBe(0);
-  expect(alternateRoot.stderr).toContain("archive members are not the exact four regular files");
+  expect(alternateRoot.stderr).toMatch(/outside package|exact four regular files/i);
 
   const wrongCpu = verify(await fixture({ cpu: "x64" }));
   expect(wrongCpu.status).not.toBe(0);
@@ -81,4 +85,23 @@ it("accepts only the exact platform metadata and four-file native tarball", asyn
   const installScript = verify(await fixture({ preinstall: true }));
   expect(installScript.status).not.toBe(0);
   expect(installScript.stderr).toContain("metadata or payload is incomplete");
+});
+
+it("verifies the exact native bytes with a bounded unpacked size", async () => {
+  const artifact = await fixture();
+  expect(verifyNativeRenamePackageBytes(
+    await readFile(artifact),
+    "darwin",
+    "arm64",
+    "none"
+  )).toMatchObject({
+    name: "@skill-steward/rename-noreplace-darwin-arm64"
+  });
+  expect(() => verifyNativeRenamePackageBytes(
+    gzipSync(Buffer.alloc(2_048)),
+    "darwin",
+    "arm64",
+    "none",
+    { maximumUnpackedBytes: 1_024 }
+  )).toThrow(/unpacked.*limit/i);
 });

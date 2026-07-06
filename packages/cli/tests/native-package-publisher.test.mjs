@@ -51,7 +51,7 @@ async function packageSet(root, { firstVersion } = {}) {
       "package/README.md",
       "package/package.json",
       "package/rename_noreplace.node"
-    ]);
+    ], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
     artifacts.push(artifact);
     integrities[`${name}@${release.version}`] = `sha512-${createHash("sha512")
       .update(await readFile(artifact))

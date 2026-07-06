@@ -287,6 +287,36 @@ it("tracks duplicate paths across directories and regular files", () => {
   ]))).toThrow(/duplicate/i);
 });
 
+it("bounds gzip expansion before parsing tar headers", () => {
+  expect(() => parseTarEntries(gzipSync(Buffer.alloc(2_048)), 1_024)).toThrow(
+    /unpacked.*limit/i
+  );
+});
+
+it("keeps empty directory entries visible to exact package inventory checks", () => {
+  const entries = parseTarEntries(tar([
+    { name: "package/empty", type: "5" },
+    { name: "package/file", content: "value" }
+  ]));
+  expect([...entries.keys()]).toEqual(["package/empty", "package/file"]);
+});
+
+it("bounds and single-lines archive-controlled path diagnostics", () => {
+  const hostilePath = `outside/${"x".repeat(10_000)}\n::error file=secret`;
+  let failure;
+  try {
+    parseTarEntries(tar([
+      { name: "pax-local", type: "x", content: paxRecord("path", hostilePath) },
+      { name: "package/original", content: "value" }
+    ]));
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure.message.length).toBeLessThanOrEqual(600);
+  expect(failure.message).not.toMatch(/[\r\n\t\p{Cf}]/u);
+});
+
 it.each([
   ["one end block", { endBlocks: 1 }],
   ["non-zero data after end markers", { trailing: Buffer.from("not zero") }],
