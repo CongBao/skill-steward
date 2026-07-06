@@ -57,7 +57,14 @@ async function packCliWithPnpm(root) {
   await mkdir(directory, { recursive: true });
   await execFileAsync(
     "pnpm",
-    ["--filter", "skill-steward", "pack", "--pack-destination", directory],
+    [
+      "--filter",
+      "skill-steward",
+      "pack",
+      "--config.ignore-scripts=true",
+      "--pack-destination",
+      directory
+    ],
     { cwd: repositoryRoot, maxBuffer: 10 * 1024 * 1024 }
   );
   const artifacts = (await readdir(directory)).filter((name) => name.endsWith(".tgz"));
