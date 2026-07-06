@@ -106,28 +106,45 @@ function CoverageCard({
 function CoverageGroup({
   title,
   coverages,
-  sourceById
+  sourceById,
+  collapsible = false
 }: {
   title: string;
   coverages: HarnessCoverage[];
   sourceById: ReadonlyMap<string, InventorySource>;
+  collapsible?: boolean;
 }) {
   if (coverages.length === 0) return null;
+  const cards = coverages.map((coverage) => (
+    <CoverageCard
+      key={coverage.harness}
+      coverage={coverage}
+      sources={coverage.sourceIds.flatMap((sourceId) => {
+        const source = sourceById.get(sourceId);
+        return source ? [source] : [];
+      })}
+    />
+  ));
+  if (collapsible) {
+    return (
+      <details
+        className="inventory-coverage-group inventory-coverage-group-disclosure"
+        role="region"
+        aria-label={title}
+      >
+        <summary>
+          <span className="inventory-coverage-group-title" role="heading" aria-level={3}>{title}</span>
+          <span className="inventory-coverage-group-count">{coverages.length}</span>
+          <ChevronDown size={15} />
+        </summary>
+        <div className="inventory-coverage-grid">{cards}</div>
+      </details>
+    );
+  }
   return (
     <section className="inventory-coverage-group" role="region" aria-label={title}>
       <h3>{title}</h3>
-      <div className="inventory-coverage-grid">
-        {coverages.map((coverage) => (
-          <CoverageCard
-            key={coverage.harness}
-            coverage={coverage}
-            sources={coverage.sourceIds.flatMap((sourceId) => {
-              const source = sourceById.get(sourceId);
-              return source ? [source] : [];
-            })}
-          />
-        ))}
-      </div>
+      <div className="inventory-coverage-grid">{cards}</div>
     </section>
   );
 }
@@ -167,7 +184,12 @@ export function InventoryCoveragePanel({
       ) : (
         <div className="inventory-coverage-groups">
           <CoverageGroup title={t("settings.inventory.core")} coverages={core} sourceById={sourceById} />
-          <CoverageGroup title={t("settings.inventory.conventions")} coverages={conventions} sourceById={sourceById} />
+          <CoverageGroup
+            title={t("settings.inventory.conventions")}
+            coverages={conventions}
+            sourceById={sourceById}
+            collapsible
+          />
         </div>
       )}
     </section>

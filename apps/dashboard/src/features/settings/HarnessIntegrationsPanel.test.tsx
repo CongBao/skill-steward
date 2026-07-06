@@ -174,7 +174,7 @@ it("reviews and keyboard-confirms Create companion with one exact planId", async
   expect(applyCall?.init?.body).toBe(JSON.stringify({ planId: "create-plan" }));
 });
 
-it("reviews and confirms Disconnect Harness with last-consumer retention", async () => {
+it("reviews and confirms Disconnect Harness with exact last-consumer removal", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
@@ -192,7 +192,8 @@ it("reviews and confirms Disconnect Harness with last-consumer retention", async
       },
       fingerprintCategory: "recorded",
       artifacts: [{ role: "harness-configuration", operation: "disconnect" }],
-      companionRetained: true,
+      companion: "removed",
+      companionRetained: false,
       lastConsumer: true,
       remainingConsumers: 0,
       createdAt: "2026-07-05T00:00:00.000Z",
@@ -205,9 +206,9 @@ it("reviews and confirms Disconnect Harness with last-consumer retention", async
       receipt: {
         outcome: "ready",
         hook: "removed",
-        companion: "retained",
-        reasonCode: "INTEGRATION_READY_FINAL_CLEANUP_PENDING",
-        nextSafeAction: "review-final-cleanup",
+        companion: "removed",
+        reasonCode: "INTEGRATION_READY",
+        nextSafeAction: "none",
         transactionId: "00000000-0000-4000-8000-000000000001",
         recordId: "record-2",
         cleanup: "clean"
@@ -226,10 +227,10 @@ it("reviews and confirms Disconnect Harness with last-consumer retention", async
   expect(await within(codex).findByText("Companion Skill: Current")).toBeVisible();
   await user.click(within(codex).getByRole("button", { name: "Review disconnect for Codex" }));
   expect(await screen.findByRole("heading", { name: "Disconnect Harness" })).toBeVisible();
-  expect(screen.getByText("The last consumer will disconnect. The companion Skill is retained pending reviewed final cleanup.")).toBeVisible();
+  expect(screen.getByText("The last consumer will disconnect. The exact unchanged managed companion Skill will be removed.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Confirm Disconnect Harness for Codex" }));
   expect(await screen.findByText(
-    "Transaction ready · companion retained · Hook removed · Cleanup complete · Review final cleanup when you are ready."
+    "Transaction ready · companion removed · Hook removed · Cleanup complete · No further action is needed."
   )).toBeVisible();
 });
 
@@ -324,7 +325,7 @@ it("reviews and keyboard-confirms Upgrade with localized artifacts and a pending
         recordId: "record-3",
         cleanup: "pending",
         reasonCode: "INTEGRATION_READY_CLEANUP_PENDING",
-        nextSafeAction: "review-final-cleanup"
+        nextSafeAction: "recover-transaction"
       }
     });
     return envelope([
@@ -350,7 +351,7 @@ it("reviews and keyboard-confirms Upgrade with localized artifacts and a pending
   confirm.focus();
   await user.keyboard("{Enter}");
   expect(await screen.findByText(
-    "事务已就绪 · 配套 Skill 已升级 · Hook 已安装 · 清理待完成 · 请检查并完成安全清理。"
+    "事务已就绪 · 配套 Skill 已升级 · Hook 已安装 · 清理待完成 · 请先恢复此事务，再进行其他变更。"
   )).toBeVisible();
   const applyCall = calls.find(({ url }) => url.endsWith("/codex/apply"));
   expect(applyCall?.init?.body).toBe(JSON.stringify({ planId: "upgrade-plan" }));

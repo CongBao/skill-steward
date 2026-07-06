@@ -34,7 +34,7 @@ Open the local dashboard:
 skill-steward dashboard
 ```
 
-The dashboard and CLI use the same local state. Governance, installation, and Harness integration actions show an exact plan first and require explicit confirmation; installation rollback, integration rollback, quarantine, restore, and disconnect are reversible or safely retained.
+The dashboard and CLI use the same local state. Governance, installation, and Harness integration actions show an exact plan first and require explicit confirmation; installation rollback, integration rollback, quarantine, restore, shared-consumer disconnect, and final uninstall are reversible or fail closed with recovery evidence.
 
 Mutation previews print a copyable apply command. Use the emitted ID rather than repeating the original request:
 
@@ -52,7 +52,7 @@ skill-steward integrate apply --plan <id> --confirm
 
 Installation, integration, and rollback share the same mutation lease. A concurrent stale plan stops on drift instead of overwriting a newer commit. Companion create and upgrade also require the packaged no-replace native helper for the current platform.
 
-Disconnect removes only the reviewed managed Hook and retains the shared companion Skill so another Harness cannot lose it:
+Disconnect retains the companion while another proven Harness uses it. The last disconnect removes only the exact recorded tree; modified or unproved content is left untouched:
 
 ```bash
 skill-steward integrate remove --harness <id>

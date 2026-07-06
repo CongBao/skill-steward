@@ -411,7 +411,7 @@ describe("Harness integration routes", () => {
     expect(await readLatestReport(instance.stateDirectory)).toBeDefined();
   });
 
-  it("reviews and applies a v2 disconnect and retains the last companion", async () => {
+  it("reviews and applies a v2 disconnect and removes the last companion", async () => {
     const instance = await fixture();
     const createPlan = (await post(
       instance.app,
@@ -432,7 +432,8 @@ describe("Harness integration routes", () => {
     expect(plan).toMatchObject({
       action: "disconnect",
       availability: { available: true, reason: null },
-      companionRetained: true,
+      companion: "removed",
+      companionRetained: false,
       lastConsumer: true,
       applyCommand: `skill-steward integrate remove --plan ${plan.planId} --confirm`
     });
@@ -447,12 +448,12 @@ describe("Harness integration routes", () => {
       action: "disconnect",
       receipt: {
         hook: "removed",
-        companion: "retained",
-        reasonCode: "INTEGRATION_READY_FINAL_CLEANUP_PENDING",
-        nextSafeAction: "review-final-cleanup"
+        companion: "removed",
+        reasonCode: "INTEGRATION_READY",
+        nextSafeAction: "none"
       }
     });
-    await expect(access(plan.targets.companion)).resolves.toBeUndefined();
+    await expect(access(plan.targets.companion)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses the legacy v1 compatibility writer after a v2 head", async () => {

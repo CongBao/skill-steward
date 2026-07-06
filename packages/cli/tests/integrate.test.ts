@@ -162,7 +162,7 @@ describe("integrate command", () => {
     });
   });
 
-  it("reviews and confirms a v2 disconnect while retaining the last companion", async () => {
+  it("reviews and confirms a v2 disconnect while removing the last companion", async () => {
     expect((await apply((await plan("codex")).planId)).code).toBe(0);
     const hook = join(current.home, ".codex", "hooks.json");
     const companion = join(current.home, ".agents", "skills", "skill-steward-preflight");
@@ -181,7 +181,8 @@ describe("integrate command", () => {
     expect(reviewed).toMatchObject({
       action: "disconnect",
       lastConsumer: true,
-      companionRetained: true,
+      companion: "removed",
+      companionRetained: false,
       applyCommand: `skill-steward integrate remove --plan ${reviewed.planId} --confirm`
     });
     expect(await readFile(hook, "utf8")).toBe(before);
@@ -195,12 +196,12 @@ describe("integrate command", () => {
       action: "disconnect",
       receipt: {
         hook: "removed",
-        companion: "retained",
-        reasonCode: "INTEGRATION_READY_FINAL_CLEANUP_PENDING",
-        nextSafeAction: "review-final-cleanup"
+        companion: "removed",
+        reasonCode: "INTEGRATION_READY",
+        nextSafeAction: "none"
       }
     });
-    expect(await exists(companion)).toBe(true);
+    expect(await exists(companion)).toBe(false);
   });
 
   it("does not offer apply for conflict state", async () => {

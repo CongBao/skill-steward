@@ -135,8 +135,10 @@ function printPlan(
           "Mutation: unavailable for this reviewed plan.",
           `Reason: ${plan.availability.reason}`
         ]),
-    ...("lastConsumer" in plan && plan.lastConsumer
-      ? ["The companion Skill will be retained pending reviewed final cleanup."]
+    ...(plan.action === "disconnect"
+      ? plan.companion === "removed"
+        ? ["The exact managed companion Skill will be removed with the last consumer."]
+        : [`The companion Skill will be retained for ${plan.remainingConsumers} active consumer${plan.remainingConsumers === 1 ? "" : "s"}.`]
       : []),
     ""
   ];
@@ -312,9 +314,11 @@ export async function integrateRemoveCommand(
       : [
           `Disconnect Harness completed (${terminalSafeText(receipt.recordId)}).`,
           `Plan ID: ${terminalSafeText(options.plan)}`,
-          ...(receipt.nextSafeAction === "review-final-cleanup"
-            ? ["The companion Skill was retained pending reviewed final cleanup."]
-            : []),
+          ...(receipt.companion === "removed"
+            ? ["The last unchanged managed companion Skill was removed."]
+            : receipt.companion === "retained"
+              ? ["The companion Skill was retained for other active Harnesses."]
+              : []),
           ""
         ].join("\n")
     );

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  cp,
   mkdir,
   mkdtemp,
   lstat,
@@ -15,8 +16,10 @@ import {
   readIntegrationRecordJournal,
   readIntegrationRecoveryState,
   readLatestReport,
+  loadIntegrationRecoveryArtifactAuthority,
   restoreIntegrationFileTransaction,
-  restoreIntegrationReadiness
+  restoreIntegrationReadiness,
+  withIntegrationMutationLease
 } from "@skill-steward/store";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -32,6 +35,11 @@ import {
   planIntegrationDisconnect
 } from "../src/config.js";
 import { inspectCompanionTree } from "../src/companion-manifest.js";
+import {
+  cleanupOwnedTree,
+  ownedTreeHandleSnapshot,
+  resumeOwnedTreeCleanup
+} from "../src/companion-owned-tree.js";
 import type { IntegrationHarness } from "../src/domain.js";
 
 const packagedCompanion = fileURLToPath(
@@ -109,7 +117,7 @@ describe("reviewed v2 companion disconnect", () => {
     "codex",
     "claude-code",
     "github-copilot"
-  ] as const)("removes the exact %s Hook, retains the companion, and commits v2 remove", async (harness) => {
+  ] as const)("removes the exact %s Hook and the unchanged final companion", async (harness) => {
     const home = await mkdtemp(join(tmpdir(), `steward-disconnect-${harness}-`));
     const stateDirectory = join(home, "state");
     await seedV2Consumer({
@@ -134,7 +142,7 @@ describe("reviewed v2 companion disconnect", () => {
       harness,
       availability: { disconnectAvailable: true, reason: null },
       companion: {
-        status: "retained",
+        status: "removed",
         expectedConsumers: [harness],
         remainingConsumers: []
       },
@@ -146,8 +154,11 @@ describe("reviewed v2 companion disconnect", () => {
         }
       }
     });
+    expect(() => integrationDisconnectPlanSchema.parse({
+      ...plan,
+      companion: { ...plan.companion, status: "retained" }
+    })).toThrow(/status|consumer/i);
 
-    const treeCalls: string[] = [];
     const receipt = await disconnectCompanionIntegrationTransaction(plan.id, {
       home,
       stateDirectory,
@@ -155,46 +166,17 @@ describe("reviewed v2 companion disconnect", () => {
       generateReadiness: async () => report()
     }, {
       transactionId: randomUUID,
-      recordId: randomUUID,
-      createStage: async (...args) => {
-        treeCalls.push("stage");
-        throw new Error(`unexpected tree stage ${String(args[0])}`);
-      },
-      moveTree: async (...args) => {
-        treeCalls.push("move");
-        throw new Error(`unexpected tree move ${String(args[1])}`);
-      },
-      cleanupTree: async (...args) => {
-        treeCalls.push("cleanup");
-        throw new Error(`unexpected tree cleanup ${String(args[0])}`);
-      },
-      proveTree: async () => {
-        treeCalls.push("prove");
-        throw new Error("unexpected tree proof");
-      },
-      createAncestors: async () => {
-        treeCalls.push("ancestors-create");
-        throw new Error("unexpected tree ancestor create");
-      },
-      rollbackAncestors: async () => {
-        treeCalls.push("ancestors-rollback");
-        throw new Error("unexpected tree ancestor rollback");
-      },
-      restoreUpgrade: async () => {
-        treeCalls.push("upgrade-restore");
-        throw new Error("unexpected tree upgrade restore");
-      }
+      recordId: randomUUID
     });
 
     expect(companionTransactionReceiptSchema.parse(receipt)).toMatchObject({
       outcome: "ready",
       hook: "removed",
-      companion: "retained",
+      companion: "removed",
       cleanup: "clean",
-      reasonCode: "INTEGRATION_READY_FINAL_CLEANUP_PENDING",
-      nextSafeAction: "review-final-cleanup"
+      reasonCode: "INTEGRATION_READY",
+      nextSafeAction: "none"
     });
-    expect(treeCalls).toEqual([]);
     const [head] = await readIntegrationRecords(stateDirectory);
     expect(head).toMatchObject({
       schemaVersion: 2,
@@ -205,17 +187,17 @@ describe("reviewed v2 companion disconnect", () => {
       afterFingerprint: plan.configuration.after.fingerprint,
       installedEntryFingerprint: plan.configuration.installedEntryFingerprint,
       companion: {
-        action: "retain",
+        action: "remove",
         path: plan.companion.path,
         before: { state: "exact", fingerprint: beforeTree.fingerprint },
-        after: { state: "exact", fingerprint: beforeTree.fingerprint },
+        after: { state: "absent" },
         installedFingerprint: beforeTree.fingerprint,
         consumers: []
       },
       trigger: plan.readiness.trigger,
       createdAt: plan.createdAt
     });
-    expect(await exactCompanion(home)).toEqual(beforeTree);
+    await expect(lstat(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readLatestReport(stateDirectory)).toEqual(report());
     if (harness === "github-copilot") {
       expect(JSON.parse(await readFile(plan.configuration.path, "utf8"))).toEqual({
@@ -270,6 +252,10 @@ describe("reviewed v2 companion disconnect", () => {
     });
     expect(plan.companion.expectedConsumers).toEqual(["claude-code", "codex"]);
     expect(plan.companion.remainingConsumers).toEqual(["claude-code"]);
+    expect(() => integrationDisconnectPlanSchema.parse({
+      ...plan,
+      companion: { ...plan.companion, status: "removed" }
+    })).toThrow(/status|consumer/i);
     expect(JSON.parse(await readFile(plan.configuration.path, "utf8"))).toMatchObject({
       unrelated: { retained: true }
     });
@@ -278,10 +264,93 @@ describe("reviewed v2 companion disconnect", () => {
     });
   });
 
+  it("refuses a disconnect when another recorded consumer cannot be proven", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-disconnect-consumer-drift-"));
+    const stateDirectory = join(home, "state");
+    await seedV2Consumer({
+      home,
+      stateDirectory,
+      harness: "codex",
+      instant: "2026-07-05T04:00:00.000Z"
+    });
+    await seedV2Consumer({
+      home,
+      stateDirectory,
+      harness: "claude-code",
+      instant: "2026-07-05T04:01:00.000Z"
+    });
+    const companionBefore = await exactCompanion(home);
+    const claudePath = join(home, ".claude", "settings.json");
+    const drifted = Buffer.from('{"hooks":{},"external":"changed"}\n', "utf8");
+    await writeFile(claudePath, drifted, { mode: 0o600 });
+
+    await expect(planIntegrationDisconnect("codex", {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-05T04:02:00.000Z"),
+      id: () => "disconnect-with-drifted-consumer"
+    })).rejects.toMatchObject({ code: "INTEGRATION_DRIFTED" });
+    expect(await readFile(claudePath)).toEqual(drifted);
+    expect(await exactCompanion(home)).toEqual(companionBefore);
+  });
+
+  it("removes an older unchanged recorded tree without comparing the newer package", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-disconnect-older-tree-"));
+    const stateDirectory = join(home, "state");
+    const sourceRoot = await mkdtemp(join(tmpdir(), "steward-older-source-"));
+    const olderSource = join(sourceRoot, "skill-steward-preflight");
+    await cp(packagedCompanion, olderSource, { recursive: true });
+    await writeFile(join(olderSource, "recorded-version.txt"), "older managed version\n", {
+      mode: 0o600
+    });
+    const installNow = () => new Date("2026-07-05T04:00:00.000Z");
+    const install = await planIntegration("codex", {
+      home,
+      stateDirectory,
+      companionSourceDirectory: olderSource,
+      now: installNow,
+      id: () => "install-older-managed-tree"
+    });
+    await applyCompanionIntegrationTransaction(install, {
+      home,
+      stateDirectory,
+      companionSourceDirectory: olderSource,
+      now: installNow,
+      generateReadiness: async () => report()
+    }, { transactionId: randomUUID, recordId: randomUUID });
+    const installed = await exactCompanion(home);
+    expect(installed.fingerprint).not.toBe(
+      (await inspectCompanionTree(packagedCompanion, {
+        boundary: dirname(packagedCompanion),
+        platform: process.platform
+      })).fingerprint
+    );
+
+    const removeNow = () => new Date("2026-07-05T04:01:00.000Z");
+    const remove = await planIntegrationDisconnect("codex", {
+      home,
+      stateDirectory,
+      now: removeNow,
+      id: () => "remove-older-managed-tree"
+    });
+    expect(remove.companion).toMatchObject({
+      status: "removed",
+      fingerprint: installed.fingerprint,
+      installedFingerprint: installed.fingerprint
+    });
+    await expect(disconnectCompanionIntegrationTransaction(remove.id, {
+      home,
+      stateDirectory,
+      now: removeNow,
+      generateReadiness: async () => report("e")
+    })).resolves.toMatchObject({ companion: "removed", cleanup: "clean" });
+    await expect(lstat(remove.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.each([
     { label: "last consumer", otherHarness: undefined },
     { label: "one of multiple consumers", otherHarness: "codex" as const }
-  ])("reconnects Copilot from an exactly proven retained tombstone as $label", async ({
+  ])("reconnects Copilot from an exactly proven tombstone as $label", async ({
     otherHarness
   }) => {
     const home = await mkdtemp(join(tmpdir(), "steward-copilot-reconnect-"));
@@ -319,7 +388,7 @@ describe("reviewed v2 companion disconnect", () => {
       stateDirectory
     })).resolves.toMatchObject({
       status: "not-installed",
-      companion: { status: "current" }
+      companion: { status: otherHarness ? "current" : "missing" }
     });
     expect(await readFile(disconnect.configuration.path)).toEqual(tombstone);
 
@@ -332,7 +401,7 @@ describe("reviewed v2 companion disconnect", () => {
     });
     expect(reconnect).toMatchObject({
       expectedBeforeFingerprint: disconnect.configuration.after.fingerprint,
-      companion: { action: "none" },
+      companion: { action: otherHarness ? "none" : "create" },
       changes: [{ operation: "write", path: disconnect.configuration.path }]
     });
     await applyCompanionIntegrationTransaction(reconnect, {
@@ -357,7 +426,7 @@ describe("reviewed v2 companion disconnect", () => {
       action: "apply",
       status: "installed",
       companion: {
-        action: "none",
+        action: otherHarness ? "none" : "create",
         consumers: otherHarness ? [otherHarness, "github-copilot"] : ["github-copilot"]
       }
     });
@@ -1030,13 +1099,14 @@ describe("reviewed v2 companion disconnect", () => {
   });
 
   it.each([
-    { boundary: "recovery-checkpoint", hook: "unchanged" },
-    { boundary: "config-publish", hook: "restored" },
-    { boundary: "readiness-generate", hook: "restored" },
-    { boundary: "readiness-publish", hook: "restored" }
+    { boundary: "recovery-checkpoint", hook: "unchanged", companion: "unchanged" },
+    { boundary: "config-publish", hook: "restored", companion: "unchanged" },
+    { boundary: "readiness-generate", hook: "restored", companion: "restored" },
+    { boundary: "readiness-publish", hook: "restored", companion: "restored" }
   ] as const)("compensates exact configuration after a definite $boundary boundary failure", async ({
     boundary,
-    hook
+    hook,
+    companion
   }) => {
     const home = await mkdtemp(join(tmpdir(), `steward-disconnect-${boundary}-`));
     const stateDirectory = join(home, "state");
@@ -1054,6 +1124,7 @@ describe("reviewed v2 companion disconnect", () => {
       id: () => `disconnect-${boundary}`
     });
     const before = await readFile(plan.configuration.path);
+    const treeBefore = await exactCompanion(home);
     const cause = Object.assign(new Error(`${boundary} failed`), { code: "INJECTED_FAILURE" });
     const failure = await disconnectCompanionIntegrationTransaction(plan.id, {
       home,
@@ -1071,11 +1142,12 @@ describe("reviewed v2 companion disconnect", () => {
       receipt: {
         outcome: "rolled-back",
         hook,
-        companion: "retained",
+        companion,
         reasonCode: "INJECTED_FAILURE"
       }
     });
     expect(await readFile(plan.configuration.path)).toEqual(before);
+    expect(await exactCompanion(home)).toEqual(treeBefore);
     expect(await readIntegrationRecords(stateDirectory)).toHaveLength(1);
     expect(await readIntegrationRecoveryState(stateDirectory)).toMatchObject({ status: "clear" });
   });
@@ -1121,7 +1193,7 @@ describe("reviewed v2 companion disconnect", () => {
       receipt: {
         outcome: "rolled-back",
         hook: "restored",
-        companion: "retained",
+        companion: "restored",
         reasonCode: "EIO"
       }
     });
@@ -1185,6 +1257,10 @@ describe("reviewed v2 companion disconnect", () => {
     expect(restored).toEqual([]);
     expect(await readFile(plan.configuration.path, "utf8"))
       .toBe(stableJson(plan.configuration.after.config));
+    await expect(lstat(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(dirname(plan.companion.path))).toContain(
+      `.skill-steward-owned.${(failure as { receipt: { transactionId: string } }).receipt.transactionId}.cleanup`
+    );
     expect(await readIntegrationRecoveryState(stateDirectory)).toMatchObject({
       status: "unresolved",
       reason: "INTEGRATION_RECOVERY_REQUIRED"
@@ -1195,6 +1271,67 @@ describe("reviewed v2 companion disconnect", () => {
       now: () => new Date("2026-07-05T04:02:00.000Z"),
       id: () => "disconnect-blocked-recovery"
     })).rejects.toMatchObject({ code: "INTEGRATION_COMPANION_ACTION_UNAVAILABLE" });
+  });
+
+  it("checkpoints exact tree authority when the final quarantine move is uncertain", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-disconnect-move-uncertain-"));
+    const stateDirectory = join(home, "state");
+    await seedV2Consumer({
+      home,
+      stateDirectory,
+      harness: "codex",
+      instant: "2026-07-05T04:00:00.000Z"
+    });
+    const now = () => new Date("2026-07-05T04:01:00.000Z");
+    const plan = await planIntegrationDisconnect("codex", {
+      home,
+      stateDirectory,
+      now,
+      id: () => "disconnect-move-uncertain"
+    });
+    let failed = false;
+    const failure = await disconnectCompanionIntegrationTransaction(plan.id, {
+      home,
+      stateDirectory,
+      now,
+      generateReadiness: async () => report("e")
+    }, {
+      ownedTreeHooks: {
+        fsyncDirectory: async () => {
+          if (!failed) {
+            failed = true;
+            throw new Error("quarantine parent durability uncertain");
+          }
+        }
+      }
+    }).catch((error: unknown) => error) as { receipt: {
+      transactionId: string;
+      outcome: string;
+      reasonCode: string;
+    } };
+
+    expect(failure.receipt).toMatchObject({
+      outcome: "recovery-required",
+      reasonCode: "INTEGRATION_CONFIGURATION_UNCERTAIN"
+    });
+    await expect(lstat(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
+    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const authority = await loadIntegrationRecoveryArtifactAuthority(
+        stateDirectory,
+        { transactionId: failure.receipt.transactionId, role: "backup" },
+        { leaseContext }
+      );
+      const resumed = await resumeOwnedTreeCleanup({
+        transactionId: failure.receipt.transactionId,
+        homeBoundaryPath: home,
+        role: "backup",
+        artifactAuthority: authority
+      }, { stateDirectory, leaseContext });
+      expect(ownedTreeHandleSnapshot(resumed)).toMatchObject({
+        role: "backup",
+        status: "moved"
+      });
+    });
   });
 
   it("does not roll back after lease loss at a mutation boundary", async () => {
@@ -1282,7 +1419,7 @@ describe("reviewed v2 companion disconnect", () => {
     expect(receipt).toMatchObject({
       outcome: "ready",
       hook: "removed",
-      companion: "retained",
+      companion: "removed",
       cleanup: "pending",
       reasonCode: "INTEGRATION_READY_CLEANUP_PENDING",
       nextSafeAction: "recover-transaction"
@@ -1290,6 +1427,65 @@ describe("reviewed v2 companion disconnect", () => {
     expect((await readIntegrationRecords(stateDirectory))[0]).toMatchObject({
       action: "remove",
       status: "removed"
+    });
+  });
+
+  it("keeps an interrupted final tree cleanup recoverable from exact authority", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-disconnect-tree-recovery-"));
+    const stateDirectory = join(home, "state");
+    await seedV2Consumer({
+      home,
+      stateDirectory,
+      harness: "codex",
+      instant: "2026-07-05T04:00:00.000Z"
+    });
+    const now = () => new Date("2026-07-05T04:01:00.000Z");
+    const plan = await planIntegrationDisconnect("codex", {
+      home,
+      stateDirectory,
+      now,
+      id: () => "disconnect-recover-tree-cleanup"
+    });
+    const receipt = await disconnectCompanionIntegrationTransaction(plan.id, {
+      home,
+      stateDirectory,
+      now,
+      generateReadiness: async () => report("e")
+    }, {
+      cleanupTree: async (handle) => ({
+        state: "cleanup-pending",
+        handle,
+        warning: Object.assign(new Error("cleanup interrupted"), {
+          code: "INTEGRATION_COMPANION_CLEANUP_PENDING"
+        })
+      })
+    });
+
+    expect(receipt).toMatchObject({
+      outcome: "ready",
+      companion: "removed",
+      cleanup: "pending",
+      nextSafeAction: "recover-transaction"
+    });
+    await expect(lstat(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readIntegrationRecoveryState(stateDirectory)).resolves.toMatchObject({
+      status: "unresolved"
+    });
+
+    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const authority = await loadIntegrationRecoveryArtifactAuthority(
+        stateDirectory,
+        { transactionId: receipt.transactionId, role: "backup" },
+        { leaseContext }
+      );
+      const resumed = await resumeOwnedTreeCleanup({
+        transactionId: receipt.transactionId,
+        homeBoundaryPath: home,
+        role: "backup",
+        artifactAuthority: authority
+      }, { stateDirectory, leaseContext });
+      await expect(cleanupOwnedTree(resumed, { stateDirectory, leaseContext }))
+        .resolves.toMatchObject({ state: "cleaned" });
     });
   });
 
