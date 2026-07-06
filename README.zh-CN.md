@@ -29,6 +29,7 @@ Skill Steward 是一款跨 Harness 的 Agent Skills 本地助手与控制台。C
 - **不用切换到另一个工具：** Codex 和 Claude Code 可以在提示词 Hook 中直接运行预检。Copilot Hook 只观察生命周期，推荐通过配套 Skill 或 CLI 获取。
 - **跨工具看同一份清单：** 直接安装和插件管理的 Skills 会进入一套带证据的可见性模型，而不是看见目录就算可用。
 - **本地修改有退路：** 安装、接入、多 Harness 断开、最终卸载、隔离、恢复和回滚都基于已经检查过的精确计划，遇到漂移立即停止。
+- **中断后可以继续处理：** 托管集成如果在途中停止，CLI、本地 API 和 Dashboard 会根据同一份本地证据推导出唯一安全的撤回或收尾方向，供用户检查确认；不能自行改选方向，也没有强制写入。
 
 排序过程在本机确定性运行，不依赖 LLM。最终是否使用推荐项、以及如何执行任务，仍由你正在使用的 Harness 决定。
 
@@ -206,7 +207,7 @@ skill-steward evidence erase --plan <id> --confirm
 
 ## Harness 集成
 
-Skill Steward 可以接入 Codex、Claude Code 和 GitHub Copilot CLI，而不取代它们。托管 Hook 负责观察原生生命周期，共享配套 Skill 则让 Harness 能显式调用任务预检。JSON 状态会把这两部分分开显示，因此 Hook 已连接时，缺失、过期、被修改或无法读取的配套 Skill 不会被掩盖：
+Skill Steward 可以接入 Codex、Claude Code 和 GitHub Copilot CLI，而不取代它们。托管 Hook 负责观察原生生命周期，共享配套 Skill 则让 Harness 能显式调用任务预检。JSON v2 状态会分别给出两部分的目标、原因、可用性和配套 Skill 的证据类别，因此 Hook 已连接时，缺失、过期、被修改或无法读取的配套 Skill 不会被掩盖：
 
 ```bash
 skill-steward integrate status --json
@@ -222,6 +223,16 @@ skill-steward integrate apply --plan <plan-id> --confirm
 skill-steward integrate remove --harness codex
 skill-steward integrate remove --plan <plan-id> --confirm
 ```
+
+三种适配器共用一个配套 Skill 和一把修改锁，因此中断恢复是全局状态。查询状态不会修改文件；确认存在可恢复事务后，系统会先生成一次性方案。方案中的 `rollback` 或 `finalize` 方向由准确的事务和生命周期记录推导，用户只能检查并确认，不能改选。证据不明确时只提供诊断，不显示恢复按钮。
+
+```bash
+skill-steward integrate recovery status --json
+skill-steward integrate recovery plan
+skill-steward integrate recovery apply --plan <plan-id> --confirm
+```
+
+在受支持的 POSIX 平台上，恢复流程覆盖中断的新建、升级、连接、保留配套 Skill 的断开，以及最后一个使用方卸载。执行前会在同一把锁内重新核对记录、事务序号、文件证据、平台和方案有效期；恢复只完成一部分时会继续阻止其他变更，并要求生成新方案，不会误报成功。当前 Alpha 仍不支持在 Windows 上执行恢复写入。
 
 断开连接时，Skill Steward 会移除已经检查过的 Harness Hook，并同步更新有证据支持的使用方名单。只要还有其他 Harness 在使用，共享配套 Skill 就会原样保留；最后一个使用方断开时，只删除与安装记录完全一致的文件树。内容被修改、无法读取或缺少证明时，文件会留在原处等待人工检查。卸载依据安装时记录的指纹，而不是当前软件包，因此升级 Skill Steward 后，仍能安全移除没有被改动的旧版配套 Skill。新建、升级和最终卸载都依赖当前平台对应的无覆盖原生辅助包；缺包或不支持时直接阻止写入，不会退回存在竞态的文件操作。
 
@@ -287,7 +298,7 @@ Skill Steward 更适合同时使用多个 Harness、希望按当前任务选择 
 
 | 产品 | 主要用途 | 任务开始时如何选择 | 跨 Harness 生命周期 |
 |---|---|---|---|
-| **Skill Steward** | 带证据的本地清单、任务预检、隐私裁剪证据和可恢复治理 | **针对当前任务统一比较已安装项与主动启用的目录候选项** | **三个核心适配器支持 Hook + 共享配套 Skill 评审事务、精确最终卸载、回滚和本地恢复记录；其他 Harness 只做目录约定盘点** |
+| **Skill Steward** | 带证据的本地清单、任务预检、隐私裁剪证据和可恢复治理 | **针对当前任务统一比较已安装项与主动启用的目录候选项** | **三个核心适配器共用 Hook + 配套 Skill 评审事务、精确最终卸载，以及 CLI/API/Dashboard 一致的证据推导恢复；其他 Harness 只做目录约定盘点** |
 | [Microsoft APM](https://microsoft.github.io/apm/) | 使用 manifest、lockfile、传递依赖、策略和 CI 审计管理 Agent 上下文包 | 安装并编译已经声明的依赖；审计完整性和部署漂移 | 向多个 Harness 部署不同类型的 Agent 配置，并用 lockfile 与策略保证可复现性 |
 | [skills.sh](https://www.skills.sh/docs) | 公共目录、排行榜、安全检查和跨 Agent 一键安装 | 安装前按搜索与热度发现 Skills | 通过 CLI 把 GitHub Skills 安装或更新到支持的 Agent |
 | [Tessl](https://docs.tessl.io/) | Skill 的版本化 Registry、评测、分发与优化 | 安装前搜索 Registry，并参考质量和效果评测 | 提供面向多种 Agent 的安装与托管评测流程 |

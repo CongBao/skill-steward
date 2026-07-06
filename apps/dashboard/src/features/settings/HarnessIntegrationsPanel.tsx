@@ -1,19 +1,24 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cable, Check, ShieldAlert } from "lucide-react";
+import { Cable, Check, ShieldAlert, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   ApiRequestError,
   ApiTransportError,
+  applyIntegrationRecovery,
   applyHarnessIntegration,
   disconnectHarnessIntegration,
   fetchIntegrationCapabilities,
+  fetchIntegrationRecovery,
   fetchIntegrations,
+  planIntegrationRecovery,
   planHarnessDisconnect,
   planHarnessIntegration,
   type IntegrationDisconnectPlan,
   type IntegrationHarness,
   type IntegrationMutationResult,
   type IntegrationPlan,
+  type IntegrationRecoveryPlan,
+  type IntegrationRecoveryReceipt,
   type IntegrationTransactionReceipt
 } from "../../api/client.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
@@ -99,7 +104,13 @@ const integrationErrorKeys: Readonly<Record<string, TranslationKey>> = {
   INTEGRATION_PLAN_MISMATCH: "settings.integrations.error.planMismatch",
   INTEGRATION_DRIFTED: "settings.integrations.error.drifted",
   INTEGRATION_TRANSACTION_FAILED: "settings.integrations.error.transactionFailed",
-  INTEGRATION_RECOVERY_REQUIRED: "settings.integrations.error.recoveryRequired"
+  INTEGRATION_RECOVERY_REQUIRED: "settings.integrations.error.recoveryRequired",
+  INTEGRATION_RECOVERY_NOT_REQUIRED: "settings.integrations.error.recoveryNotRequired",
+  INTEGRATION_RECOVERY_UNAVAILABLE: "settings.integrations.error.recoveryUnavailable",
+  INTEGRATION_RECOVERY_RECORD_CONTRADICTORY: "settings.integrations.error.recoveryUnavailable",
+  INTEGRATION_RECOVERY_PLAN_STALE: "settings.integrations.error.recoveryStale",
+  INTEGRATION_RECOVERY_INCOMPLETE: "settings.integrations.error.recoveryIncomplete",
+  INTEGRATION_PLATFORM_UNSUPPORTED: "settings.integrations.error.recoveryPlatform"
 };
 
 interface IntegrationUiError {
@@ -115,13 +126,23 @@ export function HarnessIntegrationsPanel() {
   const [result, setResult] = useState<IntegrationMutationResult | null>(null);
   const [operation, setOperation] = useState<IntegrationOperationState>("idle");
   const [operationError, setOperationError] = useState<IntegrationUiError | null>(null);
+  const [recoveryPlan, setRecoveryPlan] = useState<IntegrationRecoveryPlan | null>(null);
+  const [recoveryResult, setRecoveryResult] = useState<IntegrationRecoveryReceipt | null>(null);
   const operationGuard = useRef(createIntegrationOperationGuard());
+  const recoveryConfirmRef = useRef<HTMLButtonElement>(null);
   const integrations = useQuery({ queryKey: ["integrations"], queryFn: fetchIntegrations });
   const capabilities = useQuery({
     queryKey: ["integrations", "capabilities"],
     queryFn: fetchIntegrationCapabilities
   });
+  const recovery = useQuery({
+    queryKey: ["integration-recovery"],
+    queryFn: fetchIntegrationRecovery
+  });
   useEffect(() => () => operationGuard.current.invalidate(), []);
+  useEffect(() => {
+    if (recoveryPlan) recoveryConfirmRef.current?.focus();
+  }, [recoveryPlan]);
 
   const reviewPlan = async (harness: IntegrationHarness, disconnect: boolean) => {
     const token = operationGuard.current.begin("reviewing");
@@ -165,6 +186,7 @@ export function HarnessIntegrationsPanel() {
         setPlan(null);
       })) {
         await queryClient.invalidateQueries({ queryKey: ["integrations"] });
+        await queryClient.invalidateQueries({ queryKey: ["integration-recovery"] });
       }
     } catch (error) {
       const transport = error instanceof ApiTransportError;
@@ -187,13 +209,67 @@ export function HarnessIntegrationsPanel() {
     }
   };
 
+  const reviewRecovery = async () => {
+    const token = operationGuard.current.begin("reviewing");
+    if (!token) return;
+    setOperation("reviewing");
+    setOperationError(null);
+    try {
+      const reviewed = await planIntegrationRecovery();
+      operationGuard.current.commit(token, () => {
+        setRecoveryResult(null);
+        setRecoveryPlan(reviewed);
+      });
+    } catch (error) {
+      operationGuard.current.commit(token, () => {
+        setOperationError(uiError(error));
+        if (!(error instanceof ApiTransportError)) setRecoveryPlan(null);
+      });
+    } finally {
+      if (operationGuard.current.finish(token)) setOperation("idle");
+    }
+  };
+
+  const confirmRecovery = async () => {
+    if (!recoveryPlan) return;
+    const token = operationGuard.current.begin("applying");
+    if (!token) return;
+    setOperation("applying");
+    setOperationError(null);
+    try {
+      const receipt = await applyIntegrationRecovery(recoveryPlan.planId);
+      if (operationGuard.current.commit(token, () => {
+        setRecoveryResult(receipt);
+        setRecoveryPlan(null);
+      })) {
+        await queryClient.invalidateQueries({ queryKey: ["integrations"] });
+        await queryClient.invalidateQueries({ queryKey: ["integration-recovery"] });
+      }
+    } catch (error) {
+      const transport = error instanceof ApiTransportError;
+      operationGuard.current.commit(token, () => {
+        setOperationError(uiError(error, transport));
+        if (!transport) setRecoveryPlan(null);
+      });
+      if (!transport) {
+        await queryClient.invalidateQueries({ queryKey: ["integration-recovery"] });
+      }
+    } finally {
+      if (operationGuard.current.finish(token)) setOperation("idle");
+    }
+  };
+
   const cancelPlan = () => {
     if (operationGuard.current.state() !== "idle") return;
     setPlan(null);
     setOperationError(null);
   };
   const statuses = Array.isArray(integrations.data) ? integrations.data : [];
-  const queryError = integrations.error ?? capabilities.error;
+  const recoveryStatus = recovery.data && !Array.isArray(recovery.data)
+    ? recovery.data
+    : undefined;
+  const recoveryBlocksChanges = recoveryStatus !== undefined && recoveryStatus.state !== "clear";
+  const queryError = integrations.error ?? capabilities.error ?? recovery.error;
   const planName = plan ? actionName(plan.action, t) : "";
   const selectedHarnessName = plan ? harnessName(plan.harness) : "";
   const confirmLabel = plan
@@ -213,18 +289,93 @@ export function HarnessIntegrationsPanel() {
           </div>
         </div>
       </header>
+      {recoveryStatus ? (
+        <section
+          className="integration-recovery-banner"
+          data-state={recoveryStatus.state}
+          role={recoveryStatus.state === "unknown" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <div className="integration-recovery-heading">
+            <TriangleAlert size={18} />
+            <div>
+              <h3>{t(recoveryStatus.state === "clear"
+                ? "settings.integrations.recovery.clearTitle"
+                : "settings.integrations.recovery.title")}</h3>
+              <p>{t(`settings.integrations.recovery.copy.${recoveryStatus.state}` as TranslationKey)}</p>
+            </div>
+          </div>
+          {"transaction" in recoveryStatus && recoveryStatus.transaction ? (
+            <dl>
+              <div><dt>{t("settings.integrations.recovery.harness")}</dt><dd>{harnessName(recoveryStatus.transaction.harness)}</dd></div>
+              <div><dt>{t("settings.integrations.recovery.phase")}</dt><dd>{recoveryStatus.transaction.phase}</dd></div>
+              <div><dt>{t("settings.integrations.recovery.transaction")}</dt><dd><code>{recoveryStatus.transaction.transactionId}</code></dd></div>
+            </dl>
+          ) : null}
+          {recoveryStatus.recoverable ? (
+            <button
+              className="button"
+              disabled={operation !== "idle" || recoveryPlan !== null}
+              onClick={() => void reviewRecovery()}
+            >
+              {t("settings.integrations.recovery.review")}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+      {recoveryPlan ? (
+        <section className="integration-recovery-plan" aria-live="polite">
+          <header>
+            <div>
+              <h3>{t("settings.integrations.recovery.planTitle")}</h3>
+              <p>{t(`settings.integrations.recovery.action.${recoveryPlan.action}` as TranslationKey)}</p>
+            </div>
+            <span>{recoveryPlan.transaction.phase}</span>
+          </header>
+          <p>{t("settings.integrations.recovery.planNotice")}</p>
+          <footer className="integration-plan-actions">
+            <button
+              className="button"
+              disabled={operation !== "idle"}
+              onClick={() => setRecoveryPlan(null)}
+            >
+              {t("settings.cancel")}
+            </button>
+            <button
+              ref={recoveryConfirmRef}
+              className="button primary"
+              disabled={operation !== "idle" || !recoveryPlan.availability.available}
+              onClick={() => void confirmRecovery()}
+            >
+              {t("settings.integrations.recovery.confirm")}
+            </button>
+          </footer>
+        </section>
+      ) : null}
+      {recoveryResult ? (
+        <p
+          className="integration-recovery-result"
+          data-outcome={recoveryResult.outcome}
+          role={recoveryResult.outcome === "recovered" ? "status" : "alert"}
+          tabIndex={-1}
+        >
+          {t(recoveryResult.outcome === "recovered"
+            ? "settings.integrations.recovery.completed"
+            : "settings.integrations.recovery.incomplete")}
+        </p>
+      ) : null}
       <div className="integration-list">
         {harnesses.map((harness) => {
           const status = statuses.find((item) => item.harness === harness);
           const capability = capabilities.data?.find((item) => item.harness === harness);
           const statusFallback = integrations.isPending ? "loading" : "unavailable";
-          const hookStatus = status?.hookStatus ?? statusFallback;
-          const companionStatus = status?.status ?? statusFallback;
+          const hookStatus = status?.hook?.status ?? status?.hookStatus ?? statusFallback;
+          const companionStatus = status?.companion?.status ?? status?.status ?? statusFallback;
           const name = capability?.displayName ?? harnessName(harness);
           const articleLabel = t("settings.integrations.articleLabel").replace("{name}", name);
           const disconnect = status !== undefined
-            && (status.hookStatus === "installed" || status.hookStatus === "needs-trust")
-            && status.status === "current";
+            && (hookStatus === "installed" || hookStatus === "needs-trust")
+            && companionStatus === "current";
           const reviewLabel = disconnect
             ? locale === "zh-CN"
               ? `检查 ${name} 断开连接`
@@ -266,7 +417,7 @@ export function HarnessIntegrationsPanel() {
                 <button
                   className="button"
                   aria-label={reviewLabel}
-                  disabled={operation !== "idle" || status === undefined}
+                  disabled={operation !== "idle" || status === undefined || recoveryBlocksChanges}
                   onClick={() => void reviewPlan(harness, disconnect)}
                 >
                   {disconnect

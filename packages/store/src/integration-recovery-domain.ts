@@ -39,6 +39,7 @@ const absolutePathSchema = z.string().min(1).max(MAX_PATH_BYTES).refine(
 const artifactRoleSchema = z.enum([
   "stage",
   "backup",
+  "cleanup",
   "installed",
   "config-backup",
   "readiness-backup"
@@ -269,9 +270,9 @@ function uniqueRolesAndPaths(
   }
 }
 
-const artifactHintsSchema = z.array(artifactHintSchema).max(5)
+const artifactHintsSchema = z.array(artifactHintSchema).max(6)
   .superRefine((values, context) => uniqueRolesAndPaths(values, context, "Artifact hint"));
-const artifactProofsSchema = z.array(integrationRecoveryArtifactProofSchema).max(5)
+const artifactProofsSchema = z.array(integrationRecoveryArtifactProofSchema).max(6)
   .superRefine((values, context) => uniqueRolesAndPaths(values, context, "Artifact proof"));
 
 const recoveryBaseObjectSchema = z.object({
@@ -325,7 +326,19 @@ export const integrationRecoveryStateSchema = recoveryBaseObjectSchema.extend({
   transitionedAt: z.string().datetime(),
   artifactProofs: artifactProofsSchema,
   configurationArtifact: integrationFileRecoveryArtifactSchema.optional(),
-  readinessArtifact: integrationReadinessRecoveryBindingSchema.optional()
+  readinessArtifact: integrationReadinessRecoveryBindingSchema.optional(),
+  completedSteps: z.array(z.enum([
+    "readiness-finalized",
+    "configuration-finalized",
+    "companion-finalized"
+  ])).max(3).default([]).superRefine((steps, context) => {
+    if (JSON.stringify(steps) !== JSON.stringify([...new Set(steps)].sort())) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Completed recovery steps must be unique and sorted"
+      });
+    }
+  })
 }).strict().superRefine((value, context) => {
   validateRecoveryBase(value, context);
   if (value.state === "mutating" && value.lifecycleRecordBinding === undefined) {
@@ -387,6 +400,15 @@ export const integrationRecoveryStateSchema = recoveryBaseObjectSchema.extend({
     });
   }
   if (
+    value.completedSteps.length > 0
+    && !["committed", "cleanup-pending", "closed"].includes(value.state)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Completed recovery steps require committed recovery"
+    });
+  }
+  if (
     value.readinessArtifact !== undefined
     && value.readinessArtifact.recoveryTransactionId !== value.transactionId
   ) {
@@ -419,7 +441,12 @@ export const integrationRecoveryTransitionInputSchema = z.object({
   lifecycleRecordBindingAddition: integrationRecordV2BindingSchema.optional(),
   artifactProofAdditions: artifactProofsSchema.optional(),
   configurationArtifactAddition: integrationFileRecoveryArtifactSchema.optional(),
-  readinessArtifactAddition: integrationReadinessRecoveryBindingSchema.optional()
+  readinessArtifactAddition: integrationReadinessRecoveryBindingSchema.optional(),
+  completedStepAdditions: z.array(z.enum([
+    "readiness-finalized",
+    "configuration-finalized",
+    "companion-finalized"
+  ])).min(1).max(3).optional()
 }).strict();
 
 export type IntegrationRecoveryArtifactProof = z.infer<typeof integrationRecoveryArtifactProofSchema>;
@@ -438,8 +465,8 @@ export const allowedRecoveryTransitions: Readonly<Record<
   mutating: ["mutating", "recovery-required", "rolled-back", "committed"],
   "recovery-required": ["rolled-back", "committed"],
   "rolled-back": ["closed"],
-  committed: ["cleanup-pending", "closed"],
-  "cleanup-pending": ["closed"],
+  committed: ["committed", "cleanup-pending", "closed"],
+  "cleanup-pending": ["cleanup-pending", "closed"],
   closed: []
 };
 
@@ -563,6 +590,15 @@ export function validateRecoveryHistory(states: IntegrationRecoveryState[]): voi
         && !["mutating", "recovery-required", "committed"].includes(current.state)
       ) {
         throw new Error("Integration readiness recovery artifact was added in an invalid state");
+      }
+      if (previous.completedSteps.some((step) => !current.completedSteps.includes(step))) {
+        throw new Error("Completed integration recovery steps cannot be removed");
+      }
+      if (
+        current.completedSteps.some((step) => !previous.completedSteps.includes(step))
+        && !["committed", "cleanup-pending"].includes(current.state)
+      ) {
+        throw new Error("Completed integration recovery steps were added in an invalid state");
       }
     }
   }

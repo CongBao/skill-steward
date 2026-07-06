@@ -250,6 +250,20 @@ describe("reviewed plan store", () => {
     })).rejects.toMatchObject({ code: "REVIEWED_PLAN_NOT_FOUND" });
   });
 
+  it("stores and durably claims the distinct integration-recovery kind", async () => {
+    const stateDir = await state("steward-reviewed-recovery-");
+    const plan = envelope("recovery-plan", "integration-recovery");
+
+    await writeReviewedPlan(stateDir, plan);
+    vi.resetModules();
+    const freshStore = await import("../src/reviewed-plan-store.js");
+    await expect(freshStore.claimReviewedPlan(stateDir, {
+      id: plan.id,
+      kind: "integration-recovery",
+      now: new Date("2026-07-03T00:01:00.000Z")
+    })).resolves.toEqual(plan);
+  });
+
   it("writes private files and lets a fresh module instance claim the payload", async () => {
     const stateDir = await state("steward-reviewed-plan-");
     const plan = envelope("plan-1");

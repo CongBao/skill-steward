@@ -14,9 +14,9 @@ import { fileURLToPath } from "node:url";
 import {
   readIntegrationRecords,
   readIntegrationRecordJournal,
+  readIntegrationRecoveryInspection,
   readIntegrationRecoveryState,
   readLatestReport,
-  loadIntegrationRecoveryArtifactAuthority,
   restoreIntegrationFileTransaction,
   restoreIntegrationReadiness,
   withIntegrationMutationLease
@@ -28,6 +28,7 @@ import {
   disconnectCompanionIntegrationTransaction,
   type CompanionTransactionOptions
 } from "../src/companion-transaction.js";
+import { cleanupOwnedTree } from "../src/companion-owned-tree.js";
 import {
   integrationStatus,
   integrationDisconnectPlanSchema,
@@ -36,10 +37,9 @@ import {
 } from "../src/config.js";
 import { inspectCompanionTree } from "../src/companion-manifest.js";
 import {
-  cleanupOwnedTree,
-  ownedTreeHandleSnapshot,
-  resumeOwnedTreeCleanup
-} from "../src/companion-owned-tree.js";
+  applyIntegrationRecoveryPlan,
+  planIntegrationRecovery
+} from "../src/integration-recovery.js";
 import type { IntegrationHarness } from "../src/domain.js";
 
 const packagedCompanion = fileURLToPath(
@@ -1315,23 +1315,34 @@ describe("reviewed v2 companion disconnect", () => {
       reasonCode: "INTEGRATION_CONFIGURATION_UNCERTAIN"
     });
     await expect(lstat(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
-    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
-      const authority = await loadIntegrationRecoveryArtifactAuthority(
-        stateDirectory,
-        { transactionId: failure.receipt.transactionId, role: "backup" },
-        { leaseContext }
-      );
-      const resumed = await resumeOwnedTreeCleanup({
-        transactionId: failure.receipt.transactionId,
-        homeBoundaryPath: home,
-        role: "backup",
-        artifactAuthority: authority
-      }, { stateDirectory, leaseContext });
-      expect(ownedTreeHandleSnapshot(resumed)).toMatchObject({
-        role: "backup",
-        status: "moved"
-      });
+    const recoveryPlan = await planIntegrationRecovery({
+      stateDirectory,
+      now: () => new Date("2026-07-05T04:02:00.000Z"),
+      id: () => "recover-uncertain-final-removal",
+      platform: "darwin"
     });
+    expect(recoveryPlan).toMatchObject({
+      action: "rollback",
+      transaction: { transactionId: failure.receipt.transactionId }
+    });
+    await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-05T04:03:00.000Z"),
+      platform: "darwin"
+    })).resolves.toMatchObject({
+      action: "rollback",
+      outcome: "recovered",
+      finalState: "closed"
+    });
+    await expect(inspectCompanionTree(plan.companion.path, {
+      boundary: home,
+      platform: "darwin"
+    })).resolves.toMatchObject({ fingerprint: plan.companion.installedFingerprint });
+    await expect(readFile(plan.configuration.path, "utf8"))
+      .resolves.toBe(stableJson(plan.configuration.before.config));
+    await expect(readIntegrationRecoveryState(stateDirectory))
+      .resolves.toEqual({ status: "clear" });
   });
 
   it("does not roll back after lease loss at a mutation boundary", async () => {
@@ -1420,9 +1431,11 @@ describe("reviewed v2 companion disconnect", () => {
       outcome: "ready",
       hook: "removed",
       companion: "removed",
-      cleanup: "pending",
-      reasonCode: "INTEGRATION_READY_CLEANUP_PENDING",
-      nextSafeAction: "recover-transaction"
+      cleanup: boundary === "recovery-close" ? "clean" : "pending",
+      reasonCode: boundary === "recovery-close"
+        ? "INTEGRATION_READY"
+        : "INTEGRATION_READY_CLEANUP_PENDING",
+      nextSafeAction: boundary === "recovery-close" ? "none" : "recover-transaction"
     });
     expect((await readIntegrationRecords(stateDirectory))[0]).toMatchObject({
       action: "remove",
@@ -1452,12 +1465,14 @@ describe("reviewed v2 companion disconnect", () => {
       now,
       generateReadiness: async () => report("e")
     }, {
-      cleanupTree: async (handle) => ({
-        state: "cleanup-pending",
-        handle,
-        warning: Object.assign(new Error("cleanup interrupted"), {
-          code: "INTEGRATION_COMPANION_CLEANUP_PENDING"
-        })
+      cleanupTree: async (handle, options) => cleanupOwnedTree(handle, {
+        ...options,
+        hooks: {
+          ...options.hooks,
+          unlinkPath: async () => {
+            throw Object.assign(new Error("cleanup interrupted"), { code: "EIO" });
+          }
+        }
       })
     });
 
@@ -1468,25 +1483,43 @@ describe("reviewed v2 companion disconnect", () => {
       nextSafeAction: "recover-transaction"
     });
     await expect(lstat(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readIntegrationRecoveryState(stateDirectory)).resolves.toMatchObject({
-      status: "unresolved"
+    await expect(readIntegrationRecoveryInspection(stateDirectory)).resolves.toMatchObject({
+      status: "unresolved",
+      transaction: {
+        artifactProofs: expect.arrayContaining([
+          expect.objectContaining({
+            role: "backup",
+            path: expect.stringMatching(/\.cleanup$/u)
+          })
+        ])
+      }
     });
 
-    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
-      const authority = await loadIntegrationRecoveryArtifactAuthority(
-        stateDirectory,
-        { transactionId: receipt.transactionId, role: "backup" },
-        { leaseContext }
-      );
-      const resumed = await resumeOwnedTreeCleanup({
-        transactionId: receipt.transactionId,
-        homeBoundaryPath: home,
-        role: "backup",
-        artifactAuthority: authority
-      }, { stateDirectory, leaseContext });
-      await expect(cleanupOwnedTree(resumed, { stateDirectory, leaseContext }))
-        .resolves.toMatchObject({ state: "cleaned" });
+    const recoveryPlan = await planIntegrationRecovery({
+      stateDirectory,
+      now: () => new Date("2026-07-05T04:02:00.000Z"),
+      id: () => "recover-committed-final-cleanup",
+      platform: "darwin"
     });
+    expect(recoveryPlan).toMatchObject({
+      action: "finalize",
+      transaction: {
+        transactionId: receipt.transactionId,
+        phase: "cleanup-pending"
+      }
+    });
+    await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-05T04:03:00.000Z"),
+      platform: "darwin"
+    })).resolves.toMatchObject({
+      action: "finalize",
+      outcome: "recovered",
+      finalState: "closed"
+    });
+    await expect(readIntegrationRecoveryState(stateDirectory))
+      .resolves.toEqual({ status: "clear" });
   });
 
   it("serializes two disconnects so the stale waiter cannot append another remove", async () => {

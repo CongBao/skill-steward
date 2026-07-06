@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliContext } from "../src/context.js";
 import {
   integrateApplyCommand,
+  integrateRecoveryApplyCommand,
   integrateRemoveCommand
 } from "../src/commands/integrate.js";
 import { run } from "../src/main.js";
@@ -93,6 +94,82 @@ describe("integrate command", () => {
     expect(source).toContain("planIntegrationDisconnect");
     expect(source).toContain("applyIntegrationDisconnect");
     expect(source).not.toContain("disconnectCompanionIntegrationTransaction");
+  });
+
+  it("shows global recovery status and refuses to invent a plan when state is clear", async () => {
+    expect(await run([
+      "integrate", "recovery", "status", "--json"
+    ], current.context)).toBe(0);
+    expect(JSON.parse(current.stdout.splice(0).join(""))).toEqual({
+      state: "clear",
+      reasonCode: "INTEGRATION_RECOVERY_CLEAR",
+      recoverable: false
+    });
+
+    expect(await run([
+      "integrate", "recovery", "plan", "--json"
+    ], current.context)).toBe(1);
+    expect(JSON.parse(current.stderr.splice(0).join(""))).toEqual({
+      error: {
+        code: "INTEGRATION_RECOVERY_NOT_REQUIRED",
+        message: "No integration recovery is required."
+      }
+    });
+  });
+
+  it("renders the v2 Hook and companion status domains with targets and proof", async () => {
+    expect(await run([
+      "integrate", "status", "--harness", "codex"
+    ], current.context)).toBe(0);
+    const output = current.stdout.splice(0).join("");
+    expect(output).toContain("codex: Hook not-installed; companion missing (COMPANION_MISSING)");
+    expect(output).toContain(`Hook target: ${join(current.home, ".codex", "hooks.json")}`);
+    expect(output).toContain(
+      `Companion target: ${join(current.home, ".agents", "skills", "skill-steward-preflight")}`
+    );
+    expect(output).toContain("Companion proof: new");
+    expect(output).not.toMatch(/--force|retry/i);
+  });
+
+  it("requires confirmation and passes only the reviewed recovery plan ID", async () => {
+    const apply = vi.fn(async () => ({
+      schemaVersion: 1 as const,
+      transactionId: "00000000-0000-4000-8000-000000000001",
+      planId: "recovery-plan",
+      action: "rollback" as const,
+      outcome: "recovered" as const,
+      finalState: "closed" as const,
+      reasonCode: "INTEGRATION_RECOVERY_ROLLED_BACK",
+      nextSafeAction: "create-new-plan" as const
+    }));
+    const dependencies = {
+      status: vi.fn(),
+      plan: vi.fn(),
+      apply
+    };
+    expect(await integrateRecoveryApplyCommand({
+      plan: "recovery-plan",
+      confirm: false,
+      json: true
+    }, current.context, dependencies)).toBe(1);
+    expect(apply).not.toHaveBeenCalled();
+    expect(JSON.parse(current.stderr.splice(0).join("")).error.code)
+      .toBe("REVIEWED_PLAN_CONFIRMATION_REQUIRED");
+
+    expect(await integrateRecoveryApplyCommand({
+      plan: "recovery-plan",
+      confirm: true,
+      json: true
+    }, current.context, dependencies)).toBe(0);
+    expect(apply).toHaveBeenCalledWith("recovery-plan", {
+      home: current.context.home,
+      stateDirectory: current.context.stateDir,
+      now: current.context.now
+    });
+    expect(JSON.parse(current.stdout.splice(0).join(""))).toMatchObject({
+      planId: "recovery-plan",
+      receipt: { action: "rollback", finalState: "closed" }
+    });
   });
 
   it("creates the companion through one strict reviewed plan ID", async () => {

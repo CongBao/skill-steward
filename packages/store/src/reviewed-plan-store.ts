@@ -37,6 +37,7 @@ const reviewedPlanKindSchema = z.enum([
   "governance",
   "integration",
   "integration-disconnect",
+  "integration-recovery",
   "evidence-policy",
   "evidence-erase"
 ]);

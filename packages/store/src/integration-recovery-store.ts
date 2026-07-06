@@ -74,6 +74,11 @@ export type IntegrationRecoverySummary =
   | { status: "unresolved"; reason: "INTEGRATION_RECOVERY_REQUIRED" }
   | { status: "unavailable"; reason: "INTEGRATION_RECOVERY_UNAVAILABLE" };
 
+export type IntegrationRecoveryInspection =
+  | { status: "clear" }
+  | { status: "unresolved"; transaction: IntegrationRecoveryState }
+  | { status: "unavailable"; reason: "INTEGRATION_RECOVERY_UNAVAILABLE" };
+
 export interface IntegrationRecoveryAppendOptions {
   leaseContext: IntegrationMutationLeaseContext;
   beforePublish?: () => Promise<void>;
@@ -119,6 +124,7 @@ export interface IntegrationRecoveryStore {
     input: { transactionId: string; operation: IntegrationReadinessRecoveryOperation },
     options: { leaseContext: IntegrationMutationLeaseContext }
   ): Promise<IntegrationReadinessRecoveryAuthority>;
+  readIntegrationRecoveryInspection(stateDirectory: string): Promise<IntegrationRecoveryInspection>;
   readIntegrationRecoveryState(stateDirectory: string): Promise<IntegrationRecoverySummary>;
 }
 
@@ -658,6 +664,14 @@ async function appendWithContext(
     ) {
       throw new Error("Readiness recovery artifact can only be added during live recovery");
     }
+    const additions = transition.completedStepAdditions ?? [];
+    if (additions.some((step) => latest.completedSteps.includes(step))) {
+      throw new Error("A completed recovery step cannot be added twice");
+    }
+    if (additions.length > 0 && !["committed", "cleanup-pending"].includes(transition.state)) {
+      throw new Error("Completed recovery steps require committed recovery");
+    }
+    const completedSteps = [...latest.completedSteps, ...additions].sort();
     const next = integrationRecoveryStateSchema.parse({
       ...latest,
       sequence: latest.sequence + 1,
@@ -666,11 +680,39 @@ async function appendWithContext(
       ...(lifecycleRecordBinding ? { lifecycleRecordBinding } : {}),
       artifactProofs,
       ...(configurationArtifact ? { configurationArtifact } : {}),
-      ...(readinessArtifact ? { readinessArtifact } : {})
+      ...(readinessArtifact ? { readinessArtifact } : {}),
+      completedSteps
     });
     await publish(stateDirectory, storage, next, options, context);
     return next;
   });
+}
+
+async function inspectWithContext(
+  stateDirectory: string,
+  context: RecoveryStoreContext
+): Promise<IntegrationRecoveryInspection> {
+  try {
+    const snapshot = await readRecoverySnapshot(stateDirectory, context);
+    const latest = new Map<string, IntegrationRecoveryState>();
+    for (const state of snapshot.states) {
+      const current = latest.get(state.transactionId);
+      if (!current || state.sequence > current.sequence) latest.set(state.transactionId, state);
+    }
+    const unresolved = [...latest.values()].filter(({ state }) =>
+      state !== "rolled-back" && state !== "closed"
+    );
+    if (unresolved.length === 0) return { status: "clear" };
+    if (unresolved.length !== 1) {
+      return { status: "unavailable", reason: "INTEGRATION_RECOVERY_UNAVAILABLE" };
+    }
+    return {
+      status: "unresolved",
+      transaction: integrationRecoveryStateSchema.parse(structuredClone(unresolved[0]))
+    };
+  } catch {
+    return { status: "unavailable", reason: "INTEGRATION_RECOVERY_UNAVAILABLE" };
+  }
 }
 
 async function readWithContext(
@@ -684,10 +726,9 @@ async function readWithContext(
       const current = latest.get(state.transactionId);
       if (!current || state.sequence > current.sequence) latest.set(state.transactionId, state);
     }
-    const unresolved = [...latest.values()].some(({ state }) =>
+    return [...latest.values()].some(({ state }) =>
       state !== "rolled-back" && state !== "closed"
-    );
-    return unresolved
+    )
       ? { status: "unresolved", reason: "INTEGRATION_RECOVERY_REQUIRED" }
       : { status: "clear" };
   } catch {
@@ -708,6 +749,7 @@ async function loadArtifactAuthorityWithContext(
     || ![
       "stage",
       "backup",
+      "cleanup",
       "installed",
       "config-backup",
       "readiness-backup"
@@ -765,6 +807,8 @@ export function createIntegrationRecoveryStore(
       loadFileAuthorityWithContext(stateDirectory, input, mutationOptions, context),
     loadIntegrationReadinessRecoveryAuthority: (stateDirectory, input, mutationOptions) =>
       loadReadinessAuthorityWithContext(stateDirectory, input, mutationOptions, context),
+    readIntegrationRecoveryInspection: (stateDirectory) =>
+      inspectWithContext(stateDirectory, context),
     readIntegrationRecoveryState: (stateDirectory) => readWithContext(stateDirectory, context)
   };
 }
@@ -789,6 +833,12 @@ export async function readIntegrationRecoveryState(
   stateDirectory: string
 ): Promise<IntegrationRecoverySummary> {
   return readWithContext(stateDirectory, defaultContext);
+}
+
+export async function readIntegrationRecoveryInspection(
+  stateDirectory: string
+): Promise<IntegrationRecoveryInspection> {
+  return inspectWithContext(stateDirectory, defaultContext);
 }
 
 export async function loadIntegrationRecoveryArtifactAuthority(

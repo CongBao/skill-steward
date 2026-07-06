@@ -41,6 +41,9 @@ import {
 import {
   integrateApplyCommand,
   integratePlanCommand,
+  integrateRecoveryApplyCommand,
+  integrateRecoveryPlanCommand,
+  integrateRecoveryStatusCommand,
   integrateRemoveCommand,
   integrateStatusCommand
 } from "./commands/integrate.js";
@@ -243,6 +246,34 @@ export async function run(
     .option("--json", "JSON output", false)
     .action(async (options: { harness: string; json: boolean }) => {
       exitCode = await integratePlanCommand(options.harness, options.json, context);
+    });
+
+  const recovery = integrate
+    .command("recovery")
+    .description("Inspect and resolve one exact interrupted integration transaction");
+
+  recovery
+    .command("status")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await integrateRecoveryStatusCommand(options.json, context);
+    });
+
+  recovery
+    .command("plan")
+    .option("--json", "JSON output", false)
+    .action(async (options: { json: boolean }) => {
+      exitCode = await integrateRecoveryPlanCommand(options.json, context);
+    });
+
+  recovery
+    .command("apply")
+    .description("Apply the exact domain-derived recovery direction")
+    .option("--plan <id>", "reviewed recovery plan ID")
+    .option("--confirm", "confirm the reviewed recovery plan", false)
+    .option("--json", "JSON output", false)
+    .action(async (options: { plan?: string; confirm: boolean; json: boolean }) => {
+      exitCode = await integrateRecoveryApplyCommand(options, context);
     });
 
   program

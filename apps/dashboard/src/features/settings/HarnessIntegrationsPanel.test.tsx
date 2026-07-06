@@ -30,10 +30,45 @@ function status(
   companion: "current" | "upgrade-available" | "missing" | "conflict" | "unknown",
   hookStatus: "not-installed" | "installed" | "needs-trust" | "drifted" | "invalid" = "not-installed"
 ) {
+  const reason = `COMPANION_${companion.replaceAll("-", "_").toUpperCase()}`;
+  const companionAvailable = companion !== "conflict" && companion !== "unknown";
+  const hookAvailable = hookStatus !== "drifted" && hookStatus !== "invalid";
+  const availability = hookAvailable && companionAvailable
+    ? { state: "available", available: true, reason: null }
+    : {
+        state: "unavailable",
+        available: false,
+        reason: hookAvailable ? reason : `HOOK_${hookStatus.replaceAll("-", "_").toUpperCase()}`
+      };
   return {
+    schemaVersion: 2,
     harness,
+    hook: {
+      status: hookStatus,
+      reason: `HOOK_${hookStatus.replaceAll("-", "_").toUpperCase()}`,
+      target: `/home/.${harness}/hooks.json`,
+      availability: hookAvailable
+        ? { state: "available", available: true, reason: null }
+        : availability
+    },
+    companion: {
+      status: companion,
+      reason,
+      target: "/home/.agents/skills/skill-steward-preflight",
+      proofCategory: companion === "missing"
+        ? "new"
+        : companion === "conflict"
+          ? "conflict"
+          : companion === "unknown"
+            ? "unknown"
+            : "recorded",
+      availability: companionAvailable
+        ? { state: "available", available: true, reason: null }
+        : availability
+    },
+    availability,
     status: companion,
-    reason: `COMPANION_${companion.replaceAll("-", "_").toUpperCase()}`,
+    reason,
     hookStatus
   };
 }
@@ -105,6 +140,113 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("reviews and confirms the domain-derived global recovery without direction controls", async () => {
+  const user = userEvent.setup();
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let recovered = false;
+  vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, ...(init ? { init } : {}) });
+    if (url.endsWith("/capabilities")) return envelope(capabilities);
+    if (url.endsWith("/recovery/plan")) return envelope({
+      schemaVersion: 1,
+      planId: "recovery-plan",
+      action: "finalize",
+      recoveryState: "finalize-required",
+      availability: { state: "available", available: true, reason: null },
+      transaction: {
+        transactionId: "00000000-0000-4000-8000-000000000088",
+        harness: "codex",
+        action: "upgrade",
+        phase: "cleanup-pending",
+        sequence: 7
+      },
+      evidenceDigest: `sha256:${"a".repeat(64)}`,
+      artifacts: { configuration: true, readiness: true, companionRoles: ["cleanup"] },
+      createdAt: "2026-07-06T00:00:00.000Z",
+      expiresAt: "2026-07-06T00:10:00.000Z",
+      applyCommand: "skill-steward integrate recovery apply --plan recovery-plan --confirm"
+    });
+    if (url.endsWith("/recovery/apply")) {
+      recovered = true;
+      return envelope({
+        schemaVersion: 1,
+        transactionId: "00000000-0000-4000-8000-000000000088",
+        planId: "recovery-plan",
+        action: "finalize",
+        outcome: "recovered",
+        finalState: "closed",
+        reasonCode: "INTEGRATION_RECOVERY_FINALIZED",
+        nextSafeAction: "create-new-plan"
+      });
+    }
+    if (url.endsWith("/recovery")) return envelope(recovered ? {
+      state: "clear",
+      reasonCode: "INTEGRATION_RECOVERY_CLEAR",
+      recoverable: false
+    } : {
+      state: "finalize-required",
+      reasonCode: "INTEGRATION_RECOVERY_FINALIZE_REQUIRED",
+      recoverable: true,
+      direction: "finalize",
+      transaction: {
+        transactionId: "00000000-0000-4000-8000-000000000088",
+        harness: "codex",
+        action: "upgrade",
+        phase: "cleanup-pending",
+        sequence: 7
+      }
+    });
+    return envelope([
+      status("codex", "unknown"),
+      status("claude-code", "unknown"),
+      status("github-copilot", "unknown")
+    ]);
+  }));
+  renderPanel();
+
+  expect(await screen.findByText(
+    "The integration record committed, but finalization did not finish. Skill Steward can safely continue the full committed path."
+  )).toBeVisible();
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /force|rollback/i })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review recovery" }));
+  const confirm = await screen.findByRole("button", { name: "Confirm recovery" });
+  expect(confirm).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByText(
+    "Recovery completed. Create a fresh integration plan before the next change."
+  )).toBeVisible();
+  expect(await screen.findByText(
+    "No interrupted integration transaction is blocking changes."
+  )).toBeVisible();
+  const applyCall = calls.find(({ url }) => url.endsWith("/recovery/apply"));
+  expect(applyCall?.init?.body).toBe(JSON.stringify({ planId: "recovery-plan" }));
+});
+
+it("explains unknown recovery naturally in Chinese and offers no mutation", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("/capabilities")) return envelope(capabilities);
+    if (url.endsWith("/recovery")) return envelope({
+      state: "unknown",
+      reasonCode: "INTEGRATION_RECOVERY_UNAVAILABLE",
+      recoverable: false
+    });
+    return envelope([
+      status("codex", "unknown"),
+      status("claude-code", "unknown"),
+      status("github-copilot", "unknown")
+    ]);
+  }));
+  renderPanel("zh-CN");
+
+  expect(await screen.findByText(
+    "现有本地证据不足以判断安全的恢复方向，因此暂不提供恢复操作。"
+  )).toBeVisible();
+  expect(screen.queryByRole("button", { name: /恢复|强制|重试/u })).not.toBeInTheDocument();
 });
 
 it("reviews and keyboard-confirms Create companion with one exact planId", async () => {

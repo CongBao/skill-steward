@@ -59,6 +59,16 @@ skill-steward integrate remove --harness <id>
 skill-steward integrate remove --plan <id> --confirm
 ```
 
+If a managed integration was interrupted, inspect the global recovery state before creating another integration plan. Skill Steward derives the only supported rollback or finalize direction from persisted evidence; there is no direction selector or force flag.
+
+```bash
+skill-steward integrate recovery status --json
+skill-steward integrate recovery plan
+skill-steward integrate recovery apply --plan <id> --confirm
+```
+
+Recovery plans are expiring and single-use. Apply revalidates exact local evidence under the same mutation lease. Uncertain evidence exposes no recovery action, and an incomplete recovery asks for a fresh review instead of claiming success. Recovery mutation is POSIX-only in this Alpha.
+
 ## Package trust
 
 The tarball includes this package `README.md`, the project `LICENSE`, generated `dist/THIRD_PARTY_NOTICES.txt`, and a machine-readable third-party manifest. Package tests verify real npm and pnpm tarballs against the trusted build tree and the source-controlled `runtime-audit.json`, including executable and Web asset bytes. Normal builds validate the runtime audit but never update it implicitly.

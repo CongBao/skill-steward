@@ -423,6 +423,7 @@ export interface IntegrationStatus {
     status: CompanionSkillStatus;
     reason: string;
     path: string;
+    proofCategory: "new" | "recorded" | "legacy-alpha" | "conflict" | "unknown";
   };
 }
 
@@ -1818,7 +1819,8 @@ export async function integrationStatus(
     }).catch(() => ({
       status: "unknown" as const,
       reason: "COMPANION_INSPECTION_UNAVAILABLE",
-      path: resolve(options.home, ".agents", "skills", "skill-steward-preflight")
+      path: resolve(options.home, ".agents", "skills", "skill-steward-preflight"),
+      subplan: undefined
     }))
   ]);
   return {
@@ -1826,7 +1828,8 @@ export async function integrationStatus(
     companion: {
       status: companionInspection.status,
       reason: companionInspection.reason,
-      path: companionInspection.path
+      path: companionInspection.path,
+      proofCategory: companionInspection.subplan?.proof.kind ?? "unknown"
     }
   };
 }

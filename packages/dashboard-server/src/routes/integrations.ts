@@ -45,6 +45,18 @@ function withApplyCommand<T extends {
   };
 }
 
+function withRecoveryApplyCommand<T extends {
+  planId: string;
+  availability: { available: boolean };
+}>(plan: T): T & { applyCommand: string | null } {
+  return {
+    ...plan,
+    applyCommand: plan.availability.available
+      ? `skill-steward integrate recovery apply --plan ${plan.planId} --confirm`
+      : null
+  };
+}
+
 export function registerIntegrationRoutes(
   app: FastifyInstance,
   services: IntegrationServices
@@ -56,6 +68,30 @@ export function registerIntegrationRoutes(
       return sendIntegrationError(reply, error);
     }
   });
+  app.get("/api/v1/integrations/recovery", async (_request, reply) => {
+    try {
+      return apiSuccess(await services.recoveryStatus());
+    } catch (error) {
+      return sendIntegrationError(reply, error);
+    }
+  });
+  app.post("/api/v1/integrations/recovery/plan", async (_request, reply) => {
+    try {
+      return apiSuccess(withRecoveryApplyCommand(await services.planRecovery()));
+    } catch (error) {
+      return sendIntegrationError(reply, error);
+    }
+  });
+  app.post<{ Body: unknown }>(
+    "/api/v1/integrations/recovery/apply",
+    async (request, reply) => {
+      try {
+        return apiSuccess(await services.applyRecovery(strictPlanId(request.body)));
+      } catch (error) {
+        return sendIntegrationError(reply, error);
+      }
+    }
+  );
   app.get(
     "/api/v1/integrations/capabilities",
     async (_request, reply) => {

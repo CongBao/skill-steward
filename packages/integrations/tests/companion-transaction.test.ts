@@ -21,6 +21,7 @@ import {
   finalizeIntegrationReadiness,
   loadIntegrationFileRecoveryAuthority,
   loadIntegrationReadinessRecoveryAuthority,
+  readIntegrationRecoveryInspection,
   readIntegrationRecoveryState,
   readIntegrationRecords,
   readLatestReport,
@@ -47,6 +48,10 @@ import { planIntegration } from "../src/config.js";
 import type { CompanionSubplan } from "../src/companion-domain.js";
 import { inspectCompanionTree } from "../src/companion-manifest.js";
 import type { IntegrationHarness } from "../src/domain.js";
+import {
+  applyIntegrationRecoveryPlan,
+  planIntegrationRecovery
+} from "../src/integration-recovery.js";
 
 const TRANSACTION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const RECORD_ID = "223e4567-e89b-42d3-a456-426614174000";
@@ -571,6 +576,64 @@ describe("companion integration transaction", () => {
     }
   );
 
+  it("resumes an upgrade backup after cleanup acquired its exact restart path", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-cleanup-restart-"));
+    const stateDirectory = join(home, "state");
+    await seedRecordedOldCompanion(home, stateDirectory, "codex");
+    const now = () => new Date("2026-07-05T00:00:00.000Z");
+    const plan = await planIntegration("codex", {
+      home,
+      stateDirectory,
+      now,
+      id: () => "cleanup-restart"
+    });
+
+    const receipt = await applyCompanionIntegrationTransaction(plan, {
+      home,
+      stateDirectory,
+      now,
+      generateReadiness: async () => report()
+    }, {
+      transactionId: randomUUID,
+      recordId: randomUUID,
+      cleanupTree: async (handle, options) => cleanupOwnedTree(handle, {
+        ...options,
+        hooks: {
+          ...options.hooks,
+          unlinkPath: async () => {
+            throw Object.assign(new Error("cleanup restart interruption"), { code: "EIO" });
+          }
+        }
+      })
+    });
+
+    expect(receipt).toMatchObject({ outcome: "ready", cleanup: "pending" });
+    await expect(readIntegrationRecoveryInspection(stateDirectory)).resolves.toMatchObject({
+      status: "unresolved",
+      transaction: {
+        artifactProofs: expect.arrayContaining([
+          expect.objectContaining({ role: "backup", path: expect.stringMatching(/\.backup$/u) }),
+          expect.objectContaining({ role: "cleanup", path: expect.stringMatching(/\.cleanup$/u) })
+        ])
+      }
+    });
+
+    const recoveryPlan = await planIntegrationRecovery({
+      stateDirectory,
+      id: () => "recover-upgrade-cleanup-restart",
+      now: () => new Date("2026-07-05T00:01:00.000Z"),
+      platform: "darwin"
+    });
+    await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-05T00:02:00.000Z"),
+      platform: "darwin"
+    })).resolves.toMatchObject({ action: "finalize", outcome: "recovered" });
+    await expect(readIntegrationRecoveryState(stateDirectory))
+      .resolves.toEqual({ status: "clear" });
+  });
+
   const precommitBoundaries = [
     "lease-assert",
     "plan-revalidate",
@@ -700,9 +763,89 @@ describe("companion integration transaction", () => {
         expect(await readIntegrationRecoveryState(stateDirectory)).toMatchObject({
           status: "unresolved"
         });
+        const recoveryPlan = await planIntegrationRecovery({
+          stateDirectory,
+          id: () => "recover-uncertain-create",
+          now: () => new Date("2026-07-05T00:01:00.000Z"),
+          platform: "darwin"
+        });
+        expect(recoveryPlan.action).toBe("rollback");
+        await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+          home,
+          stateDirectory,
+          now: () => new Date("2026-07-05T00:02:00.000Z"),
+          platform: "darwin"
+        })).resolves.toMatchObject({
+          action: "rollback",
+          outcome: "recovered"
+        });
+        await expect(access(plan.companion.path)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(access(plan.targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(readIntegrationRecoveryState(stateDirectory))
+          .resolves.toEqual({ status: "clear" });
       }
     }
   );
+
+  it("rolls back an uncertain upgrade from exact installed and backup authority", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-recover-upgrade-"));
+    const stateDirectory = join(home, "state");
+    await seedRecordedOldCompanion(home, stateDirectory, "codex");
+    const now = () => new Date("2026-07-05T00:00:00.000Z");
+    const plan = await planIntegration("codex", {
+      home,
+      stateDirectory,
+      now,
+      id: () => "uncertain-upgrade-plan"
+    });
+    expect(plan.companion.action).toBe("upgrade");
+    if (plan.companion.expectedBefore.state !== "exact") {
+      throw new Error("expected exact old companion");
+    }
+    const oldFingerprint = plan.companion.expectedBefore.fingerprint;
+    const uncertain = Object.assign(new Error("uncertain upgrade journal"), {
+      code: "INTEGRATION_JOURNAL_COMMIT_UNCERTAIN"
+    });
+    const failure = await applyCompanionIntegrationTransaction(plan, {
+      home,
+      stateDirectory,
+      now,
+      generateReadiness: async () => report()
+    }, {
+      transactionId: randomUUID,
+      recordId: randomUUID,
+      appendRecord: async () => { throw uncertain; }
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      receipt: { outcome: "recovery-required" }
+    });
+    expect((await inspectCompanionTree(plan.companion.path, {
+      boundary: home,
+      platform: process.platform
+    })).fingerprint).toBe(exactCompanionEvidence(plan.companion).after.fingerprint);
+
+    const recoveryPlan = await planIntegrationRecovery({
+      stateDirectory,
+      id: () => "recover-uncertain-upgrade",
+      now: () => new Date("2026-07-05T00:01:00.000Z"),
+      platform: "darwin"
+    });
+    expect(recoveryPlan.action).toBe("rollback");
+    await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+      home,
+      stateDirectory,
+      now: () => new Date("2026-07-05T00:02:00.000Z"),
+      platform: "darwin"
+    })).resolves.toMatchObject({ action: "rollback", outcome: "recovered" });
+    expect((await inspectCompanionTree(plan.companion.path, {
+      boundary: home,
+      platform: process.platform
+    })).fingerprint).toBe(oldFingerprint);
+    await expect(readFile(plan.targetPath, "utf8"))
+      .resolves.toBe(stableJson(plan.afterConfig));
+    await expect(readIntegrationRecoveryState(stateDirectory))
+      .resolves.toEqual({ status: "clear" });
+  });
 
   it("treats lease loss at a forward mutation boundary as recovery-required", async () => {
     const home = await mkdtemp(join(tmpdir(), "steward-boundary-lease-loss-"));
@@ -1133,7 +1276,12 @@ describe("companion integration transaction", () => {
       });
 
       expect(fired).toBe(true);
-      expect(receipt).toMatchObject({
+      expect(receipt).toMatchObject(boundary === "recovery-close" ? {
+        outcome: "ready",
+        cleanup: "clean",
+        reasonCode: "INTEGRATION_READY",
+        nextSafeAction: "none"
+      } : {
         outcome: "ready",
         cleanup: "pending",
         reasonCode: "INTEGRATION_READY_CLEANUP_PENDING",
@@ -1145,6 +1293,26 @@ describe("companion integration transaction", () => {
       });
       await expect(access(plan.companion.path)).resolves.toBeUndefined();
       await expect(access(plan.targetPath)).resolves.toBeUndefined();
+      if (boundary === "recovery-close") {
+        await expect(readIntegrationRecoveryState(stateDirectory))
+          .resolves.toEqual({ status: "clear" });
+        return;
+      }
+      const recoveryPlan = await planIntegrationRecovery({
+        stateDirectory,
+        id: () => `recover-postcommit-${boundary}`,
+        now: () => new Date("2026-07-05T00:01:00.000Z"),
+        platform: "darwin"
+      });
+      expect(recoveryPlan.action).toBe("finalize");
+      await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+        home,
+        stateDirectory,
+        now: () => new Date("2026-07-05T00:02:00.000Z"),
+        platform: "darwin"
+      })).resolves.toMatchObject({ action: "finalize", outcome: "recovered" });
+      await expect(readIntegrationRecoveryState(stateDirectory))
+        .resolves.toEqual({ status: "clear" });
     }
   );
 
@@ -1185,6 +1353,23 @@ describe("companion integration transaction", () => {
         schemaVersion: 2,
         companion: { action: "upgrade" }
       });
+      const recoveryPlan = await planIntegrationRecovery({
+        stateDirectory,
+        id: () => `recover-upgrade-cleanup-${position}`,
+        now: () => new Date("2026-07-05T00:01:00.000Z"),
+        platform: "darwin"
+      });
+      expect(recoveryPlan.action).toBe("finalize");
+      await expect(applyIntegrationRecoveryPlan(recoveryPlan.planId, {
+        home,
+        stateDirectory,
+        now: () => new Date("2026-07-05T00:02:00.000Z"),
+        platform: "darwin"
+      })).resolves.toMatchObject({ action: "finalize", outcome: "recovered" });
+      await expect(readIntegrationRecoveryState(stateDirectory))
+        .resolves.toEqual({ status: "clear" });
+      expect((await readdir(dirname(plan.companion.path))))
+        .not.toContain(`.skill-steward-owned.${receipt.transactionId}.backup`);
     }
   );
 

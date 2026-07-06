@@ -29,6 +29,7 @@ Inspect the source revision and exact filesystem plan before installation. Confi
 - **Task-time help, not another destination:** Codex and Claude Code prompt Hooks can run Preflight where a request starts. Copilot remains observe-only and gets recommendations through the companion Skill or CLI.
 - **One view across tools:** direct and plugin-managed Skills are resolved into one proof-aware inventory instead of being counted by directory presence alone.
 - **Safe local operations:** installation, integration, shared-consumer disconnect, final uninstall, quarantine, restore, and rollback use exact reviewed plans and stop on drift.
+- **Recovery after interruption:** if a managed integration stops midway, the same local evidence derives one safe rollback or finalize direction for review in the CLI, loopback API, or dashboard. The direction cannot be overridden and there is no force write.
 
 The ranking is deterministic and local; it does not require an LLM. Your Harness still decides whether and how to use a recommended Skill.
 
@@ -206,7 +207,7 @@ The Evidence dashboard shows the numerator and denominator for feedback rate, us
 
 ## Harness integration
 
-Skill Steward can connect Codex, Claude Code, and GitHub Copilot CLI without replacing them. The managed Hook observes the native lifecycle; the shared companion Skill gives the Harness an explicit task-preflight tool. JSON status keeps those two pieces separate, so a connected Hook cannot hide a missing, outdated, modified, or unreadable companion:
+Skill Steward can connect Codex, Claude Code, and GitHub Copilot CLI without replacing them. The managed Hook observes the native lifecycle; the shared companion Skill gives the Harness an explicit task-preflight tool. JSON status v2 keeps those two pieces separate, including each target, reason, availability, and the companion proof category. A connected Hook therefore cannot hide a missing, outdated, modified, or unreadable companion:
 
 ```bash
 skill-steward integrate status --json
@@ -222,6 +223,16 @@ skill-steward integrate apply --plan <plan-id> --confirm
 skill-steward integrate remove --harness codex
 skill-steward integrate remove --plan <plan-id> --confirm
 ```
+
+Interrupted integration recovery is global because all three adapters share one companion Skill and one mutation lease. Status is read-only. A recoverable state first produces a single-use plan whose `rollback` or `finalize` direction comes from the exact transaction and lifecycle record; `unknown` evidence offers diagnostics but no mutation.
+
+```bash
+skill-steward integrate recovery status --json
+skill-steward integrate recovery plan
+skill-steward integrate recovery apply --plan <plan-id> --confirm
+```
+
+Recovery covers interrupted create, upgrade, connect, retained disconnect, and final uninstall transactions on supported POSIX platforms. Apply revalidates the record, transaction sequence, artifact roles, platform, and plan expiry under the shared lease. A partial recovery remains blocked with a fresh-plan instruction instead of reporting success. Windows recovery writes remain unavailable in this Alpha.
 
 Disconnect removes the reviewed Harness Hook and updates the proven consumer set. The shared companion stays in place while another Harness still uses it. When the last proven consumer disconnects, Skill Steward removes only the exact tree recorded at installation; a modified, unreadable, or unproved tree is left untouched. This uses recorded installed evidence rather than the current package, so an unchanged older companion can still be uninstalled after an upgrade. Create, upgrade, and final uninstall use the packaged no-replace native helper for the current platform. Missing or unsupported helpers block the write instead of falling back to a racy filesystem operation.
 
@@ -287,7 +298,7 @@ Skill Steward is strongest for developers who use several Harnesses and want loc
 
 | Product | Primary job | Task-time selection | Cross-Harness lifecycle |
 |---|---|---|---|
-| **Skill Steward** | Proof-aware local inventory, task Preflight, evidence, and reversible governance | **Ranks installed and opt-in catalog candidates for the current task** | **Reviewed Hook + shared companion transactions, exact final uninstall, rollback, and local recovery history for three core adapters; convention-only inventory elsewhere** |
+| **Skill Steward** | Proof-aware local inventory, task Preflight, evidence, and reversible governance | **Ranks installed and opt-in catalog candidates for the current task** | **Three core adapters share reviewed Hook + companion transactions, exact final uninstall, and user-visible evidence-derived recovery across CLI/API/Dashboard; convention-only inventory elsewhere** |
 | [Microsoft APM](https://microsoft.github.io/apm/) | Declarative agent-context package management with manifest, lockfile, transitive dependencies, policy, and CI audit | Installs and compiles declared packages; audit checks integrity and deployment drift | Deploys several primitive types across supported Harnesses with reproducible lockfile and policy controls |
 | [skills.sh](https://www.skills.sh/docs) | Public directory, leaderboard, security checks, and one-command cross-agent Skill installation | Discovery and popularity ranking before install | Installs GitHub-hosted Skills into supported agents; lifecycle centers on CLI install/update |
 | [Tessl](https://docs.tessl.io/) | Versioned Skill registry, evaluation, distribution, and optimization | Registry search plus measured quality/impact before install | Agent-agnostic package installation and hosted evaluation lifecycle |
