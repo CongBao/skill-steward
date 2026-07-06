@@ -13,7 +13,7 @@ it("keeps named Windows and macOS platform-security gates in CI", async () => {
   expect(workflow).toContain("tests/integration-platform.windows.test.ts");
   expect(workflow).toContain("pnpm candidate:install -- --output artifacts/local-candidate");
   expect(workflow).toContain("artifacts/local-prefix/skill-steward.cmd");
-  expect(workflow).toContain("INTEGRATION_NATIVE_CAPABILITY_UNAVAILABLE");
+  expect(workflow).toContain("COMPANION_SOURCE_UNPROVABLE");
   expect(workflow).toContain("macos-security:");
   expect(workflow).toContain("runs-on: macos-15");
   expect(workflow).toContain("build-native-rename-noreplace.mjs darwin arm64 none");

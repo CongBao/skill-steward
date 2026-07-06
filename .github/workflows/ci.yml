@@ -83,7 +83,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "preflight help failed" }
           $plan = (& $binary integrate plan --harness codex --json | ConvertFrom-Json)
           if ($plan.availability.available -ne $false) { throw "Windows lifecycle unexpectedly available" }
-          if ($plan.availability.reason -ne "INTEGRATION_NATIVE_CAPABILITY_UNAVAILABLE") {
+          if ($plan.availability.reason -ne "COMPANION_SOURCE_UNPROVABLE") {
             throw "Unexpected Windows lifecycle reason"
           }
       - name: Run packaged CLI help
