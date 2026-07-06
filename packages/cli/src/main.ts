@@ -500,7 +500,7 @@ export async function run(
     .option("--task <text>", "task text")
     .option("--task-file <path>", "read task text from a UTF-8 file")
     .option("--stdin", "read task text from stdin", false)
-    .option("--max-skills <number>", "maximum recommended Skills", "5")
+    .option("--max-skills <1-5>", "maximum recommended Skills", "5")
     .option("--harness <id>", "target Harness ID")
     .option("--include-available", "include locally indexed catalog candidates", true)
     .option("--installed-only", "exclude not-yet-installed candidates", false)

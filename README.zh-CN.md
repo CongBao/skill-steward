@@ -207,7 +207,7 @@ skill-steward evidence erase --plan <id> --confirm
 
 ## Harness 集成
 
-Skill Steward 可以接入 Codex、Claude Code 和 GitHub Copilot CLI，而不取代它们。托管 Hook 负责观察原生生命周期，共享配套 Skill 则让 Harness 能显式调用任务预检。JSON v2 状态会分别给出两部分的目标、原因、可用性和配套 Skill 的证据类别，因此 Hook 已连接时，缺失、过期、被修改或无法读取的配套 Skill 不会被掩盖：
+Skill Steward 可以接入 Codex、Claude Code 和 GitHub Copilot CLI，而不取代它们。托管 Hook 负责观察原生生命周期，共享配套 Skill 则让 Harness 能显式调用任务预检。JSON v3 状态会分别给出两部分的目标、原因、可用性和配套 Skill 的证据类别；临时保留的 Alpha 顶层兼容字段已经移除，调用方直接读取 `hook` 和 `companion`。因此 Hook 已连接时，缺失、过期、被修改或无法读取的配套 Skill 不会被掩盖：
 
 ```bash
 skill-steward integrate status --json
@@ -232,7 +232,7 @@ skill-steward integrate recovery plan
 skill-steward integrate recovery apply --plan <plan-id> --confirm
 ```
 
-在受支持的 POSIX 平台上，恢复流程覆盖中断的新建、升级、连接、保留配套 Skill 的断开，以及最后一个使用方卸载。执行前会在同一把锁内重新核对记录、事务序号、文件证据、平台和方案有效期；恢复只完成一部分时会继续阻止其他变更，并要求生成新方案，不会误报成功。当前 Alpha 仍不支持在 Windows 上执行恢复写入。
+在受支持的 POSIX 平台上，恢复流程覆盖中断的新建、升级、连接、保留配套 Skill 的断开，以及最后一个使用方卸载。执行前会在同一把锁内重新核对记录、事务序号、文件证据、平台和方案有效期；恢复只完成一部分时会继续阻止其他变更，并要求生成新方案，不会误报成功。Windows CI 会验证原生记录身份、junction 拒绝、Win32 文件模式和保守规划，但在原生 reparse 检测与基于句柄的相对路径修改能力完成前，仍不会开放生命周期或恢复写入。
 
 断开连接时，Skill Steward 会移除已经检查过的 Harness Hook，并同步更新有证据支持的使用方名单。只要还有其他 Harness 在使用，共享配套 Skill 就会原样保留；最后一个使用方断开时，只删除与安装记录完全一致的文件树。内容被修改、无法读取或缺少证明时，文件会留在原处等待人工检查。卸载依据安装时记录的指纹，而不是当前软件包，因此升级 Skill Steward 后，仍能安全移除没有被改动的旧版配套 Skill。新建、升级和最终卸载都依赖当前平台对应的无覆盖原生辅助包；缺包或不支持时直接阻止写入，不会退回存在竞态的文件操作。
 

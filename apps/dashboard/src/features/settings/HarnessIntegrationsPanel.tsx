@@ -369,8 +369,8 @@ export function HarnessIntegrationsPanel() {
           const status = statuses.find((item) => item.harness === harness);
           const capability = capabilities.data?.find((item) => item.harness === harness);
           const statusFallback = integrations.isPending ? "loading" : "unavailable";
-          const hookStatus = status?.hook?.status ?? status?.hookStatus ?? statusFallback;
-          const companionStatus = status?.companion?.status ?? status?.status ?? statusFallback;
+          const hookStatus = status?.hook.status ?? statusFallback;
+          const companionStatus = status?.companion.status ?? statusFallback;
           const name = capability?.displayName ?? harnessName(harness);
           const articleLabel = t("settings.integrations.articleLabel").replace("{name}", name);
           const disconnect = status !== undefined

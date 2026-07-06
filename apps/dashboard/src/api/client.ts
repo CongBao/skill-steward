@@ -403,7 +403,7 @@ export type IntegrationStatusValue = "not-installed" | "installed" | "needs-trus
 export type CompanionSkillStatus = "current" | "upgrade-available" | "missing" | "conflict" | "unknown";
 
 export interface IntegrationStatus {
-  schemaVersion: 2;
+  schemaVersion: 3;
   harness: IntegrationHarness;
   hook: {
     status: IntegrationStatusValue;
@@ -421,12 +421,6 @@ export interface IntegrationStatus {
     lastChangedAt?: string;
   };
   availability: IntegrationStatusAvailability;
-  /** @deprecated Alpha compatibility alias. */
-  status: CompanionSkillStatus;
-  /** @deprecated Alpha compatibility alias. */
-  reason: string;
-  /** @deprecated Alpha compatibility alias. */
-  hookStatus: IntegrationStatusValue;
   lastChangedAt?: string;
 }
 

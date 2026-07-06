@@ -577,8 +577,15 @@ describe("Harness integration routes", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toEqual(expect.arrayContaining([
-      expect.objectContaining({ status: "missing", hookStatus: "not-installed" })
+      expect.objectContaining({
+        schemaVersion: 3,
+        hook: expect.objectContaining({ status: "not-installed" }),
+        companion: expect.objectContaining({ status: "missing" })
+      })
     ]));
+    expect(response.json().data[0]).not.toHaveProperty("status");
+    expect(response.json().data[0]).not.toHaveProperty("reason");
+    expect(response.json().data[0]).not.toHaveProperty("hookStatus");
     expect(JSON.stringify(response.json().data)).not.toContain("targetPath");
   });
 });

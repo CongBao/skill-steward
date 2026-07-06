@@ -99,8 +99,8 @@ export interface IntegrationStatusAvailability {
   reason: string | null;
 }
 
-export interface IntegrationStatusV2 {
-  schemaVersion: 2;
+export interface IntegrationStatusV3 {
+  schemaVersion: 3;
   harness: IntegrationHarness;
   hook: {
     status: IntegrationStatusValue;
@@ -118,16 +118,10 @@ export interface IntegrationStatusV2 {
     lastChangedAt?: string;
   };
   availability: IntegrationStatusAvailability;
-  /** @deprecated Alpha compatibility alias for companion.status. */
-  status: CompanionSkillStatus;
-  /** @deprecated Alpha compatibility alias for companion.reason. */
-  reason: string;
-  /** @deprecated Alpha compatibility alias for hook.status. */
-  hookStatus: IntegrationStatusValue;
   lastChangedAt?: string;
 }
 
-export type IntegrationStatus = IntegrationStatusV2;
+export type IntegrationStatus = IntegrationStatusV3;
 
 export type IntegrationRecoveryStatus = InternalIntegrationRecoveryStatus;
 export type IntegrationRecoveryPlan = InternalIntegrationRecoveryPlan;
@@ -571,7 +565,7 @@ export async function integrationStatus(
     ? hookAvailability
     : companionAvailability;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     harness: status.harness,
     hook: {
       status: status.status,
@@ -589,9 +583,6 @@ export async function integrationStatus(
       ...(status.lastChangedAt ? { lastChangedAt: status.lastChangedAt } : {})
     },
     availability,
-    status: status.companion.status,
-    reason: status.companion.reason,
-    hookStatus: status.status,
     ...(status.lastChangedAt ? { lastChangedAt: status.lastChangedAt } : {})
   };
 }

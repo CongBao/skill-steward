@@ -74,7 +74,7 @@ const declarationExports = [
   "IntegrationDisconnectPlan",
   "IntegrationStatus",
   "IntegrationStatusAvailability",
-  "IntegrationStatusV2",
+  "IntegrationStatusV3",
   "LifecyclePrivacy",
   "NormalizeLifecycleInput",
   "NormalizeObserveInput",
