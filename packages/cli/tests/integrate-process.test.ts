@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
@@ -33,7 +33,9 @@ let binary = "";
 
 beforeAll(async () => {
   fixtureDirectory = await mkdtemp(join(tmpdir(), "steward-cli-source-process-"));
-  binary = join(fixtureDirectory, "main.mjs");
+  const distributionDirectory = join(fixtureDirectory, "dist");
+  await mkdir(distributionDirectory);
+  binary = join(distributionDirectory, "main.mjs");
   await build({
     entryPoints: [mainSource],
     outfile: binary,
@@ -52,7 +54,27 @@ beforeAll(async () => {
       "@skill-steward/store": storeSource
     }
   });
-  await cp(companionAssets, join(fixtureDirectory, "integrations"), { recursive: true });
+  await Promise.all([
+    cp(companionAssets, join(distributionDirectory, "integrations"), { recursive: true }),
+    cp(
+      fileURLToPath(new URL("../package.json", import.meta.url)),
+      join(fixtureDirectory, "package.json")
+    )
+  ]);
+  const report = process.report.getReport() as { header: { glibcVersionRuntime?: string } };
+  const libc = process.platform === "linux"
+    ? report.header.glibcVersionRuntime === undefined ? "musl" : "gnu"
+    : "none";
+  const nativeDirectory = process.platform === "win32"
+    ? null
+    : `rename-noreplace-${process.platform}-${process.arch}${process.platform === "linux" ? `-${libc}` : ""}`;
+  if (nativeDirectory !== null) {
+    await cp(
+      fileURLToPath(new URL(`../../${nativeDirectory}`, import.meta.url)),
+      join(fixtureDirectory, "node_modules", "@skill-steward", nativeDirectory),
+      { recursive: true }
+    );
+  }
 });
 
 afterAll(async () => {
@@ -169,7 +191,7 @@ describe("integration CLI source processes", () => {
     await mkdir(workspace, { recursive: true });
     await mkdir(join(home, ".agents", "skills"), { recursive: true });
     await cp(
-      join(fixtureDirectory, "integrations", "skill-steward-preflight"),
+      join(dirname(binary), "integrations", "skill-steward-preflight"),
       join(home, ".agents", "skills", "skill-steward-preflight"),
       { recursive: true }
     );

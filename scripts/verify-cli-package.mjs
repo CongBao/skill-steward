@@ -374,15 +374,17 @@ async function sourceControlledAudit() {
   }
 }
 
-export async function verifyPackedArtifactBytes(bytes) {
+export async function verifyPackedArtifactBytes(bytes, {
+  trustedPackageDirectory = defaultTrustedPackageDirectory
+} = {}) {
   const files = parseTarEntries(bytes);
   for (const required of REQUIRED_FILES) {
     if (!files.has(required)) throw new Error(`Missing ${required}`);
   }
   await assertExactPackageTree(
     files,
-    await readTrustedPackageTree(defaultTrustedPackageDirectory),
-    defaultTrustedPackageDirectory
+    await readTrustedPackageTree(trustedPackageDirectory),
+    trustedPackageDirectory
   );
   const audit = await sourceControlledAudit();
   const packageJson = jsonFile(files, "package/package.json");
@@ -424,8 +426,8 @@ export async function verifyPackedArtifactBytes(bytes) {
   return { files: files.size, packages: identifiers.length };
 }
 
-export async function verifyPackedArtifact(path) {
-  return verifyPackedArtifactBytes(await readFile(path));
+export async function verifyPackedArtifact(path, options) {
+  return verifyPackedArtifactBytes(await readFile(path), options);
 }
 
 export async function verifyDryRun(path) {

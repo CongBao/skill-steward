@@ -4,6 +4,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Distribution
+
+- `0.5.0-beta.1` is currently a reviewed local candidate. The mutable repository README remains the source of truth for npm and GitHub prerelease availability until the protected external release completes.
+
+## [0.5.0-beta.1] - 2026-07-06
+
 ### Added
 
 - Reviewed Harness integration apply is now active for Codex, Claude Code, and GitHub Copilot CLI across the CLI, loopback API, and dashboard. One single-use plan binds the Hook configuration, packaged companion tree, ownership proof, current record head, consumer set, readiness report, and history record.
@@ -25,6 +31,18 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Preflight algorithm v8 adds one versioned, corroborated lifecycle trigger for detailed pre-merge review tasks. The current profile requires the `request` + `code` + `review` name signature, positive `review ... before merge` task intent, and a positive `before merge` routing phrase; generic names and phrases split by Unicode punctuation/symbol boundaries cannot provide the signal. One bounded parser handles straight/curly English negations, negative lists, and explicit comma/colon contrasts. A `code` discriminator resolves mixed review objects without changing the positive trigger requirement. Capability-gap gating uses positive matches over the complete metadata denominator, so negative terms cannot strengthen corroboration. Existing safety exclusions and complementary-Skill selection still apply. Compact output moves to schema v3, remains bounded and task-free, nulls feedback when evidence persistence fails, and the CLI and bilingual dashboard render the new reason explicitly.
 - Negative intent also wins when at least two candidate-name terms have stronger negative than positive coverage, preventing requesting and receiving review variants from bypassing an explicit code-review exclusion. Action-named colon lists joined by bounded words or Unicode punctuation/symbols remain negative, as do optional-comma `instead of` forms; a standalone `instead` marker still preserves a multi-action positive contrast.
 - Lifecycle-fragment readers now retry ordinary concurrent cleanup when an identity mismatch is immediately followed by proven path absence, while a still-present same-name replacement continues to fail closed.
+
+### Distribution
+
+- The exact seven-package release contract is now `0.5.0-beta.1` with the `beta` npm tag and GitHub prerelease intent. All package manifests, CLI native dependencies, and the lockfile are synchronized from that contract.
+- Source checkouts can prepare one verified local candidate bundle: the CLI plus exactly one matching native helper on supported macOS/Linux, or the non-mutating CLI surfaces on Windows. Runtime checks bind helper package and binary identity to the exact CLI release.
+- Protected publication reuses these verified package bytes. Current availability is reported by the repository's Packages, Releases, and README rather than this immutable release note.
+
+### Limitations
+
+- Native inventory and managed lifecycle adapters remain limited to Codex, Claude Code, and GitHub Copilot CLI; the wider 30-Harness catalog remains convention-only inventory and installation coverage.
+- GitHub Copilot CLI integration remains observe-only for prompt delivery. Managed lifecycle and recovery writes remain unavailable on Windows until native reparse and handle-relative mutation authority is complete.
+- Task routing is deterministic and bounded rather than general semantic understanding, and lifecycle evidence does not prove task success or change ranking automatically.
 
 ## [0.5.0-alpha.4] - 2026-07-04
 

@@ -1,16 +1,31 @@
 {
   "name": "@skill-steward/rename-noreplace-darwin-x64",
-  "version": "0.5.0-alpha.4",
-  "description": "Private macOS x64 atomic no-replace rename helper for Skill Steward",
+  "version": "0.5.0-beta.1",
+  "description": "Platform-specific internal macOS x64 atomic no-replace helper for Skill Steward",
   "license": "MIT",
   "type": "commonjs",
   "main": "rename_noreplace.node",
-  "files": ["rename_noreplace.node", "README.md", "LICENSE"],
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "engines": { "node": ">=22" },
-  "repository": { "type": "git", "url": "git+https://github.com/CongBao/skill-steward.git" },
-  "publishConfig": { "access": "public" },
+  "files": [
+    "rename_noreplace.node",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CongBao/skill-steward.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "node ../../scripts/build-native-rename-noreplace.mjs darwin x64 none",
     "test": "node ../../scripts/build-native-rename-noreplace.mjs darwin x64 none --verify-only"

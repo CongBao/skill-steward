@@ -18,6 +18,11 @@ interface NativeRenameNoReplaceBinding {
   removeAt(parentFd: number, name: string, directory: boolean): unknown;
 }
 
+interface NativeRenameNoReplaceManifest {
+  name: string;
+  version: string;
+}
+
 const nativeRequire = createRequire(import.meta.url);
 const packageTargets = new Map<string, string>([
   ["darwin:arm64:none", "@skill-steward/rename-noreplace-darwin-arm64"],
@@ -43,7 +48,9 @@ export function loadOwnedTreeNativeRenameBinding(input: {
   libc: "none" | "gnu" | "musl";
   runtimePlatform: NodeJS.Platform;
   runtimeArch: string;
+  releaseVersion: string;
   requirePackage: (name: string) => unknown;
+  requirePackageManifest: (name: string) => unknown;
 }): NativeRenameNoReplaceBinding {
   if (input.platform !== input.runtimePlatform || input.arch !== input.runtimeArch) {
     throw invalidOwnedTree("Native no-replace helper target does not match this runtime");
@@ -52,6 +59,20 @@ export function loadOwnedTreeNativeRenameBinding(input: {
   const packageName = packageTargets.get(target);
   if (packageName === undefined) {
     throw invalidOwnedTree("Native no-replace helper is unavailable for this platform");
+  }
+  let packageManifest: unknown;
+  try {
+    packageManifest = input.requirePackageManifest(packageName);
+  } catch (error) {
+    throw invalidOwnedTree("Native no-replace helper package metadata is missing or unreadable", error);
+  }
+  if (
+    packageManifest === null
+    || typeof packageManifest !== "object"
+    || (packageManifest as Partial<NativeRenameNoReplaceManifest>).name !== packageName
+    || (packageManifest as Partial<NativeRenameNoReplaceManifest>).version !== input.releaseVersion
+  ) {
+    throw invalidOwnedTree("Native no-replace helper package version does not match Skill Steward");
   }
   let candidate: unknown;
   try {
@@ -69,7 +90,7 @@ export function loadOwnedTreeNativeRenameBinding(input: {
     throw invalidOwnedTree("Native no-replace helper exports are invalid");
   }
   const binding = candidate as NativeRenameNoReplaceBinding;
-  const expectedMetadata = `skill-steward.owned-tree-native.v2:${target}`;
+  const expectedMetadata = `skill-steward.owned-tree-native.v3:${input.releaseVersion}:${target}`;
   let metadata: unknown;
   try {
     metadata = binding.metadata();
@@ -84,11 +105,18 @@ export function loadOwnedTreeNativeRenameBinding(input: {
 
 function loadNativeRenameNoReplace(
   platform: NodeJS.Platform,
-  arch: string
+  arch: string,
+  releaseVersion?: string
 ): NativeRenameNoReplaceBinding {
   const libc = runtimeLibc(platform);
   const target = `${platform}:${arch}:${libc}`;
-  const cached = bindingCache.get(target);
+  const packageName = packageTargets.get(target);
+  if (packageName === undefined) {
+    throw invalidOwnedTree("Native no-replace helper is unavailable for this platform");
+  }
+  const expectedReleaseVersion = releaseVersion ?? runtimeReleaseVersion();
+  const cacheKey = `${expectedReleaseVersion}:${target}`;
+  const cached = bindingCache.get(cacheKey);
   if (cached !== undefined) return cached;
   const binding = loadOwnedTreeNativeRenameBinding({
     platform,
@@ -96,15 +124,57 @@ function loadNativeRenameNoReplace(
     libc,
     runtimePlatform: process.platform,
     runtimeArch: process.arch,
-    requirePackage: nativeRequire
+    releaseVersion: expectedReleaseVersion,
+    requirePackage: nativeRequire,
+    requirePackageManifest: (name) => nativeRequire(`${name}/package.json`)
   });
-  bindingCache.set(target, binding);
+  bindingCache.set(cacheKey, binding);
   return binding;
 }
 
+function runtimeReleaseVersion(): string {
+  let manifest: unknown;
+  try {
+    manifest = nativeRequire("../package.json");
+  } catch (error) {
+    throw invalidOwnedTree("Skill Steward package metadata is missing or unreadable", error);
+  }
+  if (manifest === null || typeof manifest !== "object") {
+    throw invalidOwnedTree("Skill Steward package version could not be verified");
+  }
+  if (
+    (manifest as { name?: unknown }).name === "skill-steward"
+    && typeof (manifest as { version?: unknown }).version === "string"
+  ) {
+    return (manifest as { version: string }).version;
+  }
+  // Source-workspace tests execute this private package directly. Bind that path to the
+  // independent public CLI manifest rather than deriving an expected version from the helper.
+  if (
+    (manifest as { name?: unknown }).name === "@skill-steward/integrations"
+    && (manifest as { version?: unknown }).version === "0.0.0"
+  ) {
+    let cliManifest: unknown;
+    try {
+      cliManifest = nativeRequire("../../cli/package.json");
+    } catch (error) {
+      throw invalidOwnedTree("Workspace Skill Steward release version could not be verified", error);
+    }
+    if (
+      cliManifest !== null
+      && typeof cliManifest === "object"
+      && (cliManifest as { name?: unknown }).name === "skill-steward"
+      && typeof (cliManifest as { version?: unknown }).version === "string"
+    ) {
+      return (cliManifest as { version: string }).version;
+    }
+  }
+  throw invalidOwnedTree("Skill Steward package version could not be verified");
+}
+
 /** Package-private production capability probe used before a reviewed tree mutation is offered. */
-export function assertOwnedTreeNativeCapability(): void {
-  loadNativeRenameNoReplace(process.platform, process.arch);
+export function assertOwnedTreeNativeCapability(releaseVersion?: string): void {
+  loadNativeRenameNoReplace(process.platform, process.arch, releaseVersion);
 }
 
 function nativeRenameError(errno: number): Error {

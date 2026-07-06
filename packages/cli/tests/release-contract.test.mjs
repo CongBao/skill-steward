@@ -91,7 +91,12 @@ describe("release contract parsing", () => {
 describe("release repository consistency", () => {
   it("accepts the real repository and excludes private workspace versions", () => {
     const checked = checkReleaseContract(resolve(process.cwd(), "../.."));
-    expect(checked.version).toBe("0.5.0-alpha.4");
+    expect(checked).toMatchObject({
+      version: "0.5.0-beta.1",
+      channel: "beta",
+      npmTag: "beta",
+      githubPrerelease: true
+    });
     expect(checked.packages).toHaveLength(7);
   });
 

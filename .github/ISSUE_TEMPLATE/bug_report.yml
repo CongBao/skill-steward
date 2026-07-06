@@ -5,7 +5,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Do not include private Skill bodies, credentials, or sensitive local paths. Report security issues privately through SECURITY.md.
+      value: Do not include private Skill bodies, credentials, or sensitive local paths. Read the [security policy](https://github.com/CongBao/skill-steward/security/policy) and report vulnerabilities privately.
   - type: input
     id: version
     attributes:

@@ -62,6 +62,30 @@ jobs:
         run: pnpm --filter @skill-steward/integrations exec vitest run tests/integration-platform.windows.test.ts
       - name: Build CLI
         run: pnpm build
+      - name: Windows local candidate policy
+        run: pnpm --filter skill-steward exec vitest run tests/local-candidate.test.mjs
+      - name: Install and verify the Windows local candidate
+        run: >-
+          pnpm candidate:install -- --output artifacts/local-candidate
+          --prefix artifacts/local-prefix --json
+      - name: Smoke the installed Windows candidate
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/home, artifacts/state | Out-Null
+          $env:HOME = (Resolve-Path artifacts/home).Path
+          $env:SKILL_STEWARD_HOME = (Resolve-Path artifacts/state).Path
+          $binary = (Resolve-Path artifacts/local-prefix/skill-steward.cmd).Path
+          $expected = (Get-Content release-contract.json | ConvertFrom-Json).version
+          if ((& $binary --version).Trim() -ne $expected) { throw "Candidate version mismatch" }
+          & $binary scan --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "scan help failed" }
+          & $binary preflight --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "preflight help failed" }
+          $plan = (& $binary integrate plan --harness codex --json | ConvertFrom-Json)
+          if ($plan.availability.available -ne $false) { throw "Windows lifecycle unexpectedly available" }
+          if ($plan.availability.reason -ne "INTEGRATION_NATIVE_CAPABILITY_UNAVAILABLE") {
+            throw "Unexpected Windows lifecycle reason"
+          }
       - name: Run packaged CLI help
         run: node packages/cli/dist/main.js --help
 
@@ -82,6 +106,8 @@ jobs:
       - name: Build and verify Darwin mutation helper
         working-directory: packages/rename-noreplace-darwin-arm64
         run: node ../../scripts/build-native-rename-noreplace.mjs darwin arm64 none
+      - name: Install and verify the macOS local candidate
+        run: pnpm --filter skill-steward exec vitest run tests/local-candidate.test.mjs
       - name: macOS integration safety
         run: >-
           pnpm --filter @skill-steward/integrations exec vitest run

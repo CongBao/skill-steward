@@ -21,7 +21,15 @@ body:
     id: area
     attributes:
       label: Area
-      options: [Discovery, Analysis, Installation, Dashboard, CLI, Compatibility, Documentation]
+      options:
+        - Task Preflight and Skill discovery
+        - Harness integration
+        - Evidence and recommendation quality
+        - Installation and reversible governance
+        - Inventory and analysis
+        - Dashboard and CLI
+        - Harness compatibility
+        - Documentation
     validations:
       required: true
   - type: textarea

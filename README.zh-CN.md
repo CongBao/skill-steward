@@ -2,13 +2,15 @@
 
 [English](README.md) | 简体中文
 
-先看清、再选择、最后安全地调整你的 Agent Skills。
+**面向 Agent Skills 的跨 Harness 运维层。**
 
-Skill Steward 是一款跨 Harness 的 Agent Skills 本地助手与控制台。Codex、Claude Code 和 GitHub Copilot CLI 三个核心适配器共用一套带证据的清单和修改协议；其他 Harness 目前只按目录约定盘点，不宣称已经核验原生行为。
+Skill Steward 让 Codex、Claude Code 和 GitHub Copilot CLI 共用一份本地、带证据的 Skill 清单和一条经过检查的修改路径。它帮你看清已安装内容，在每次任务开始前找出真正相关的 Skills——包括尚未安装但值得考虑的候选项——并用精确计划和本地证据支撑可撤回的修改。
 
-它不是另一款 Harness：不回答提示词、不调度模型，也不运行 Agent。任务仍由你原本的 Harness 执行；Skill Steward 负责帮它选出少而相关的 Skills，并让每次改动都能先检查、再执行、必要时撤回。
+它与现有 Harness 配合工作，而不是取代 Harness。任务仍由原来的工具执行；Skill Steward 负责让 Skill 选择更少、更准，也让每次变更可检查、可恢复。Codex、Claude Code 和 GitHub Copilot CLI 已核验原生行为；其余 30-Harness 目录只提供基于约定的清单与安装覆盖。
 
-> 当前状态：活跃 Alpha。现在可以从源码或本地 tarball 安装；npm 包尚未发布。
+> 当前状态：Beta 发布候选版 0.5.0-beta.1。npm 包和 GitHub 预发布版本尚未公开；请先按下文安装经过验证的本地候选包。
+
+**立即试用：**先[安装本地候选版](#安装)，再依次运行 `skill-steward scan`、一次真实的 `skill-steward preflight` 和 `skill-steward dashboard`。清单与任务预检可在 Node.js 支持的平台运行；经过评审的集成生命周期写入目前需要安装器准备的 macOS 或 Linux 原生辅助包。
 
 ## 它主要做三件事
 
@@ -24,7 +26,7 @@ Skill Steward 是一款跨 Harness 的 Agent Skills 本地助手与控制台。C
 
 安装前先检查来源版本和具体文件操作。确认后才写入，并记录来源、备份和漂移状态，必要时可以回滚。隔离与恢复能让 Skill 暂时退出使用，而不是直接永久删除。
 
-### 为什么值得一直开着
+### 为什么值得长期保留
 
 - **不用切换到另一个工具：** Codex 和 Claude Code 可以在提示词 Hook 中直接运行预检。Copilot Hook 只观察生命周期，推荐通过配套 Skill 或 CLI 获取。
 - **跨工具看同一份清单：** 直接安装和插件管理的 Skills 会进入一套带证据的可见性模型，而不是看见目录就算可用。
@@ -69,18 +71,17 @@ Skill Steward 是一款跨 Harness 的 Agent Skills 本地助手与控制台。C
 
 - Node.js 22 或更高版本
 - 构建本地安装包时需要 pnpm 10 或更高版本
+- macOS/Linux 需要可通过 `cc` 调用的 C 编译器来构建生命周期辅助包；Windows 不构建该辅助包
 
-### 安装经过校验的本地 CLI 包
+### 安装经过校验的本地候选版
 
-在 npm 包正式发布前，先生成并安装仓库测试过的同一份 tarball。后面的首次体验全程使用全局 `skill-steward` 命令，不会在源码入口和安装后的命令之间来回切换。
+在 npm 包正式发布前，先生成并安装仓库测试过的本地候选包。macOS 和 Linux 会只选择与当前平台、架构、libc 和 Beta 版本完全一致的一个原生辅助包，与 CLI 一起校验并安装。Windows 安装完整 CLI，但不安装原生生命周期辅助包：扫描、任务预检和看板仍可使用，托管式集成生命周期与恢复写入保持关闭。
 
 ```bash
 git clone https://github.com/CongBao/skill-steward.git
 cd skill-steward
 pnpm install --frozen-lockfile
-package_dir="$(mktemp -d)"
-pnpm --filter skill-steward pack --pack-destination "$package_dir"
-npm install --global "$package_dir"/skill-steward-*.tgz
+pnpm candidate:install
 skill-steward --version
 ```
 
@@ -90,7 +91,7 @@ skill-steward --version
 git clone git@github.com:CongBao/skill-steward.git
 ```
 
-如果电脑上已有较旧的全局版本，测试仓库新改动前要重新打包并安装。可以用 `skill-steward --version` 确认当前实际调用的版本。
+候选版安装器会先替换当前平台上遗留的旧辅助包，再安装 CLI，避免两个版本悄悄混用。可以用 `skill-steward --version` 确认当前实际调用的版本。如果只想生成并检查 tarball 与 `candidate-manifest.json`，不修改全局安装，请改用 `pnpm candidate:pack`。两个命令默认都会创建新的私有系统临时目录并打印路径；如需固定位置，可追加 `-- --output <空目录>`，检查完成后自行删除。
 
 源码开发环境和完整的贡献者质量检查见[贡献指南](CONTRIBUTING.md)。
 

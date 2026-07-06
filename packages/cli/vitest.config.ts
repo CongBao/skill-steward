@@ -12,5 +12,8 @@ export default defineConfig({
       )
     }
   },
-  test: { environment: "node" }
+  test: {
+    environment: "node",
+    maxWorkers: 1
+  }
 });

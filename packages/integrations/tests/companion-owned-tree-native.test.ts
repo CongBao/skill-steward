@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 
+const release = JSON.parse(
+  await readFile(new URL("../../../release-contract.json", import.meta.url), "utf8")
+) as { version: string };
+
 describe("companion owned-tree native no-replace loader", () => {
   it.each(["missing", "unverified", "broken"] as const)(
     "fails closed for a %s current-platform helper package",
@@ -26,7 +30,12 @@ describe("companion owned-tree native no-replace loader", () => {
         libc: "none",
         runtimePlatform: "darwin",
         runtimeArch: "arm64",
-        requirePackage
+        releaseVersion: release.version,
+        requirePackage,
+        requirePackageManifest: () => ({
+          name: "@skill-steward/rename-noreplace-darwin-arm64",
+          version: release.version
+        })
       })).toThrow(expect.objectContaining({
         code: "INTEGRATION_CONFIGURATION_INVALID"
       }));
@@ -38,7 +47,7 @@ describe("companion owned-tree native no-replace loader", () => {
       "../src/companion-owned-tree-native.js"
     );
     const binding = {
-      metadata: () => "skill-steward.owned-tree-native.v2:darwin:arm64:none",
+      metadata: () => `skill-steward.owned-tree-native.v3:${release.version}:darwin:arm64:none`,
       renameNoReplace: (_parentFd: number, _source: string, _destination: string) => 0,
       removeAt: (_parentFd: number, _name: string, _directory: boolean) => 0
     };
@@ -48,8 +57,36 @@ describe("companion owned-tree native no-replace loader", () => {
       libc: "none",
       runtimePlatform: "darwin",
       runtimeArch: "arm64",
-      requirePackage: () => binding
+      releaseVersion: release.version,
+      requirePackage: () => binding,
+      requirePackageManifest: () => ({
+        name: "@skill-steward/rename-noreplace-darwin-arm64",
+        version: release.version
+      })
     })).toBe(binding);
+  });
+
+  it("rejects a stale helper from another Skill Steward release", async () => {
+    const { loadOwnedTreeNativeRenameBinding } = await import(
+      "../src/companion-owned-tree-native.js"
+    );
+    expect(() => loadOwnedTreeNativeRenameBinding({
+      platform: "darwin",
+      arch: "arm64",
+      libc: "none",
+      runtimePlatform: "darwin",
+      runtimeArch: "arm64",
+      releaseVersion: release.version,
+      requirePackage: () => ({
+        metadata: () => "skill-steward.owned-tree-native.v3:0.5.0-alpha.4:darwin:arm64:none",
+        renameNoReplace: () => 0,
+        removeAt: () => 0
+      }),
+      requirePackageManifest: () => ({
+        name: "@skill-steward/rename-noreplace-darwin-arm64",
+        version: "0.5.0-alpha.4"
+      })
+    })).toThrow(expect.objectContaining({ code: "INTEGRATION_CONFIGURATION_INVALID" }));
   });
 
   it("keeps owned-tree permission changes on verified file handles", async () => {
