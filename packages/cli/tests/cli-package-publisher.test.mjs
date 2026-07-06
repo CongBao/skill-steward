@@ -1,8 +1,18 @@
 import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { checkReleaseContract } from "../../../scripts/release-contract.mjs";
@@ -42,6 +52,40 @@ async function packCli(root) {
   return join(directory, filename);
 }
 
+async function packCliWithPnpm(root) {
+  const directory = join(root, "pnpm-artifacts");
+  await mkdir(directory, { recursive: true });
+  await execFileAsync(
+    "pnpm",
+    [
+      "--filter",
+      "skill-steward",
+      "pack",
+      "--config.ignore-scripts=true",
+      "--pack-destination",
+      directory
+    ],
+    { cwd: repositoryRoot, maxBuffer: 10 * 1024 * 1024 }
+  );
+  const artifacts = (await readdir(directory)).filter((name) => name.endsWith(".tgz"));
+  expect(artifacts).toHaveLength(1);
+  return join(directory, artifacts[0]);
+}
+
+async function copyWorkspaceManifests(destination) {
+  for (const group of ["packages", "apps"]) {
+    const sourceGroup = join(repositoryRoot, group);
+    const destinationGroup = join(destination, group);
+    await mkdir(destinationGroup, { recursive: true });
+    for (const entry of await readdir(sourceGroup, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const target = join(destinationGroup, entry.name);
+      await mkdir(target, { recursive: true });
+      await cp(join(sourceGroup, entry.name, "package.json"), join(target, "package.json"));
+    }
+  }
+}
+
 async function fakeNpm(root) {
   const bin = join(root, "bin");
   await mkdir(bin, { recursive: true });
@@ -67,17 +111,17 @@ if (args[0] === "publish") process.exit(0);
 process.exit(2);
 `, "utf8");
   await chmod(script, 0o755);
-  return bin;
+  return script;
 }
 
 async function runPublisher(root, args, published = {}, failureSpec) {
-  const bin = await fakeNpm(root);
+  const npmCli = await fakeNpm(root);
   const log = join(root, "npm-calls.jsonl");
-  const result = spawnSync(process.execPath, [publisher, ...args], {
+  const result = spawnSync(process.execPath, [publisher, "--npm-cli", npmCli, ...args], {
     encoding: "utf8",
     env: {
       ...process.env,
-      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      PATH: process.env.PATH ?? "",
       NPM_CALL_LOG: log,
       PUBLISHED_INTEGRITIES: JSON.stringify(published),
       FAILURE_SPEC: failureSpec ?? ""
@@ -109,6 +153,65 @@ it("publishes only one contract-bound CLI after complete native and byte-identit
   expect(checked.result.status).toBe(0);
   expect(checked.result.stdout).toContain(`Verified ${cliSpec}`);
   expect(checked.calls).toEqual([]);
+
+  const trustedPackageDirectory = join(root, "trusted-package-tree");
+  await mkdir(trustedPackageDirectory, { recursive: true });
+  await Promise.all([
+    cp(join(cliPackage, "LICENSE"), join(trustedPackageDirectory, "LICENSE")),
+    cp(join(cliPackage, "README.md"), join(trustedPackageDirectory, "README.md")),
+    cp(join(cliPackage, "package.json"), join(trustedPackageDirectory, "package.json")),
+    cp(join(cliPackage, "dist"), join(trustedPackageDirectory, "dist"), { recursive: true })
+  ]);
+  const copiedWorkspaceRoot = join(root, "copied-workspace");
+  await copyWorkspaceManifests(copiedWorkspaceRoot);
+  await mkdir(join(copiedWorkspaceRoot, "packages", "not-a-package"));
+  const pnpmArtifact = await packCliWithPnpm(root);
+  const artifactBound = await runPublisher(join(root, "artifact-bound"), [
+    "--check-only",
+    "--trusted-package-directory",
+    trustedPackageDirectory,
+    "--workspace-root",
+    copiedWorkspaceRoot,
+    pnpmArtifact
+  ]);
+  expect(artifactBound.result.status, artifactBound.result.stderr).toBe(0);
+  expect(artifactBound.calls).toEqual([]);
+
+  if (process.platform !== "win32") {
+    const symlinkWorkspaceRoot = join(root, "symlink-workspace");
+    await copyWorkspaceManifests(symlinkWorkspaceRoot);
+    const forgedPackage = join(symlinkWorkspaceRoot, "packages", "forged-package");
+    await mkdir(forgedPackage);
+    await symlink(join(repositoryRoot, "package.json"), join(forgedPackage, "package.json"));
+    const symlinkRejected = await runPublisher(join(root, "symlink-rejected"), [
+      "--check-only",
+      "--trusted-package-directory",
+      trustedPackageDirectory,
+      "--workspace-root",
+      symlinkWorkspaceRoot,
+      pnpmArtifact
+    ]);
+    expect(symlinkRejected.result.status).not.toBe(0);
+    expect(symlinkRejected.result.stderr).toContain("must be a regular file");
+
+    const directorySymlinkWorkspaceRoot = join(root, "directory-symlink-workspace");
+    await copyWorkspaceManifests(directorySymlinkWorkspaceRoot);
+    await symlink(
+      join(repositoryRoot, "packages", "engine"),
+      join(directorySymlinkWorkspaceRoot, "packages", "forged-directory"),
+      "dir"
+    );
+    const directorySymlinkRejected = await runPublisher(join(root, "directory-symlink-rejected"), [
+      "--check-only",
+      "--trusted-package-directory",
+      trustedPackageDirectory,
+      "--workspace-root",
+      directorySymlinkWorkspaceRoot,
+      pnpmArtifact
+    ]);
+    expect(directorySymlinkRejected.result.status).not.toBe(0);
+    expect(directorySymlinkRejected.result.stderr).toContain("workspace entry must not be a symbolic link");
+  }
 
   for (const invalidArgs of [[], [artifact, artifact]]) {
     const invalid = await runPublisher(join(root, `invalid-${invalidArgs.length}`), invalidArgs);

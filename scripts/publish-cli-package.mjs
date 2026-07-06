@@ -12,8 +12,8 @@ const registry = "https://registry.npmjs.org";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const integrityPattern = /^sha512-[A-Za-z0-9+/]+={0,2}$/u;
 
-function runNpm(args, options = {}) {
-  const result = spawnSync("npm", args, {
+function runNpm(args, options = {}, npmCli) {
+  const result = spawnSync(npmCli ? process.execPath : "npm", npmCli ? [npmCli, ...args] : args, {
     encoding: "utf8",
     ...options
   });
@@ -36,8 +36,8 @@ function boundedDiagnostic(value) {
     .slice(0, 2_048);
 }
 
-function queriedIntegrity(spec) {
-  const result = runNpm(["view", spec, "dist.integrity", "--json", `--registry=${registry}`]);
+function queriedIntegrity(spec, npmCli) {
+  const result = runNpm(["view", spec, "dist.integrity", "--json", `--registry=${registry}`], {}, npmCli);
   if (result.status !== 0) {
     const failure = registryFailure(result);
     if (/\bE404\b/u.test(failure)) return null;
@@ -73,15 +73,35 @@ async function artifactIdentity(artifact) {
 }
 
 export async function publishCliPackage(args = process.argv.slice(2)) {
-  const checkOnly = args[0] === "--check-only";
-  const artifacts = args.slice(checkOnly ? 1 : 0);
+  let checkOnly = false;
+  let npmCli;
+  let trustedPackageDirectory;
+  let workspaceRoot;
+  const artifacts = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--check-only") {
+      checkOnly = true;
+    } else if (["--npm-cli", "--trusted-package-directory", "--workspace-root"].includes(argument)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`${argument} requires a path`);
+      index += 1;
+      if (argument === "--npm-cli") npmCli = value;
+      else if (argument === "--trusted-package-directory") trustedPackageDirectory = value;
+      else workspaceRoot = value;
+    } else if (argument.startsWith("--")) {
+      throw new Error(`Unknown option ${argument}`);
+    } else {
+      artifacts.push(argument);
+    }
+  }
   if (artifacts.length !== 1 || !artifacts[0].endsWith(".tgz")) {
     throw new Error("Expected exactly one CLI package tarball");
   }
 
   const release = checkReleaseContract(repositoryRoot);
   const artifact = artifacts[0];
-  await verifyPackedArtifact(artifact);
+  await verifyPackedArtifact(artifact, { trustedPackageDirectory, workspaceRoot });
   const { manifest, integrity } = await artifactIdentity(artifact);
   if (manifest.name !== "skill-steward" || manifest.version !== release.version) {
     throw new Error("CLI artifact identity differs from the release contract");
@@ -95,12 +115,12 @@ export async function publishCliPackage(args = process.argv.slice(2)) {
 
   for (const { name } of release.packages.filter(({ role }) => role === "native")) {
     const nativeSpec = `${name}@${release.version}`;
-    if (queriedIntegrity(nativeSpec) === null) {
+    if (queriedIntegrity(nativeSpec, npmCli) === null) {
       throw new Error(`Required native package is not published: ${nativeSpec}`);
     }
   }
 
-  const publishedIntegrity = queriedIntegrity(spec);
+  const publishedIntegrity = queriedIntegrity(spec, npmCli);
   if (publishedIntegrity !== null) {
     if (publishedIntegrity !== integrity) {
       throw new Error(`Published ${spec} exists with different bytes; refusing to continue`);
@@ -118,7 +138,7 @@ export async function publishCliPackage(args = process.argv.slice(2)) {
     release.npmTag,
     "--provenance",
     `--registry=${registry}`
-  ], { stdio: "inherit" });
+  ], { stdio: "inherit" }, npmCli);
   if (result.status !== 0) {
     throw new Error(`Publishing ${spec} failed with exit ${result.status ?? "unknown"}`);
   }

@@ -30,8 +30,10 @@ function integrity(artifact) {
   return `sha512-${createHash("sha512").update(readFileSync(artifact)).digest("base64")}`;
 }
 
+let npmCli;
+
 function runNpm(args, options = {}) {
-  const result = spawnSync("npm", args, {
+  const result = spawnSync(npmCli ? process.execPath : "npm", npmCli ? [npmCli, ...args] : args, {
     encoding: "utf8",
     ...options
   });
@@ -39,8 +41,24 @@ function runNpm(args, options = {}) {
   return result;
 }
 
-const checkOnly = process.argv[2] === "--check-only";
-const artifacts = process.argv.slice(checkOnly ? 3 : 2);
+let checkOnly = false;
+const artifacts = [];
+const args = process.argv.slice(2);
+for (let index = 0; index < args.length; index += 1) {
+  const argument = args[index];
+  if (argument === "--check-only") {
+    checkOnly = true;
+  } else if (argument === "--npm-cli") {
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) throw new Error("--npm-cli requires a path");
+    npmCli = value;
+    index += 1;
+  } else if (argument.startsWith("--")) {
+    throw new Error(`Unknown option ${argument}`);
+  } else {
+    artifacts.push(argument);
+  }
+}
 if (artifacts.length !== targets.size || artifacts.some((artifact) => !artifact.endsWith(".tgz"))) {
   throw new Error("Expected exactly six native package tarballs");
 }

@@ -287,7 +287,39 @@ function canonicalJson(value) {
   return value;
 }
 
-async function pnpmPackedManifest(source, packageDirectory) {
+async function workspaceDependencyManifest(workspaceRoot, name) {
+  const matches = [];
+  for (const group of ["packages", "apps"]) {
+    const groupPath = join(workspaceRoot, group);
+    for (const entry of await readdir(groupPath, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Trusted pnpm workspace entry must not be a symbolic link: ${group}/${entry.name}`);
+      }
+      if (!entry.isDirectory()) continue;
+      const manifestPath = join(groupPath, entry.name, "package.json");
+      let metadata;
+      try {
+        metadata = await lstat(manifestPath);
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      if (!metadata.isFile() || metadata.isSymbolicLink()) {
+        throw new Error(
+          `Trusted pnpm workspace manifest ${group}/${entry.name}/package.json must be a regular file`
+        );
+      }
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      if (manifest.name === name) matches.push(manifest);
+    }
+  }
+  if (matches.length !== 1 || typeof matches[0].version !== "string" || matches[0].version === "") {
+    throw new Error(`Trusted pnpm workspace dependency ${name} has no unique version`);
+  }
+  return matches[0];
+}
+
+async function pnpmPackedManifest(source, packageDirectory, workspaceRoot) {
   const expected = structuredClone(source);
   for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {
     if (expected[field] === undefined) continue;
@@ -296,12 +328,14 @@ async function pnpmPackedManifest(source, packageDirectory) {
       if (!/^workspace:[*^~]$/.test(specifier)) {
         throw new Error(`Trusted package.json uses unsupported pnpm workspace specifier ${name}=${specifier}`);
       }
-      const dependencyManifest = JSON.parse(await readFile(join(
-        packageDirectory,
-        "node_modules",
-        ...name.split("/"),
-        "package.json"
-      ), "utf8"));
+      const dependencyManifest = workspaceRoot
+        ? await workspaceDependencyManifest(workspaceRoot, name)
+        : JSON.parse(await readFile(join(
+          packageDirectory,
+          "node_modules",
+          ...name.split("/"),
+          "package.json"
+        ), "utf8"));
       if (typeof dependencyManifest.version !== "string" || dependencyManifest.version === "") {
         throw new Error(`Trusted pnpm workspace dependency ${name} has no version`);
       }
@@ -319,7 +353,7 @@ async function pnpmPackedManifest(source, packageDirectory) {
   return expected;
 }
 
-async function assertPackedManifest(actual, expected, packageDirectory) {
+async function assertPackedManifest(actual, expected, packageDirectory, workspaceRoot) {
   if (actual.equals(expected)) return;
   let parsedActual;
   let parsedExpected;
@@ -331,7 +365,7 @@ async function assertPackedManifest(actual, expected, packageDirectory) {
       cause: error
     });
   }
-  const pnpmExpected = await pnpmPackedManifest(parsedExpected, packageDirectory);
+  const pnpmExpected = await pnpmPackedManifest(parsedExpected, packageDirectory, workspaceRoot);
   if (
     JSON.stringify(canonicalJson(parsedActual))
     !== JSON.stringify(canonicalJson(pnpmExpected))
@@ -340,7 +374,7 @@ async function assertPackedManifest(actual, expected, packageDirectory) {
   }
 }
 
-async function assertExactPackageTree(files, expected, packageDirectory) {
+async function assertExactPackageTree(files, expected, packageDirectory, workspaceRoot) {
   const paths = [...files.keys()].sort(compare);
   const expectedPaths = [...expected.keys()].sort(compare);
   if (paths.length !== expectedPaths.length || paths.some((path, index) => path !== expectedPaths[index])) {
@@ -358,7 +392,7 @@ async function assertExactPackageTree(files, expected, packageDirectory) {
   }
   for (const [path, value] of expected) {
     if (path === "package/package.json") {
-      await assertPackedManifest(files.get(path), value, packageDirectory);
+      await assertPackedManifest(files.get(path), value, packageDirectory, workspaceRoot);
     } else if (!files.get(path).equals(value)) {
       throw new Error(`Packed package tree bytes differ from expected ${path}`);
     }
@@ -375,7 +409,8 @@ async function sourceControlledAudit() {
 }
 
 export async function verifyPackedArtifactBytes(bytes, {
-  trustedPackageDirectory = defaultTrustedPackageDirectory
+  trustedPackageDirectory = defaultTrustedPackageDirectory,
+  workspaceRoot
 } = {}) {
   const files = parseTarEntries(bytes);
   for (const required of REQUIRED_FILES) {
@@ -384,7 +419,8 @@ export async function verifyPackedArtifactBytes(bytes, {
   await assertExactPackageTree(
     files,
     await readTrustedPackageTree(trustedPackageDirectory),
-    trustedPackageDirectory
+    trustedPackageDirectory,
+    workspaceRoot
   );
   const audit = await sourceControlledAudit();
   const packageJson = jsonFile(files, "package/package.json");
