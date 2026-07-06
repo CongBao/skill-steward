@@ -1,16 +1,22 @@
 import {
+  applyIntegrationRecoveryPlan,
   applyIntegrationDisconnect,
   applyIntegrationPlan,
   integrationCapabilities,
   integrationHarnessSchema,
+  integrationRecoveryStatus,
   integrationStatus,
   planIntegration,
+  planIntegrationRecovery,
   planIntegrationDisconnect,
   removeLegacyIntegration,
   type IntegrationConfigOptions,
   type IntegrationDisconnectPlan,
   type IntegrationHarness,
   type IntegrationPlan,
+  type IntegrationRecoveryPlan,
+  type IntegrationRecoveryReceipt,
+  type IntegrationRecoveryStatus,
   type IntegrationLegacyRemovalReceipt,
   type IntegrationStatus,
   type IntegrationTransactionReceipt
@@ -49,6 +55,9 @@ export interface IntegrationServices {
   planDisconnect(harness: string): Promise<IntegrationDisconnectPlan>;
   disconnect(harness: string, planId: string): Promise<IntegrationMutationResult>;
   removeLegacy(harness: string): Promise<IntegrationLegacyRemovalReceipt>;
+  recoveryStatus(): Promise<IntegrationRecoveryStatus>;
+  planRecovery(): Promise<IntegrationRecoveryPlan>;
+  applyRecovery(planId: string): Promise<IntegrationRecoveryReceipt>;
 }
 
 export interface IntegrationServiceOptions {
@@ -67,6 +76,9 @@ export interface IntegrationServiceDependencies {
   planDisconnect: typeof planIntegrationDisconnect;
   applyDisconnect: typeof applyIntegrationDisconnect;
   removeLegacy: typeof removeLegacyIntegration;
+  recoveryStatus: typeof integrationRecoveryStatus;
+  planRecovery: typeof planIntegrationRecovery;
+  applyRecovery: typeof applyIntegrationRecoveryPlan;
 }
 
 const integrationServiceDefaults: IntegrationServiceDependencies = {
@@ -75,7 +87,10 @@ const integrationServiceDefaults: IntegrationServiceDependencies = {
   status: integrationStatus,
   planDisconnect: planIntegrationDisconnect,
   applyDisconnect: applyIntegrationDisconnect,
-  removeLegacy: removeLegacyIntegration
+  removeLegacy: removeLegacyIntegration,
+  recoveryStatus: integrationRecoveryStatus,
+  planRecovery: planIntegrationRecovery,
+  applyRecovery: applyIntegrationRecoveryPlan
 };
 
 function parseHarness(value: string): IntegrationHarness {
@@ -144,6 +159,22 @@ export function createIntegrationServices(
     async removeLegacy(value) {
       const harness = parseHarness(value);
       return dependencies.removeLegacy(harness, transactionOptions);
+    },
+    async recoveryStatus() {
+      return dependencies.recoveryStatus({ stateDirectory: options.stateDirectory });
+    },
+    async planRecovery() {
+      return dependencies.planRecovery({
+        stateDirectory: options.stateDirectory,
+        ...(options.now ? { now: options.now } : {})
+      });
+    },
+    async applyRecovery(planId) {
+      return dependencies.applyRecovery(planId, {
+        home: options.home,
+        stateDirectory: options.stateDirectory,
+        ...(options.now ? { now: options.now } : {})
+      });
     }
   };
 }

@@ -18,6 +18,7 @@ import {
 import type {
   OwnedTreeHandle,
   OwnedTreeMutationOptions,
+  ResumeOwnedTreeRecoveryArtifactInput,
   ResumeOwnedTreeCleanupInput
 } from "./companion-owned-tree-domain.js";
 import {
@@ -34,6 +35,120 @@ import {
   proveOwnedTreeDirectory,
   sameOwnedTreeIdentity
 } from "./companion-owned-tree-proof.js";
+
+export async function resumeOwnedTreeRecoveryArtifact(
+  input: ResumeOwnedTreeRecoveryArtifactInput,
+  options: OwnedTreeMutationOptions
+): Promise<OwnedTreeHandle> {
+  return withOwnedTreeClaim(options, async () => {
+    await ensureOwnedTreePosix(options);
+    await assertIntegrationMutationLeaseOwned(options.leaseContext, options.stateDirectory);
+    validateOwnedTreeTransactionId(input.transactionId);
+    let artifact;
+    try {
+      artifact = consumeIntegrationRecoveryArtifactAuthority(
+        input.artifactAuthority,
+        options.stateDirectory,
+        input.transactionId,
+        input.role,
+        options.leaseContext
+      );
+    } catch (error) {
+      throw invalidOwnedTree("Companion restart recovery authority is invalid", error);
+    }
+    const manifest = parseOwnedTreeManifest(artifact.manifest);
+    if (
+      manifest.platform !== "posix"
+      || artifact.role !== input.role
+      || artifact.fingerprint !== manifest.fingerprint
+      || artifact.platformMetadata?.platform !== manifest.platform
+      || artifact.entryIdentities === undefined
+      || artifact.entryIdentities.length !== manifest.entries.length
+    ) {
+      throw invalidOwnedTree("Companion restart recovery artifact is inconsistent");
+    }
+    const home = normalizeOwnedTreePath(input.homeBoundaryPath, "Companion home boundary");
+    const path = normalizeOwnedTreePath(artifact.path, "Companion restart recovery path");
+    const expectedPath = normalizeOwnedTreePath(
+      input.expectedPath,
+      "Expected companion restart recovery path"
+    );
+    assertOwnedTreeChild(home, path);
+    assertOwnedTreeChild(home, expectedPath);
+    if (path !== expectedPath) {
+      throw driftedOwnedTree("Companion restart recovery path changed");
+    }
+    const parent = await proveOwnedTreeDirectory(dirname(path), options);
+    const homeProof = await proveOwnedTreeDirectory(home, options);
+    const physicalRelative = relative(homeProof.physicalPath, parent.physicalPath);
+    if (
+      parent.physicalPath !== artifact.physicalParentPath
+      || parent.identity.device.toString() !== artifact.parentIdentity.device
+      || parent.identity.inode.toString() !== artifact.parentIdentity.inode
+      || physicalRelative === ""
+      || physicalRelative === ".."
+      || physicalRelative.startsWith(`..${sep}`)
+    ) {
+      throw driftedOwnedTree("Companion restart recovery parent proof changed");
+    }
+    const rootIdentity = {
+      device: BigInt(artifact.rootIdentity.device),
+      inode: BigInt(artifact.rootIdentity.inode)
+    };
+    if (rootIdentity.device <= 0n || rootIdentity.inode <= 0n) {
+      throw invalidOwnedTree("Companion restart recovery root identity is unavailable");
+    }
+    const root = await lstatOwnedTree(path, options);
+    if (
+      root === undefined
+      || root.isSymbolicLink()
+      || !root.isDirectory()
+      || !sameOwnedTreeIdentity(identityFromStats(root), rootIdentity)
+      || root.dev !== parent.identity.device
+    ) {
+      throw driftedOwnedTree("Companion restart recovery root proof changed");
+    }
+    const current = await inspectCompanionTree(path, {
+      boundary: parent.path,
+      platform: options.hooks?.platform ?? process.platform
+    });
+    if (JSON.stringify(current) !== JSON.stringify(manifest)) {
+      throw driftedOwnedTree("Companion restart recovery manifest changed");
+    }
+    const persistedIdentities = new Map(artifact.entryIdentities.map((entry) => [
+      entry.relativePath,
+      { device: BigInt(entry.device), inode: BigInt(entry.inode) }
+    ] as const));
+    const currentIdentities = await captureOwnedTreeEntryIdentities(path, current, options);
+    if (
+      persistedIdentities.size !== manifest.entries.length
+      || manifest.entries.some(({ relativePath }) => {
+        const persisted = persistedIdentities.get(relativePath);
+        const observed = currentIdentities.get(relativePath);
+        return persisted === undefined
+          || observed === undefined
+          || !sameOwnedTreeIdentity(persisted, observed);
+      })
+    ) {
+      throw driftedOwnedTree("Companion restart recovery entry identity changed");
+    }
+    return createOwnedTreeHandle({
+      transactionId: input.transactionId,
+      role: input.role === "installed" ? "stage" : input.role,
+      status: "moved",
+      currentPath: path,
+      homeBoundaryPath: home,
+      stateDirectory: options.stateDirectory,
+      leaseContext: options.leaseContext,
+      parent,
+      rootIdentity,
+      manifest,
+      entryIdentities: currentIdentities,
+      deletedEntries: new Set(),
+      rootRemoved: false
+    });
+  });
+}
 
 export async function resumeOwnedTreeCleanup(
   input: ResumeOwnedTreeCleanupInput,
@@ -60,7 +175,7 @@ export async function resumeOwnedTreeCleanup(
       throw invalidOwnedTree("Companion cleanup recovery requires a POSIX manifest");
     }
     if (
-      (artifact.role !== "stage" && artifact.role !== "backup")
+      (artifact.role !== "stage" && artifact.role !== "backup" && artifact.role !== "cleanup")
       || artifact.fingerprint !== manifest.fingerprint
       || artifact.platformMetadata?.platform !== manifest.platform
       || artifact.entryIdentities === undefined

@@ -403,11 +403,90 @@ export type IntegrationStatusValue = "not-installed" | "installed" | "needs-trus
 export type CompanionSkillStatus = "current" | "upgrade-available" | "missing" | "conflict" | "unknown";
 
 export interface IntegrationStatus {
+  schemaVersion: 2;
   harness: IntegrationHarness;
+  hook: {
+    status: IntegrationStatusValue;
+    reason: string;
+    target: string;
+    availability: IntegrationStatusAvailability;
+    lastChangedAt?: string;
+  };
+  companion: {
+    status: CompanionSkillStatus;
+    reason: string;
+    target: string;
+    proofCategory: "new" | "recorded" | "legacy-alpha" | "conflict" | "unknown";
+    availability: IntegrationStatusAvailability;
+    lastChangedAt?: string;
+  };
+  availability: IntegrationStatusAvailability;
+  /** @deprecated Alpha compatibility alias. */
   status: CompanionSkillStatus;
+  /** @deprecated Alpha compatibility alias. */
   reason: string;
+  /** @deprecated Alpha compatibility alias. */
   hookStatus: IntegrationStatusValue;
   lastChangedAt?: string;
+}
+
+export interface IntegrationStatusAvailability {
+  state: "available" | "unavailable";
+  available: boolean;
+  reason: string | null;
+}
+
+export interface IntegrationRecoveryTransaction {
+  transactionId: string;
+  harness: IntegrationHarness;
+  action: "create" | "upgrade" | "none" | "disconnect";
+  phase: "prepared" | "mutating" | "recovery-required" | "committed" | "cleanup-pending";
+  sequence: number;
+}
+
+export type IntegrationRecoveryStatus =
+  | { state: "clear"; reasonCode: "INTEGRATION_RECOVERY_CLEAR"; recoverable: false }
+  | {
+      state: "rollback-required" | "finalize-required";
+      reasonCode: "INTEGRATION_RECOVERY_ROLLBACK_REQUIRED" | "INTEGRATION_RECOVERY_FINALIZE_REQUIRED";
+      recoverable: true;
+      direction: "rollback" | "finalize";
+      transaction: IntegrationRecoveryTransaction;
+    }
+  | {
+      state: "unknown";
+      reasonCode: "INTEGRATION_RECOVERY_UNAVAILABLE" | "INTEGRATION_RECOVERY_RECORD_CONTRADICTORY";
+      recoverable: false;
+      transaction?: IntegrationRecoveryTransaction;
+    };
+
+export interface IntegrationRecoveryPlan {
+  schemaVersion: 1;
+  planId: string;
+  action: "rollback" | "finalize";
+  recoveryState: "rollback-required" | "finalize-required";
+  availability: IntegrationStatusAvailability;
+  transaction: IntegrationRecoveryTransaction;
+  evidenceDigest: string;
+  artifacts: {
+    configuration: boolean;
+    readiness: boolean;
+    companionRoles: Array<"stage" | "backup" | "cleanup" | "installed">;
+  };
+  createdAt: string;
+  expiresAt: string;
+  applyCommand: string | null;
+}
+
+export interface IntegrationRecoveryReceipt {
+  schemaVersion: 1;
+  transactionId: string;
+  planId: string;
+  action: "rollback" | "finalize";
+  outcome: "recovered" | "recovery-required";
+  finalState: "closed" | "recovery-required" | "cleanup-pending";
+  reasonCode: string;
+  nextSafeAction: "create-new-plan" | "review-recovery";
 }
 
 export interface IntegrationPlan {
@@ -473,6 +552,21 @@ export interface IntegrationMutationResult {
 
 export function fetchIntegrations(): Promise<IntegrationStatus[]> {
   return apiRequest("/api/v1/integrations");
+}
+
+export function fetchIntegrationRecovery(): Promise<IntegrationRecoveryStatus> {
+  return apiRequest("/api/v1/integrations/recovery");
+}
+
+export function planIntegrationRecovery(): Promise<IntegrationRecoveryPlan> {
+  return apiRequest("/api/v1/integrations/recovery/plan", { method: "POST" });
+}
+
+export function applyIntegrationRecovery(planId: string): Promise<IntegrationRecoveryReceipt> {
+  return apiRequest("/api/v1/integrations/recovery/apply", {
+    method: "POST",
+    body: JSON.stringify({ planId })
+  });
 }
 
 export interface IntegrationCapability {

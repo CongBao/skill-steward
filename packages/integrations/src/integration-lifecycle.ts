@@ -26,6 +26,14 @@ import {
   type IntegrationHarness
 } from "./domain.js";
 import type { CompanionSkillStatus } from "./companion-shared.js";
+import {
+  applyIntegrationRecoveryPlan as applyIntegrationRecoveryPlanInternal,
+  inspectIntegrationRecoveryStatus,
+  planIntegrationRecovery as planIntegrationRecoveryInternal,
+  type IntegrationRecoveryPlan as InternalIntegrationRecoveryPlan,
+  type IntegrationRecoveryReceipt as InternalIntegrationRecoveryReceipt,
+  type IntegrationRecoveryStatus as InternalIntegrationRecoveryStatus
+} from "./integration-recovery.js";
 
 const strictPlanId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -85,12 +93,57 @@ export interface IntegrationDisconnectPlan {
   expiresAt: string;
 }
 
-export interface IntegrationStatus {
+export interface IntegrationStatusAvailability {
+  state: "available" | "unavailable";
+  available: boolean;
+  reason: string | null;
+}
+
+export interface IntegrationStatusV2 {
+  schemaVersion: 2;
   harness: IntegrationHarness;
+  hook: {
+    status: IntegrationStatusValue;
+    reason: string;
+    target: string;
+    availability: IntegrationStatusAvailability;
+    lastChangedAt?: string;
+  };
+  companion: {
+    status: CompanionSkillStatus;
+    reason: string;
+    target: string;
+    proofCategory: "new" | "recorded" | "legacy-alpha" | "conflict" | "unknown";
+    availability: IntegrationStatusAvailability;
+    lastChangedAt?: string;
+  };
+  availability: IntegrationStatusAvailability;
+  /** @deprecated Alpha compatibility alias for companion.status. */
   status: CompanionSkillStatus;
+  /** @deprecated Alpha compatibility alias for companion.reason. */
   reason: string;
+  /** @deprecated Alpha compatibility alias for hook.status. */
   hookStatus: IntegrationStatusValue;
   lastChangedAt?: string;
+}
+
+export type IntegrationStatus = IntegrationStatusV2;
+
+export type IntegrationRecoveryStatus = InternalIntegrationRecoveryStatus;
+export type IntegrationRecoveryPlan = InternalIntegrationRecoveryPlan;
+export type IntegrationRecoveryReceipt = InternalIntegrationRecoveryReceipt;
+
+export interface IntegrationRecoveryStatusOptions {
+  stateDirectory: string;
+}
+
+export interface IntegrationRecoveryPlanOptions extends IntegrationRecoveryStatusOptions {
+  now?: () => Date;
+  platform?: NodeJS.Platform;
+}
+
+export interface IntegrationRecoveryApplyOptions extends IntegrationRecoveryPlanOptions {
+  home: string;
 }
 
 export interface IntegrationReadinessContext {
@@ -234,6 +287,30 @@ const publicIntegrationErrorDefinitions = {
     message: "Integration recovery is required before another change.",
     httpStatus: 409
   },
+  INTEGRATION_RECOVERY_NOT_REQUIRED: {
+    message: "No integration recovery is required.",
+    httpStatus: 409
+  },
+  INTEGRATION_RECOVERY_UNAVAILABLE: {
+    message: "Integration recovery evidence is unavailable. No recovery action was selected.",
+    httpStatus: 409
+  },
+  INTEGRATION_RECOVERY_RECORD_CONTRADICTORY: {
+    message: "Integration recovery evidence is contradictory. No recovery action was selected.",
+    httpStatus: 409
+  },
+  INTEGRATION_RECOVERY_PLAN_STALE: {
+    message: "The reviewed recovery plan is stale. Create a fresh plan.",
+    httpStatus: 409
+  },
+  INTEGRATION_RECOVERY_INCOMPLETE: {
+    message: "Integration recovery remains incomplete. Review the current recovery state.",
+    httpStatus: 409
+  },
+  INTEGRATION_PLATFORM_UNSUPPORTED: {
+    message: "Managed integration recovery is unavailable on this platform.",
+    httpStatus: 409
+  },
   INTEGRATION_OPERATION_FAILED: {
     message: "Integration operation could not be completed safely.",
     httpStatus: 500
@@ -336,6 +413,26 @@ export function serializePublicIntegrationError(error: unknown): PublicIntegrati
     return publicIntegrationError(code as PublicIntegrationErrorCode);
   }
   return publicIntegrationError("INTEGRATION_OPERATION_FAILED");
+}
+
+export async function integrationRecoveryStatus(
+  options: IntegrationRecoveryStatusOptions
+): Promise<IntegrationRecoveryStatus> {
+  return inspectIntegrationRecoveryStatus(options.stateDirectory);
+}
+
+export async function planIntegrationRecovery(
+  options: IntegrationRecoveryPlanOptions
+): Promise<IntegrationRecoveryPlan> {
+  return planIntegrationRecoveryInternal(options);
+}
+
+export async function applyIntegrationRecoveryPlan(
+  planId: string,
+  options: IntegrationRecoveryApplyOptions
+): Promise<IntegrationRecoveryReceipt> {
+  assertPlanId(planId);
+  return applyIntegrationRecoveryPlanInternal(planId, options);
 }
 
 function companionStatus(plan: InternalIntegrationPlan): CompanionSkillStatus {
@@ -449,8 +546,49 @@ export async function integrationStatus(
   options: IntegrationConfigOptions
 ): Promise<IntegrationStatus> {
   const status = await inspectIntegrationStatus(inputHarness, options);
+  const hookReason = status.status === "not-installed"
+    ? "HOOK_NOT_INSTALLED"
+    : status.status === "installed"
+      ? "HOOK_INSTALLED"
+      : status.status === "needs-trust"
+        ? "HOOK_NEEDS_TRUST"
+        : status.status === "drifted"
+          ? "HOOK_DRIFTED"
+          : "HOOK_INVALID";
+  const hookAvailability: IntegrationStatusAvailability =
+    status.status === "drifted" || status.status === "invalid"
+      ? { state: "unavailable", available: false, reason: hookReason }
+      : { state: "available", available: true, reason: null };
+  const companionAvailability: IntegrationStatusAvailability =
+    status.companion.status === "conflict" || status.companion.status === "unknown"
+      ? {
+          state: "unavailable",
+          available: false,
+          reason: status.companion.reason
+        }
+      : { state: "available", available: true, reason: null };
+  const availability = !hookAvailability.available
+    ? hookAvailability
+    : companionAvailability;
   return {
+    schemaVersion: 2,
     harness: status.harness,
+    hook: {
+      status: status.status,
+      reason: hookReason,
+      target: status.targetPath,
+      availability: hookAvailability,
+      ...(status.lastChangedAt ? { lastChangedAt: status.lastChangedAt } : {})
+    },
+    companion: {
+      status: status.companion.status,
+      reason: status.companion.reason,
+      target: status.companion.path,
+      proofCategory: status.companion.proofCategory,
+      availability: companionAvailability,
+      ...(status.lastChangedAt ? { lastChangedAt: status.lastChangedAt } : {})
+    },
+    availability,
     status: status.companion.status,
     reason: status.companion.reason,
     hookStatus: status.status,

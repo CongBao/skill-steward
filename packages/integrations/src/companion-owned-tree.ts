@@ -20,7 +20,10 @@ export {
   rollbackCreatedOwnedTreeAncestors
 } from "./companion-owned-tree-cleanup.js";
 export { moveOwnedTree, proveOwnedTree } from "./companion-owned-tree-move.js";
-export { resumeOwnedTreeCleanup } from "./companion-owned-tree-recovery.js";
+export {
+  resumeOwnedTreeCleanup,
+  resumeOwnedTreeRecoveryArtifact
+} from "./companion-owned-tree-recovery.js";
 export type {
   CreatedOwnedTreeAncestorProof,
   OwnedTreeCleanupReceipt,
@@ -39,5 +42,6 @@ export type {
   OwnedTreeStageResult,
   OwnedTreeStatus,
   ProveOwnedTreeInput,
+  ResumeOwnedTreeRecoveryArtifactInput,
   ResumeOwnedTreeCleanupInput
 } from "./companion-owned-tree-domain.js";

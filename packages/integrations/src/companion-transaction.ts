@@ -38,6 +38,7 @@ import {
   createOwnedTreeAncestors,
   createOwnedTreeStage,
   moveOwnedTree,
+  ownedTreeHandleSnapshot,
   ownedTreeRecoveryArtifactProof,
   ownedTreeSiblingPath,
   proveOwnedTree,
@@ -394,6 +395,30 @@ function installedProof(handle: OwnedTreeHandle): IntegrationRecoveryArtifactPro
   return structuredClone({ ...proof, role: "installed" as const });
 }
 
+function cleanupProof(
+  handle: OwnedTreeHandle,
+  transactionId: string,
+  original: IntegrationRecoveryArtifactProof
+): IntegrationRecoveryArtifactProof {
+  const snapshot = ownedTreeHandleSnapshot(handle);
+  if (
+    (original.role !== "stage" && original.role !== "backup")
+    || snapshot.path !== ownedTreeSiblingPath(dirname(snapshot.path), transactionId, "cleanup")
+    || snapshot.manifestFingerprint !== original.fingerprint
+    || snapshot.rootIdentity.device.toString() !== original.rootIdentity.device
+    || snapshot.rootIdentity.inode.toString() !== original.rootIdentity.inode
+    || snapshot.parentIdentity.device.toString() !== original.parentIdentity.device
+    || snapshot.parentIdentity.inode.toString() !== original.parentIdentity.inode
+  ) {
+    throw new Error("Companion cleanup has not acquired its exact recovery path");
+  }
+  return structuredClone({
+    ...original,
+    role: "cleanup" as const,
+    path: snapshot.path
+  });
+}
+
 async function moveOrThrow(
   handle: OwnedTreeHandle,
   destination: string,
@@ -728,7 +753,11 @@ async function runCompanionIntegrationTransaction(
       await dependencies.afterBoundary("recovery-checkpoint");
     };
     const terminalRecovery = async (
-      state: "rolled-back" | "recovery-required" | "committed" | "cleanup-pending" | "closed"
+      state: "rolled-back" | "recovery-required" | "committed" | "cleanup-pending" | "closed",
+      completedStepAdditions: Array<
+        "readiness-finalized" | "configuration-finalized" | "companion-finalized"
+      > = [],
+      artifactProofAdditions: IntegrationRecoveryArtifactProof[] = []
     ): Promise<void> => {
       if (!recovery) return;
       recovery = await dependencies.appendRecovery(options.stateDirectory, {
@@ -736,7 +765,9 @@ async function runCompanionIntegrationTransaction(
         expectedSequence: recovery.sequence,
         expectedState: recovery.state,
         state,
-        transitionedAt: (options.now?.() ?? new Date()).toISOString()
+        transitionedAt: (options.now?.() ?? new Date()).toISOString(),
+        ...(completedStepAdditions.length > 0 ? { completedStepAdditions } : {}),
+        ...(artifactProofAdditions.length > 0 ? { artifactProofAdditions } : {})
       }, { leaseContext });
     };
 
@@ -1295,30 +1326,56 @@ async function runCompanionIntegrationTransaction(
       }
       if (readinessHandle && commitReceipt) {
         try {
-          const finalized = await checkedBoundary(dependencies, "readiness-finalize", () =>
-            dependencies.finalizeReadiness(
-              readinessHandle!,
-              commitReceipt!,
-              mutationOptions
-            ));
+          await dependencies.beforeBoundary("readiness-finalize");
+          const finalized = await dependencies.finalizeReadiness(
+            readinessHandle!,
+            commitReceipt!,
+            mutationOptions
+          );
           if (finalized.status === "committed-warning") warnings.push(...finalized.warnings);
+          else await terminalRecovery("committed", ["readiness-finalized"]);
+          await dependencies.afterBoundary("readiness-finalize");
         } catch (error) {
           warnings.push(error);
         }
       }
       if ((applyTransactionPlan?.companion.action === "upgrade" || removesCompanion) && backup) {
+        const originalBackupProof = recovery?.artifactProofs.find(({ role }) => role === "backup");
         try {
-          const cleanup = await checkedBoundary(dependencies, "tree-cleanup", () =>
-            dependencies.cleanupTree(backup!, mutationOptions));
-          if (cleanup.state === "cleanup-pending") warnings.push(cleanup.warning);
+          await dependencies.beforeBoundary("tree-cleanup");
+          const cleanup = await dependencies.cleanupTree(backup!, mutationOptions);
+          if (cleanup.state === "cleanup-pending") {
+            if (!originalBackupProof) throw new Error("Companion backup recovery proof is unavailable");
+            await terminalRecovery("committed", [], [cleanupProof(
+              cleanup.handle,
+              transactionId,
+              originalBackupProof
+            )]);
+            warnings.push(cleanup.warning);
+          }
+          else await terminalRecovery("committed", ["companion-finalized"]);
+          await dependencies.afterBoundary("tree-cleanup");
         } catch (error) {
+          try {
+            if (!originalBackupProof) throw new Error("Companion backup recovery proof is unavailable");
+            await terminalRecovery("committed", [], [cleanupProof(
+              backup,
+              transactionId,
+              originalBackupProof
+            )]);
+          } catch {
+            // The original cleanup failure remains primary. Recovery will fail closed
+            // when no exact post-move cleanup proof can be persisted.
+          }
           warnings.push(error);
         }
       }
       if (configHandle) {
         try {
-          await checkedBoundary(dependencies, "config-finalize", () =>
-            dependencies.finalizeConfig(configHandle!, mutationOptions));
+          await dependencies.beforeBoundary("config-finalize");
+          await dependencies.finalizeConfig(configHandle!, mutationOptions);
+          await terminalRecovery("committed", ["configuration-finalized"]);
+          await dependencies.afterBoundary("config-finalize");
         } catch (error) {
           warnings.push(error);
         }
@@ -1333,6 +1390,8 @@ async function runCompanionIntegrationTransaction(
       if (warnings.length > 0 && recovery?.state === "committed") {
         await terminalRecovery("cleanup-pending").catch(() => undefined);
       }
+      const recoveryClosed = recovery?.state === "closed";
+      const cleanupComplete = warnings.length === 0 || recoveryClosed;
       return companionTransactionReceiptSchema.parse({
         transactionId,
         outcome: "ready",
@@ -1345,11 +1404,11 @@ async function runCompanionIntegrationTransaction(
             ? "upgraded"
             : "unchanged",
         recordId,
-        cleanup: warnings.length === 0 ? "clean" : "pending",
-        reasonCode: warnings.length === 0
+        cleanup: cleanupComplete ? "clean" : "pending",
+        reasonCode: cleanupComplete
           ? "INTEGRATION_READY"
           : "INTEGRATION_READY_CLEANUP_PENDING",
-        nextSafeAction: warnings.length === 0 ? "none" : "recover-transaction"
+        nextSafeAction: cleanupComplete ? "none" : "recover-transaction"
       });
     }
     }

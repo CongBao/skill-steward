@@ -148,7 +148,15 @@ export interface OwnedTreeStageResult {
 export interface ResumeOwnedTreeCleanupInput {
   transactionId: string;
   homeBoundaryPath: string;
-  role: "stage" | "backup";
+  role: "stage" | "backup" | "cleanup";
+  artifactAuthority: IntegrationRecoveryArtifactAuthority;
+}
+
+export interface ResumeOwnedTreeRecoveryArtifactInput {
+  transactionId: string;
+  homeBoundaryPath: string;
+  role: "stage" | "backup" | "installed";
+  expectedPath: string;
   artifactAuthority: IntegrationRecoveryArtifactAuthority;
 }
 

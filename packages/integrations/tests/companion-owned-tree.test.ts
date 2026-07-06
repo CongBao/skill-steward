@@ -37,6 +37,7 @@ import {
   ownedTreeRecoveryArtifactProof,
   ownedTreeHandleSnapshot,
   proveOwnedTree,
+  resumeOwnedTreeRecoveryArtifact,
   resumeOwnedTreeCleanup,
   restoreOwnedTreeUpgrade,
   rollbackCreatedOwnedTreeAncestors
@@ -217,6 +218,154 @@ async function withRestoredUpgrade(
 }
 
 describe("companion owned tree", () => {
+  it("reopens an intact exact stage only from persisted Store authority", async () => {
+    const { base, source } = await sourceFixture();
+    const home = join(base, "home");
+    const stateDirectory = join(base, "state");
+    const destinationPath = join(home, ".agents", "skills", "skill-steward-preflight");
+    await mkdir(home, { mode: 0o700 });
+    const manifest = await inspectCompanionTree(source, {
+      boundary: dirname(source),
+      platform: "linux"
+    });
+
+    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const options = { stateDirectory, leaseContext };
+      const staged = await createOwnedTreeStage({
+        transactionId: TRANSACTION_ID,
+        sourcePath: source,
+        destinationPath,
+        homeBoundaryPath: home,
+        expectedManifest: manifest
+      }, options);
+      const proof = ownedTreeRecoveryArtifactProof(staged.tree);
+      const artifactAuthority = await persistAndLoadArtifactAuthority(
+        stateDirectory,
+        home,
+        proof,
+        leaseContext
+      );
+      const reopened = await resumeOwnedTreeRecoveryArtifact({
+        transactionId: TRANSACTION_ID,
+        homeBoundaryPath: home,
+        role: "stage",
+        expectedPath: proof.path,
+        artifactAuthority
+      }, options);
+      expect(ownedTreeHandleSnapshot(reopened)).toMatchObject({
+        role: "stage",
+        status: "moved",
+        path: proof.path,
+        manifestFingerprint: proof.fingerprint
+      });
+      await expect(cleanupOwnedTree(reopened, options)).resolves.toMatchObject({
+        state: "cleaned"
+      });
+    });
+  });
+
+  it("refuses a caller-redirected recovery path without consuming another tree", async () => {
+    const { base, source } = await sourceFixture();
+    const home = join(base, "home");
+    const stateDirectory = join(base, "state");
+    const destinationPath = join(home, ".agents", "skills", "skill-steward-preflight");
+    await mkdir(home, { mode: 0o700 });
+    await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+      const options = { stateDirectory, leaseContext };
+      const manifest = await inspectCompanionTree(source, {
+        boundary: dirname(source),
+        platform: "linux"
+      });
+      const staged = await createOwnedTreeStage({
+        transactionId: TRANSACTION_ID,
+        sourcePath: source,
+        destinationPath,
+        homeBoundaryPath: home,
+        expectedManifest: manifest
+      }, options);
+      const proof = ownedTreeRecoveryArtifactProof(staged.tree);
+      const artifactAuthority = await persistAndLoadArtifactAuthority(
+        stateDirectory,
+        home,
+        proof,
+        leaseContext
+      );
+      await expect(resumeOwnedTreeRecoveryArtifact({
+        transactionId: TRANSACTION_ID,
+        homeBoundaryPath: home,
+        role: "stage",
+        expectedPath: destinationPath,
+        artifactAuthority
+      }, options)).rejects.toMatchObject({ code: "INTEGRATION_CONFIGURATION_DRIFT" });
+      await expect(inspectCompanionTree(proof.path, {
+        boundary: home,
+        platform: "linux"
+      })).resolves.toEqual(manifest);
+    });
+  });
+
+  it.each(["backup", "installed"] as const)(
+    "reopens an intact exact %s role at only its persisted path",
+    async (persistedRole) => {
+      const { base, source } = await sourceFixture();
+      const home = join(base, "home");
+      const stateDirectory = join(base, "state");
+      const destinationPath = join(home, ".agents", "skills", "skill-steward-preflight");
+      await mkdir(home, { mode: 0o700 });
+      await withIntegrationMutationLease(stateDirectory, async (leaseContext) => {
+        const options = { stateDirectory, leaseContext };
+        const manifest = await inspectCompanionTree(source, {
+          boundary: dirname(source),
+          platform: "linux"
+        });
+        const staged = await createOwnedTreeStage({
+          transactionId: TRANSACTION_ID,
+          sourcePath: source,
+          destinationPath,
+          homeBoundaryPath: home,
+          expectedManifest: manifest
+        }, options);
+        const targetPath = persistedRole === "backup"
+          ? join(dirname(destinationPath), `.skill-steward-owned.${TRANSACTION_ID}.backup`)
+          : destinationPath;
+        const moved = await moveOwnedTree(staged.tree, targetPath, options);
+        if (moved.state !== "moved") throw new Error("fixture move did not complete");
+        const exact = await proveOwnedTree({
+          transactionId: TRANSACTION_ID,
+          role: persistedRole === "backup" ? "backup" : "stage",
+          path: targetPath,
+          homeBoundaryPath: home,
+          expectedManifest: manifest
+        }, options);
+        const proof = {
+          ...ownedTreeRecoveryArtifactProof(exact),
+          role: persistedRole
+        } as IntegrationRecoveryArtifactProof;
+        const artifactAuthority = await persistAndLoadArtifactAuthority(
+          stateDirectory,
+          home,
+          proof,
+          leaseContext
+        );
+        const reopened = await resumeOwnedTreeRecoveryArtifact({
+          transactionId: TRANSACTION_ID,
+          homeBoundaryPath: home,
+          role: persistedRole,
+          expectedPath: targetPath,
+          artifactAuthority
+        }, options);
+        expect(ownedTreeHandleSnapshot(reopened)).toMatchObject({
+          role: persistedRole === "installed" ? "stage" : "backup",
+          path: targetPath,
+          manifestFingerprint: manifest.fingerprint
+        });
+        await expect(cleanupOwnedTree(reopened, options)).resolves.toMatchObject({
+          state: "cleaned"
+        });
+      });
+    }
+  );
+
   it("creates missing ancestors and stages the exact reviewed POSIX manifest", async () => {
     const { base, source } = await sourceFixture();
     const home = join(base, "home");

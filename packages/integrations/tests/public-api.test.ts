@@ -23,6 +23,7 @@ const runtimeExports = [
   "CompanionSkillError",
   "IntegrationError",
   "IntegrationTransactionError",
+  "applyIntegrationRecoveryPlan",
   "applyIntegrationPlan",
   "applyIntegrationDisconnect",
   "companionSkillDirectory",
@@ -31,11 +32,13 @@ const runtimeExports = [
   "integrationCapabilities",
   "integrationCapabilitySchema",
   "integrationHarnessSchema",
+  "integrationRecoveryStatus",
   "integrationStatus",
   "normalizeLifecycleInput",
   "normalizeObserveInput",
   "normalizePromptDelivery",
   "planIntegration",
+  "planIntegrationRecovery",
   "planIntegrationDisconnect",
   "promptHookInputSchema",
   "promptInjectionHarnessSchema",
@@ -60,10 +63,18 @@ const declarationExports = [
   "IntegrationPlanAction",
   "IntegrationPlanAvailability",
   "IntegrationReadinessContext",
+  "IntegrationRecoveryApplyOptions",
+  "IntegrationRecoveryPlan",
+  "IntegrationRecoveryPlanOptions",
+  "IntegrationRecoveryReceipt",
+  "IntegrationRecoveryStatus",
+  "IntegrationRecoveryStatusOptions",
   "IntegrationTransactionOptions",
   "IntegrationTransactionReceipt",
   "IntegrationDisconnectPlan",
   "IntegrationStatus",
+  "IntegrationStatusAvailability",
+  "IntegrationStatusV2",
   "LifecyclePrivacy",
   "NormalizeLifecycleInput",
   "NormalizeObserveInput",
@@ -134,8 +145,9 @@ describe("built package root", () => {
     const declarationText = await readFile(builtDeclaration, "utf8");
     expect(declarationText).not.toContain("export *");
     expect(declarationText).not.toMatch(
-      /CompanionManifest|companionTree|compareCompanionPaths|createCompanionTreeManifest|IntegrationRecovery|LegacyAlpha|resolveCompanionManagedProof/u
+      /CompanionManifest|companionTree|compareCompanionPaths|createCompanionTreeManifest|IntegrationRecoveryArtifact|IntegrationRecoveryInspection|IntegrationRecoveryState|LegacyAlpha|resolveCompanionManagedProof/u
     );
+    expect(declarationText).not.toContain("dependencyOverrides");
 
     const configDeclarationText = await readFile(builtConfigDeclaration, "utf8");
     expect(configDeclarationText).toContain(

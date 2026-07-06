@@ -11,6 +11,7 @@ import {
 import {
   applyIntegrationDisconnect,
   applyIntegrationPlan,
+  integrationStatus,
   planIntegration,
   planIntegrationDisconnect,
   removeLegacyIntegration
@@ -32,6 +33,40 @@ function readinessReport() {
 }
 
 describe("public integration lifecycle compatibility", () => {
+  it("publishes separate v2 Hook and companion domains with exact compatibility aliases", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-public-status-v2-"));
+    const value = await integrationStatus("codex", {
+      home,
+      stateDirectory: join(home, "state"),
+      companionSourceDirectory: packagedCompanion
+    });
+
+    expect(value).toMatchObject({
+      schemaVersion: 2,
+      harness: "codex",
+      hook: {
+        status: "not-installed",
+        reason: "HOOK_NOT_INSTALLED",
+        target: join(home, ".codex", "hooks.json"),
+        availability: { state: "available", available: true, reason: null }
+      },
+      companion: {
+        status: "missing",
+        reason: "COMPANION_MISSING",
+        target: join(home, ".agents", "skills", "skill-steward-preflight"),
+        proofCategory: "new",
+        availability: { state: "available", available: true, reason: null }
+      },
+      availability: { state: "available", available: true, reason: null },
+      status: "missing",
+      reason: "COMPANION_MISSING",
+      hookStatus: "not-installed"
+    });
+    expect(value.status).toBe(value.companion.status);
+    expect(value.reason).toBe(value.companion.reason);
+    expect(value.hookStatus).toBe(value.hook.status);
+  });
+
   it("rejects the wrong expected Harness before consuming a reviewed apply plan", async () => {
     const home = await mkdtemp(join(tmpdir(), "steward-public-harness-bind-apply-"));
     const options = {
@@ -59,6 +94,12 @@ describe("public integration lifecycle compatibility", () => {
       expectedHarness: "codex",
       generateReadiness
     })).resolves.toMatchObject({ outcome: "ready", hook: "installed" });
+    await expect(integrationStatus("codex", options)).resolves.toMatchObject({
+      schemaVersion: 2,
+      hook: { lastChangedAt: "2026-07-05T00:00:00.000Z" },
+      companion: { lastChangedAt: "2026-07-05T00:00:00.000Z" },
+      lastChangedAt: "2026-07-05T00:00:00.000Z"
+    });
   });
 
   it("rejects the wrong expected Harness before consuming a reviewed disconnect plan", async () => {

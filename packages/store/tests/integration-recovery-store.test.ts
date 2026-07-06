@@ -25,6 +25,7 @@ import {
   fingerprintIntegrationFileBytes,
   publishIntegrationFileTransaction,
   publishIntegrationReadiness,
+  readIntegrationRecoveryInspection,
   readIntegrationRecoveryState,
   withIntegrationMutationLease,
   type IntegrationMutationLeaseContext,
@@ -315,8 +316,10 @@ const allowedTransitionPairs = [
   ["recovery-required", "rolled-back"],
   ["recovery-required", "committed"],
   ["rolled-back", "closed"],
+  ["committed", "committed"],
   ["committed", "cleanup-pending"],
   ["committed", "closed"],
+  ["cleanup-pending", "cleanup-pending"],
   ["cleanup-pending", "closed"]
 ] as const;
 
@@ -439,6 +442,56 @@ describe("integration recovery store", () => {
       expect((await stat(join(stateDirectory, "integration-recovery", fragment!))).mode & 0o777)
         .toBe(0o600);
     }
+  });
+
+  it.each([
+    "prepared",
+    "mutating",
+    "recovery-required",
+    "committed",
+    "cleanup-pending"
+  ] as const)("returns one exact detached %s transaction for recovery coordination", async (target) => {
+    const { stateDirectory, current } = await stateFixture(target);
+
+    const inspection = await readIntegrationRecoveryInspection(stateDirectory);
+    expect(inspection).toEqual({ status: "unresolved", transaction: current });
+    if (inspection.status !== "unresolved") throw new Error("expected unresolved recovery");
+    inspection.transaction.artifactHints.splice(0);
+
+    await expect(readIntegrationRecoveryInspection(stateDirectory)).resolves.toEqual({
+      status: "unresolved",
+      transaction: current
+    });
+  });
+
+  it.each(["rolled-back", "closed"] as const)(
+    "does not expose terminal %s recovery as actionable",
+    async (target) => {
+      const { stateDirectory } = await stateFixture(target);
+      await expect(readIntegrationRecoveryInspection(stateDirectory))
+        .resolves.toEqual({ status: "clear" });
+    }
+  );
+
+  it("returns unavailable instead of selecting among two unresolved transactions", async () => {
+    const { stateDirectory, input } = await fixture();
+    const prepared = await createIntegrationRecoveryIntent(
+      stateDirectory,
+      withoutLifecycleBinding(input)
+    );
+    const directory = join(stateDirectory, "integration-recovery");
+    const originalPath = join(directory, `${prepared.transactionId}-000000.json`);
+    const secondId = "22222222-2222-4222-8222-222222222222";
+    const secondPath = join(directory, `${secondId}-000000.json`);
+    const second = JSON.parse(await readFile(originalPath, "utf8")) as IntegrationRecoveryState;
+    second.transactionId = secondId;
+    second.planId = "second-reviewed-plan";
+    await writeFile(secondPath, `${JSON.stringify(second)}\n`, { mode: 0o600 });
+
+    await expect(readIntegrationRecoveryInspection(stateDirectory)).resolves.toEqual({
+      status: "unavailable",
+      reason: "INTEGRATION_RECOVERY_UNAVAILABLE"
+    });
   });
 
   it("keeps a prepared plan claimed across Store restart without a lifecycle binding", async () => {
@@ -611,6 +664,39 @@ describe("integration recovery store", () => {
 
     expect(closed).toMatchObject({ sequence: 4, state: "closed" });
     await expect(readIntegrationRecoveryState(stateDirectory)).resolves.toEqual({ status: "clear" });
+  });
+
+  it("monotonically checkpoints committed recovery components", async () => {
+    const { stateDirectory, current: committed } = await stateFixture("committed");
+    const readiness = await appendIntegrationRecoveryTransition(stateDirectory, {
+      transactionId: committed.transactionId,
+      expectedSequence: committed.sequence,
+      expectedState: "committed",
+      state: "committed",
+      transitionedAt: "2026-07-05T00:10:00.000Z",
+      completedStepAdditions: ["readiness-finalized"]
+    });
+    expect(readiness.completedSteps).toEqual(["readiness-finalized"]);
+    const configuration = await appendIntegrationRecoveryTransition(stateDirectory, {
+      transactionId: readiness.transactionId,
+      expectedSequence: readiness.sequence,
+      expectedState: "committed",
+      state: "committed",
+      transitionedAt: "2026-07-05T00:11:00.000Z",
+      completedStepAdditions: ["configuration-finalized"]
+    });
+    expect(configuration.completedSteps).toEqual([
+      "configuration-finalized",
+      "readiness-finalized"
+    ]);
+    await expect(appendIntegrationRecoveryTransition(stateDirectory, {
+      transactionId: configuration.transactionId,
+      expectedSequence: configuration.sequence,
+      expectedState: "committed",
+      state: "committed",
+      transitionedAt: "2026-07-05T00:12:00.000Z",
+      completedStepAdditions: ["readiness-finalized"]
+    })).rejects.toThrow(/completed|duplicate/i);
   });
 
   it("persists the recovery-required rollback workflow through closed", async () => {
@@ -922,20 +1008,23 @@ describe("integration recovery store", () => {
     });
   });
 
-  it("monotonically checkpoints staged, backup, and installed tree snapshots", async () => {
+  it("monotonically checkpoints staged, backup, installed, and cleanup tree snapshots", async () => {
     const { stateDirectory, input } = await fixture();
     await mkdir(dirname(input.companionPath), { recursive: true });
     const stagePath = join(dirname(input.companionPath), "stage-checkpoint");
     const backupPath = join(dirname(input.companionPath), "backup-checkpoint");
     const installedPath = join(dirname(input.companionPath), "installed-checkpoint");
+    const cleanupPath = join(dirname(input.companionPath), "cleanup-checkpoint");
     await Promise.all([
       writeFile(stagePath, "stage\n", { mode: 0o600 }),
       writeFile(backupPath, "backup\n", { mode: 0o600 }),
-      writeFile(installedPath, "installed\n", { mode: 0o600 })
+      writeFile(installedPath, "installed\n", { mode: 0o600 }),
+      writeFile(cleanupPath, "cleanup\n", { mode: 0o600 })
     ]);
     const stage = await artifactProof("stage", stagePath, "a");
     const backup = await artifactProof("backup", backupPath, "b");
     const installed = await artifactProof("installed", installedPath, "c");
+    const cleanup = await artifactProof("cleanup", cleanupPath, "d");
     const prepared = await createIntegrationRecoveryIntent(stateDirectory, input);
     const staged = await appendIntegrationRecoveryTransition(stateDirectory, {
       transactionId: prepared.transactionId,
@@ -962,7 +1051,16 @@ describe("integration recovery store", () => {
       artifactProofAdditions: [installed]
     });
 
-    expect(published.artifactProofs).toEqual([backup, installed, stage]);
+    const cleaning = await appendIntegrationRecoveryTransition(stateDirectory, {
+      transactionId: published.transactionId,
+      expectedSequence: published.sequence,
+      expectedState: published.state,
+      state: "committed",
+      transitionedAt: "2026-07-05T00:00:04.000Z",
+      artifactProofAdditions: [cleanup]
+    });
+
+    expect(cleaning.artifactProofs).toEqual([backup, cleanup, installed, stage]);
   });
 
   it("rejects a contradictory update to an existing artifact role", async () => {

@@ -110,6 +110,16 @@ Exercise the cached Hook protocols through temporary-HOME fixtures:
 
 For failure coverage, inject final readiness publication failure after the companion and Hook mutations. Both must return to their exact before state and the receipt must report `rolled-back`. Kill a child process after durable recovery intent and rerun the recovery reader. Force a lease loss at a forward mutation boundary and confirm `recovery-required` is path-free and no unsafe overwrite occurs. Unknown `EACCES` and `EIO` errors must use the stable generic public error rather than include a filesystem path.
 
+For public recovery coverage, use a disposable `HOME` and `SKILL_STEWARD_HOME`, then run the same sequence through CLI and loopback API:
+
+```bash
+skill-steward integrate recovery status --json
+skill-steward integrate recovery plan --json
+skill-steward integrate recovery apply --plan <id> --confirm --json
+```
+
+Prepared, mutating, recovery-required, committed, and cleanup-pending fixtures must produce the domain-derived direction or `unknown`; no request accepts a direction or force argument. Re-run status after apply and require `clear` only when exact rollback/finalize and cleanup are complete. Interrupt upgrade backup cleanup after it acquires `.cleanup`, restart from a fresh process, and prove only the identity-bound tree is resumed. Repeat the Dashboard review in English and Chinese at narrow and wide widths; the recoverable plan requires confirmation, while `unknown` has diagnostics only.
+
 On every supported platform package, remove the no-replace helper and confirm create/upgrade is blocked before mutation. Disconnect must remain available because it does not mutate the companion tree. A proven existing-parent `none` action may proceed without the helper; a missing config ancestor may not.
 
 ## Evidence and privacy

@@ -86,6 +86,69 @@ describe("Harness integration routes", () => {
     expect(source).not.toContain("disconnectCompanionIntegrationTransaction");
   });
 
+  it("exposes the same global clear recovery status and does not invent a plan", async () => {
+    const { app } = await fixture();
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/v1/integrations/recovery"
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json().data).toEqual({
+      state: "clear",
+      reasonCode: "INTEGRATION_RECOVERY_CLEAR",
+      recoverable: false
+    });
+
+    const plan = await post(app, "/api/v1/integrations/recovery/plan");
+    expect(plan.statusCode).toBe(409);
+    expect(plan.json().error).toEqual({
+      code: "INTEGRATION_RECOVERY_NOT_REQUIRED",
+      message: "No integration recovery is required."
+    });
+  });
+
+  it("requires a strict recovery plan body and delegates only the exact plan ID", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-integration-recovery-route-"));
+    const applyRecovery = vi.fn(async (
+      _planId: string,
+      _options: { home: string; stateDirectory: string }
+    ) => ({
+      schemaVersion: 1 as const,
+      transactionId: "00000000-0000-4000-8000-000000000001",
+      planId: "recovery-plan",
+      action: "finalize" as const,
+      outcome: "recovered" as const,
+      finalState: "closed" as const,
+      reasonCode: "INTEGRATION_RECOVERY_FINALIZED",
+      nextSafeAction: "create-new-plan" as const
+    }));
+    const integrationServices = createIntegrationServices({
+      home,
+      stateDirectory: join(home, "state"),
+      companionSkillDirectory: packagedCompanion,
+      generateReadiness: async () => ({})
+    }, { applyRecovery });
+    const { app } = createDashboardApp({ mutationToken: "token", integrationServices });
+    apps.push(app);
+
+    for (const body of [undefined, {}, { planId: "recovery-plan", direction: "rollback" }]) {
+      const response = await post(app, "/api/v1/integrations/recovery/apply", body);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe("INVALID_INTEGRATION_PLAN_REQUEST");
+    }
+    const applied = await post(app, "/api/v1/integrations/recovery/apply", {
+      planId: "recovery-plan"
+    });
+    expect(applied.statusCode).toBe(200);
+    expect(applied.json().data).toMatchObject({ action: "finalize", finalState: "closed" });
+    expect(applyRecovery).toHaveBeenCalledTimes(1);
+    expect(applyRecovery.mock.calls[0]?.[0]).toBe("recovery-plan");
+    expect(applyRecovery.mock.calls[0]?.[1]).toEqual({
+      home,
+      stateDirectory: join(home, "state")
+    });
+  });
+
   it("calls exactly one high-level mutation with planId and a readiness generator", async () => {
     const applyPlan = vi.fn(async (_planId: string, options: IntegrationTransactionOptions) => {
       await options.generateReadiness({
