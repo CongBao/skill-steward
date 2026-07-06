@@ -13,7 +13,7 @@ const rawTask = "PRIVATE customer task";
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -46,7 +46,10 @@ function result(): PreflightResult {
           taskCoverage: 0.8,
           skillPrecision: 0.6,
           nameMatch: true,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "use",
         reasons: [
@@ -76,7 +79,10 @@ function result(): PreflightResult {
           taskCoverage: 0.5,
           skillPrecision: 0.4,
           nameMatch: false,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "install",
         source: {
@@ -113,7 +119,10 @@ function result(): PreflightResult {
           taskCoverage: 0,
           skillPrecision: 0,
           nameMatch: false,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "excluded",
         reasons: [{ code: "LOW_RELEVANCE", detail: "PRIVATE exclusion detail" }]
@@ -147,7 +156,7 @@ describe("compact preflight contract", () => {
   it("keeps only bounded actionable recommendations, codes, coverage, and feedback", () => {
     const compact = toCompactPreflight(result());
 
-    expect(COMPACT_PREFLIGHT_SCHEMA_VERSION).toBe(3);
+    expect(COMPACT_PREFLIGHT_SCHEMA_VERSION).toBe(4);
 
     expect(compact).toEqual({
       schemaVersion: COMPACT_PREFLIGHT_SCHEMA_VERSION,
@@ -244,6 +253,29 @@ describe("compact preflight contract", () => {
     );
   });
 
+  it("carries capability reason codes without capability details", () => {
+    const full = result();
+    full.candidates[0]!.reasons = [{
+      code: "CAPABILITY_MATCH",
+      detail: "PRIVATE plan:requirement"
+    }, {
+      code: "EXACT_TRIGGER_MATCH",
+      detail: "PRIVATE implement:feature"
+    }, {
+      code: "MARGINAL_CAPABILITY",
+      detail: "PRIVATE publish:release"
+    }];
+
+    const compact = toCompactPreflight(full);
+    expect(compact.use[0]?.reasonCodes).toEqual([
+      "CAPABILITY_MATCH",
+      "EXACT_TRIGGER_MATCH",
+      "MARGINAL_CAPABILITY"
+    ]);
+    expect(JSON.stringify(compact)).not.toContain("PRIVATE");
+    expect(JSON.stringify(compact)).not.toContain("requirement");
+  });
+
   it("stays within the byte cap for hostile multibyte valid fields", () => {
     const hostile = result();
     hostile.candidates[0]!.name = `私密\n\"\\${"界".repeat(20_000)}`;
@@ -299,7 +331,10 @@ describe("compact preflight contract", () => {
           taskCoverage: 1,
           skillPrecision: 1,
           nameMatch: true,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "use" as const,
         reasons: reasonCodes.map((code) => ({ code, detail: `PRIVATE ${code}` }))
@@ -326,7 +361,10 @@ describe("compact preflight contract", () => {
           taskCoverage: 1,
           skillPrecision: 1,
           nameMatch: true,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "install" as const,
         source: {

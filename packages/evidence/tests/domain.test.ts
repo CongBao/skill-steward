@@ -93,6 +93,9 @@ describe("evidence domain", () => {
       skillPrecision: 0.5,
       nameMatch: true,
       projectScopeFit: false,
+      capabilityCoverage: 0.5,
+      capabilityPrecision: 0.75,
+      triggerConfidence: "exact",
       relevance: 0.8,
       uniqueCoverage: 0.4,
       riskPenalty: 0,
@@ -105,6 +108,10 @@ describe("evidence domain", () => {
     expect(() => candidateFeatureSnapshotSchema.parse({
       ...feature,
       matchedTerm: "private-term"
+    })).toThrow();
+    expect(() => candidateFeatureSnapshotSchema.parse({
+      ...feature,
+      capabilityDetails: ["review:private-code"]
     })).toThrow();
   });
 

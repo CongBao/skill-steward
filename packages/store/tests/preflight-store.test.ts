@@ -22,7 +22,7 @@ const sourceUrl = "https://example.com/private-skills.git";
 
 function result(id: string, createdAt: string): PreflightResult {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id,
     generatedAt: createdAt,
@@ -55,7 +55,10 @@ function result(id: string, createdAt: string): PreflightResult {
           taskCoverage: 0.75,
           skillPrecision: 0.5,
           nameMatch: true,
-          projectScopeFit: true
+          projectScopeFit: true,
+          capabilityCoverage: 0.5,
+          capabilityPrecision: 0.5,
+          triggerConfidence: "exact"
         },
         decision: "use",
         reasons: [{
@@ -85,7 +88,10 @@ function result(id: string, createdAt: string): PreflightResult {
           taskCoverage: 0.5,
           skillPrecision: 0.4,
           nameMatch: false,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0.25,
+          capabilityPrecision: 0.25,
+          triggerConfidence: "partial"
         },
         decision: "install",
         source: {
@@ -355,7 +361,13 @@ describe("preflight evidence store", () => {
       schemaVersion: 3,
       harness: "codex",
       candidateFeatures: expect.arrayContaining([
-        expect.objectContaining({ candidateId: "security-review", taskCoverage: 0.75 })
+        expect.objectContaining({
+          candidateId: "security-review",
+          taskCoverage: 0.75,
+          capabilityCoverage: 0.5,
+          capabilityPrecision: 0.5,
+          triggerConfidence: "exact"
+        })
       ])
     });
   });

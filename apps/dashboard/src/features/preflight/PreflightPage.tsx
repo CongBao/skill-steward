@@ -32,7 +32,11 @@ const reasonKeys: Record<PreflightReasonCode, TranslationKey> = {
   HARNESS_SHADOWED: "preflight.reason.HARNESS_SHADOWED",
   HARNESS_INACTIVE: "preflight.reason.HARNESS_INACTIVE",
   HARNESS_AMBIGUOUS: "preflight.reason.HARNESS_AMBIGUOUS",
-  INVENTORY_RESCAN_REQUIRED: "preflight.reason.INVENTORY_RESCAN_REQUIRED"
+  INVENTORY_RESCAN_REQUIRED: "preflight.reason.INVENTORY_RESCAN_REQUIRED",
+  CAPABILITY_MATCH: "preflight.reason.CAPABILITY_MATCH",
+  EXACT_TRIGGER_MATCH: "preflight.reason.EXACT_TRIGGER_MATCH",
+  MARGINAL_CAPABILITY: "preflight.reason.MARGINAL_CAPABILITY",
+  REDUNDANT_CAPABILITY: "preflight.reason.REDUNDANT_CAPABILITY"
 };
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
@@ -45,7 +49,7 @@ function CandidateCard({ candidate }: { candidate: PreflightCandidate }) {
   return (
     <article className="preflight-candidate" data-decision={candidate.decision}>
       <header><div><h3>{candidate.name}</h3><p>{candidate.description}</p></div><span className="preflight-token-cost">{candidate.contextTokens} {t("preflight.tokens")}</span></header>
-      <div className="preflight-scores"><ScoreBar label={t("preflight.relevance")} value={candidate.relevance} /><ScoreBar label={t("preflight.uniqueCoverage")} value={candidate.uniqueCoverage} /></div>
+      <div className="preflight-scores"><ScoreBar label={t("preflight.relevance")} value={candidate.relevance} /><ScoreBar label={t("preflight.capabilityCoverage")} value={candidate.features.capabilityCoverage} /><ScoreBar label={t("preflight.uniqueCoverage")} value={candidate.uniqueCoverage} /></div>
       <div className="preflight-metadata"><span>{t("preflight.scope")}: <strong>{t(`scope.${candidate.scope}` as TranslationKey)}</strong></span><span>{t("preflight.harnesses")}: <strong>{candidate.compatibleHarnesses.join(", ") || "—"}</strong></span></div>
       <ul className="preflight-reasons">{candidate.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}><span>{t(reasonKeys[reason.code])}</span><p>{preflightReasonDetail(candidate, reason, t)}</p></li>)}</ul>
     </article>

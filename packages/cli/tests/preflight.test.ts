@@ -193,7 +193,7 @@ describe("preflight command", () => {
     ], current.context)).toBe(0);
 
     const output = JSON.parse(current.stdout.splice(0).join(""));
-    expect(output.schemaVersion).toBe(4);
+    expect(output.schemaVersion).toBe(5);
     expect(output.candidates).toContainEqual(expect.objectContaining({
       name: "native-security-review",
       availability: "installed"
@@ -220,7 +220,7 @@ describe("preflight command", () => {
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       candidates: [expect.objectContaining({ name: "security-review" })]
     });
   });
@@ -234,7 +234,7 @@ describe("preflight command", () => {
     expect(exitCode).toBe(0);
     const output = JSON.parse(current.stdout.join(""));
     expect(output).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       useCandidateIds: expect.any(Array),
       installCandidateIds: expect.any(Array)
@@ -292,7 +292,7 @@ describe("preflight command", () => {
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(current.stdout.join(""))).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       useCandidateIds: expect.any(Array)
     });
     expect(current.stderr.join("")).toBe(
@@ -461,7 +461,7 @@ describe("preflight command", () => {
 
   it("bounds low-value exclusions and points to complete JSON", () => {
     const result: PreflightResult = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
@@ -493,7 +493,10 @@ describe("preflight command", () => {
           taskCoverage: 0,
           skillPrecision: 0,
           nameMatch: false,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "excluded" as const,
         reasons: [{
@@ -513,6 +516,10 @@ describe("preflight command", () => {
 
     result.candidates[0]!.name = "trusted\u001b[2J\nspoof";
     result.candidates[0]!.reasons[0]!.detail = "low\u001b]52;c;payload\u0007";
+    result.candidates[1]!.name = "requesting-code-review";
+    result.candidates[2]!.name = "requesting-code-review";
+    result.candidates[1]!.compatibleHarnesses = ["codex"];
+    result.candidates[2]!.compatibleHarnesses = ["github-copilot"];
     const output = renderPreflightHuman(result);
     expect(output).toContain("5 shown, 3 more omitted; use --json for full details");
     expect(output).toContain(
@@ -522,11 +529,13 @@ describe("preflight command", () => {
     expect(output).not.toContain("\u0007");
     expect(output).toContain("trusted\\u{001b}[2J\\u{000a}spoof");
     expect(output).toContain("low\\u{001b}]52;c;payload\\u{0007}");
+    expect(output).toContain("requesting-code-review [Codex]");
+    expect(output).toContain("requesting-code-review [GitHub Copilot CLI]");
   });
 
   it("explains a hard exclusion instead of the generic relevance fallback", () => {
     const result: PreflightResult = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
       id: "run-1",
       generatedAt: "2026-07-03T00:00:00.000Z",
@@ -558,7 +567,10 @@ describe("preflight command", () => {
           taskCoverage: 0.2,
           skillPrecision: 0.2,
           nameMatch: false,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0,
+          capabilityPrecision: 0,
+          triggerConfidence: "none"
         },
         decision: "excluded",
         source: {

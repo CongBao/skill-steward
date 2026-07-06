@@ -4,6 +4,7 @@ import {
   type AnalyzePreflightInputV2,
   type NormalizedPreflightCandidate
 } from "./candidates.js";
+import { extractCapabilities, type CapabilitySet } from "./capabilities.js";
 import { PREFLIGHT_CONFIG } from "./config.js";
 import {
   PREFLIGHT_ALGORITHM_VERSION,
@@ -34,6 +35,10 @@ interface ScoredCandidate {
   routeTerms: Set<string>;
   matchedTaskTerms: Set<string>;
   negativeTaskTerms: Set<string>;
+  matchedCapabilities: ReadonlySet<string>;
+  capabilityCoverage: number;
+  capabilityPrecision: number;
+  triggerConfidence: "none" | "partial" | "exact";
   relevance: number;
   adjustedRelevance: number;
   gapAdjustedRelevance: number;
@@ -52,6 +57,7 @@ interface SelectedCandidate {
   candidate: ScoredCandidate;
   uniqueCoverage: number;
   redundancyPenalty: number;
+  uniqueCapabilities: Set<string>;
 }
 
 const severityRank: Record<Severity, number> = {
@@ -65,17 +71,70 @@ function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function intersection(left: Set<string>, right: Set<string>): Set<string> {
-  return new Set([...left].filter((term) => right.has(term)));
+function intersection(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>
+): Set<string> {
+  const matched = new Set<string>();
+  for (const term of left) {
+    if (right.has(term)) matched.add(term);
+  }
+  return matched;
+}
+
+const BROAD_ROUTE_TERMS = new Set([
+  "agent",
+  "are",
+  "as",
+  "background",
+  "code",
+  "context",
+  "document",
+  "mention",
+  "project",
+  "review",
+  "skill"
+]);
+
+function capabilityWeight(value: string): number {
+  return value.startsWith("pair:") ? 2 : value.startsWith("action:") ? 1 : 0.25;
+}
+
+function weightedCapabilityRatio(
+  numerator: ReadonlySet<string>,
+  denominator: ReadonlySet<string>
+): number {
+  if (numerator.size === 0) return 0;
+  let total = 0;
+  for (const value of denominator) total += capabilityWeight(value);
+  if (total === 0) return 0;
+  let matched = 0;
+  for (const value of numerator) matched += capabilityWeight(value);
+  return matched / total;
+}
+
+function boundedCapabilityDetail(values: ReadonlySet<string>): string {
+  return [...new Set(
+    [...values]
+      .sort()
+      .map((value) => value.replace(/^(?:action|object|pair):/u, ""))
+  )].slice(0, 6).join(", ");
 }
 
 function ratio(numerator: number, denominator: number): number {
   return denominator === 0 ? 0 : numerator / denominator;
 }
 
-function jaccard(left: Set<string>, right: Set<string>): number {
+function jaccard(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>
+): number {
   if (left.size === 0 && right.size === 0) return 0;
-  return intersection(left, right).size / new Set([...left, ...right]).size;
+  let overlap = 0;
+  for (const value of left) {
+    if (right.has(value)) overlap += 1;
+  }
+  return overlap / (left.size + right.size - overlap);
 }
 
 function stableNumber(value: number): number {
@@ -512,13 +571,26 @@ function negativeTaskMatch(
 function scoreCandidates(
   task: string,
   normalizedCandidates: NormalizedPreflightCandidate[]
-): { candidates: ScoredCandidate[]; taskTerms: Set<string> } {
+): {
+  candidates: ScoredCandidate[];
+  taskTerms: Set<string>;
+  taskCapabilities: CapabilitySet;
+} {
   const taskNegativeClauses = negativeTaskClauses(task);
   const positiveTask = taskNegativeClauses.length === 0
     ? task
     : positiveTaskText(task);
   const taskTerms = new Set(tokenize(positiveTask).terms);
+  const taskCapabilities = extractCapabilities(task);
   const taskPhrases = anchoredTriggerPhrases(positiveTask);
+  const capabilityScoreCache = new Map<string, {
+    matchedCapabilities: ReadonlySet<string>;
+    matchedCapabilityPairs: ReadonlySet<string>;
+    capabilityCoverage: number;
+    capabilityPrecision: number;
+    triggerConfidence: "none" | "partial" | "exact";
+    exactCapability: boolean;
+  }>();
   const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
     const normalizedName = candidate.name.replace(/[-_]+/g, " ");
     const nameTerms = tokenize(normalizedName).terms;
@@ -526,6 +598,52 @@ function scoreCandidates(
     const positiveDescription = routingNegativeClauses.length === 0
       ? candidate.description
       : positiveRoutingText(candidate.description);
+    const capabilityInput = `${normalizedName}. ${positiveDescription}`;
+    const capabilityCacheKey = capabilityInput
+      .toLowerCase()
+      .replace(/[0-9]+/gu, "0");
+    let capabilityScore = capabilityScoreCache.get(capabilityCacheKey);
+    if (!capabilityScore) {
+      const capabilities = extractCapabilities(capabilityInput);
+      const matchedCapabilities = intersection(
+        taskCapabilities.all,
+        capabilities.all
+      );
+      const matchedCapabilityPairs = intersection(
+        taskCapabilities.pairs,
+        capabilities.pairs
+      );
+      const capabilityCoverage = weightedCapabilityRatio(
+        matchedCapabilities,
+        taskCapabilities.all
+      );
+      const capabilityPrecision = weightedCapabilityRatio(
+        matchedCapabilities,
+        capabilities.all
+      );
+      const exactCapability = matchedCapabilityPairs.size > 0;
+      capabilityScore = {
+        matchedCapabilities,
+        matchedCapabilityPairs,
+        capabilityCoverage,
+        capabilityPrecision,
+        exactCapability,
+        triggerConfidence: exactCapability
+          ? "exact"
+          : matchedCapabilities.size > 0
+            ? "partial"
+            : "none"
+      };
+      capabilityScoreCache.set(capabilityCacheKey, capabilityScore);
+    }
+    const {
+      matchedCapabilities,
+      matchedCapabilityPairs,
+      capabilityCoverage,
+      capabilityPrecision,
+      exactCapability,
+      triggerConfidence
+    } = capabilityScore;
     const routeTerms = new Set(
       tokenize(`${normalizedName} ${candidate.description}`).terms
     );
@@ -560,7 +678,7 @@ function scoreCandidates(
       positiveDescription
     );
     const projectScopeFit = candidate.scope === "project";
-    const relevance = clamp(
+    const lexicalRelevance = clamp(
       taskCoverage * PREFLIGHT_CONFIG.taskCoverageWeight +
       skillPrecision * PREFLIGHT_CONFIG.skillPrecisionWeight +
       (nameMatch ? PREFLIGHT_CONFIG.nameMatchWeight : 0) +
@@ -569,11 +687,20 @@ function scoreCandidates(
         : 0) +
       (projectScopeFit ? PREFLIGHT_CONFIG.projectScopeWeight : 0)
     );
+    const capabilityRelevance = clamp(
+      capabilityCoverage * 0.45 +
+      capabilityPrecision * 0.2 +
+      (exactCapability ? 0.2 : 0)
+    );
+    const relevance = clamp(lexicalRelevance + capabilityRelevance);
     const riskPenalty = candidateRisk(candidate.findings);
     const installPenalty = candidate.availability === "available"
       ? PREFLIGHT_CONFIG.installPenalty
       : 0;
     const critical = candidate.findings.some(({ severity }) => severity === "critical");
+    const lexicalAdjustedRelevance = clamp(
+      lexicalRelevance - riskPenalty - installPenalty
+    );
     const adjustedRelevance = clamp(relevance - riskPenalty - installPenalty);
     const gapRelevance = clamp(
       ratio(positiveMatchedTaskTerms.size, taskTerms.size) *
@@ -587,7 +714,7 @@ function scoreCandidates(
       gapRelevance - riskPenalty - installPenalty
     );
     const hasSpecificTaskMatch = [...matchedTaskTerms].some(
-      (term) => !BROAD_CJK_ROUTE_TERMS.has(term)
+      (term) => !BROAD_CJK_ROUTE_TERMS.has(term) && !BROAD_ROUTE_TERMS.has(term)
     );
     const initialReasons: PreflightReason[] = [];
 
@@ -601,6 +728,20 @@ function scoreCandidates(
       initialReasons.push({
         code: "NAME_MATCH",
         detail: `Task matches '${candidate.name}' routing metadata.`
+      });
+    }
+    if (matchedCapabilities.size > 0) {
+      initialReasons.push({
+        code: "CAPABILITY_MATCH",
+        detail: boundedCapabilityDetail(matchedCapabilities)
+      });
+    }
+    if (exactCapability) {
+      initialReasons.push({
+        code: "EXACT_TRIGGER_MATCH",
+        detail: boundedCapabilityDetail(new Set(
+          [...matchedCapabilityPairs].map((value) => `pair:${value}`)
+        ))
       });
     }
     if (matchedHighConfidenceTrigger) {
@@ -673,6 +814,10 @@ function scoreCandidates(
       routeTerms,
       matchedTaskTerms,
       negativeTaskTerms,
+      matchedCapabilities,
+      capabilityCoverage,
+      capabilityPrecision,
+      triggerConfidence,
       relevance,
       adjustedRelevance,
       gapAdjustedRelevance,
@@ -683,17 +828,17 @@ function scoreCandidates(
       nameMatch,
       projectScopeFit,
       plausible: candidate.harnessEligible && !critical && negativeTaskTerms.size === 0 &&
-        (nameMatch || (
+        ((exactCapability && capabilityRelevance >= 0.18) || nameMatch || (
           hasSpecificTaskMatch &&
           matchedTaskTerms.size >= PREFLIGHT_CONFIG.minimumMatchedTerms &&
-          adjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold
+          lexicalAdjustedRelevance >= PREFLIGHT_CONFIG.plausibleThreshold
         )),
       critical,
       initialReasons
     };
   });
 
-  return { candidates, taskTerms };
+  return { candidates, taskTerms, taskCapabilities };
 }
 
 function compareCandidates(left: ScoredCandidate, right: ScoredCandidate): number {
@@ -705,6 +850,7 @@ function compareCandidates(left: ScoredCandidate, right: ScoredCandidate): numbe
 function selectInstalled(
   candidates: ScoredCandidate[],
   taskTerms: Set<string>,
+  taskCapabilities: CapabilitySet,
   maxSkills: number
 ): SelectedCandidate[] {
   const plausible = candidates.filter(
@@ -712,26 +858,50 @@ function selectInstalled(
   );
   if (plausible.length === 0) return [];
 
-  const plausibleCoverage = new Set(
-    plausible.flatMap(({ matchedTaskTerms }) => [...matchedTaskTerms])
-  );
   const remaining = [...plausible].sort(compareCandidates);
   const selected: SelectedCandidate[] = [];
   const coveredTerms = new Set<string>();
+  const coveredCapabilities = new Set<string>();
   const selectedRouteTerms = new Set<string>();
+  const selectedCapabilityTerms = new Set<string>();
 
   while (remaining.length > 0 && selected.length < maxSkills) {
-    const ranked = remaining.map((candidate) => {
+    const ranked = remaining.flatMap((candidate) => {
       const uncovered = new Set(
         [...candidate.matchedTaskTerms].filter((term) => !coveredTerms.has(term))
       );
       const uniqueCoverage = ratio(uncovered.size, taskTerms.size);
-      const redundancyPenalty = jaccard(candidate.routeTerms, selectedRouteTerms) *
-        PREFLIGHT_CONFIG.redundancyWeight;
-      const marginal = clamp(
-        candidate.relevance + uniqueCoverage - redundancyPenalty - candidate.riskPenalty
+      const uniqueCapabilities = new Set(
+        [...candidate.matchedCapabilities].filter(
+          (capability) => !coveredCapabilities.has(capability)
+        )
       );
-      return { candidate, uniqueCoverage, redundancyPenalty, marginal };
+      const capabilityGain = weightedCapabilityRatio(
+        uniqueCapabilities,
+        taskCapabilities.all
+      );
+      if (
+        selected.length > 0 &&
+        uncovered.size === 0 &&
+        uniqueCapabilities.size === 0
+      ) return [];
+      const redundancyPenalty = Math.max(
+        jaccard(candidate.routeTerms, selectedRouteTerms) *
+          PREFLIGHT_CONFIG.redundancyWeight,
+        jaccard(candidate.matchedCapabilities, selectedCapabilityTerms) * 0.45
+      );
+      const marginal = clamp(
+        candidate.relevance + uniqueCoverage + capabilityGain * 0.8 -
+        redundancyPenalty - candidate.riskPenalty
+      );
+      return [{
+        candidate,
+        uniqueCoverage,
+        redundancyPenalty,
+        uniqueCapabilities,
+        capabilityGain,
+        marginal
+      }];
     }).sort((left, right) =>
       right.marginal - left.marginal || compareCandidates(left.candidate, right.candidate)
     );
@@ -741,11 +911,10 @@ function selectInstalled(
     }
     selected.push(next);
     next.candidate.matchedTaskTerms.forEach((term) => coveredTerms.add(term));
+    next.candidate.matchedCapabilities.forEach((term) => coveredCapabilities.add(term));
     next.candidate.routeTerms.forEach((term) => selectedRouteTerms.add(term));
+    next.candidate.matchedCapabilities.forEach((term) => selectedCapabilityTerms.add(term));
     remaining.splice(remaining.indexOf(next.candidate), 1);
-    if (ratio(coveredTerms.size, plausibleCoverage.size) >= PREFLIGHT_CONFIG.coverageTarget) {
-      break;
-    }
   }
 
   return selected;
@@ -758,6 +927,7 @@ function selectedTerms(selected: SelectedCandidate[]): Set<string> {
 function selectAvailable(
   candidates: ScoredCandidate[],
   taskTerms: Set<string>,
+  taskCapabilities: CapabilitySet,
   installed: SelectedCandidate[]
 ): SelectedCandidate[] {
   const remaining = candidates.filter(
@@ -765,8 +935,14 @@ function selectAvailable(
   );
   const selected: SelectedCandidate[] = [];
   const coveredTerms = selectedTerms(installed);
+  const coveredCapabilities = new Set(
+    installed.flatMap(({ candidate }) => [...candidate.matchedCapabilities])
+  );
   const selectedRouteTerms = new Set(
     installed.flatMap(({ candidate }) => [...candidate.routeTerms])
+  );
+  const selectedCapabilityTerms = new Set(
+    installed.flatMap(({ candidate }) => [...candidate.matchedCapabilities])
   );
 
   while (
@@ -778,15 +954,34 @@ function selectAvailable(
       const uncovered = new Set(
         [...candidate.matchedTaskTerms].filter((term) => !coveredTerms.has(term))
       );
-      if (uncovered.size === 0) return [];
       const uniqueCoverage = ratio(uncovered.size, taskTerms.size);
-      const redundancyPenalty = jaccard(candidate.routeTerms, selectedRouteTerms) *
-        PREFLIGHT_CONFIG.redundancyWeight;
+      const uniqueCapabilities = new Set(
+        [...candidate.matchedCapabilities].filter(
+          (capability) => !coveredCapabilities.has(capability)
+        )
+      );
+      const capabilityGain = weightedCapabilityRatio(
+        uniqueCapabilities,
+        taskCapabilities.all
+      );
+      if (uncovered.size === 0 && uniqueCapabilities.size === 0) return [];
+      const redundancyPenalty = Math.max(
+        jaccard(candidate.routeTerms, selectedRouteTerms) *
+          PREFLIGHT_CONFIG.redundancyWeight,
+        jaccard(candidate.matchedCapabilities, selectedCapabilityTerms) * 0.45
+      );
       const marginal = clamp(
-        candidate.relevance + uniqueCoverage - redundancyPenalty -
+        candidate.relevance + uniqueCoverage + capabilityGain * 0.8 - redundancyPenalty -
         candidate.riskPenalty - candidate.installPenalty
       );
-      return [{ candidate, uniqueCoverage, redundancyPenalty, marginal }];
+      return [{
+        candidate,
+        uniqueCoverage,
+        redundancyPenalty,
+        uniqueCapabilities,
+        capabilityGain,
+        marginal
+      }];
     }).sort((left, right) =>
       right.marginal - left.marginal || compareCandidates(left.candidate, right.candidate)
     );
@@ -794,7 +989,9 @@ function selectAvailable(
     if (!next || next.marginal < PREFLIGHT_CONFIG.availableMarginalThreshold) break;
     selected.push(next);
     next.candidate.matchedTaskTerms.forEach((term) => coveredTerms.add(term));
+    next.candidate.matchedCapabilities.forEach((term) => coveredCapabilities.add(term));
     next.candidate.routeTerms.forEach((term) => selectedRouteTerms.add(term));
+    next.candidate.matchedCapabilities.forEach((term) => selectedCapabilityTerms.add(term));
     remaining.splice(remaining.indexOf(next.candidate), 1);
   }
 
@@ -816,13 +1013,23 @@ function presentCandidates(
   const selectedRouteTerms = new Set(
     selected.flatMap(({ candidate }) => [...candidate.routeTerms])
   );
+  const selectedCapabilities = new Set(
+    selected.flatMap(({ candidate }) => [...candidate.matchedCapabilities])
+  );
 
   return candidates.map((candidate): PreflightCandidate => {
     const id = candidate.candidate.candidateId;
     const selectedEntry = selectedById.get(id);
+    const capabilityRedundancy = jaccard(
+      candidate.matchedCapabilities,
+      selectedCapabilities
+    );
     const redundancyPenalty = selectedEntry
       ? selectedEntry.redundancyPenalty
-      : jaccard(candidate.routeTerms, selectedRouteTerms) * PREFLIGHT_CONFIG.redundancyWeight;
+      : Math.max(
+        jaccard(candidate.routeTerms, selectedRouteTerms) * PREFLIGHT_CONFIG.redundancyWeight,
+        capabilityRedundancy * 0.45
+      );
     const uniqueCoverage = selectedEntry?.uniqueCoverage ?? 0;
     const reasons = [...candidate.initialReasons];
 
@@ -831,12 +1038,23 @@ function presentCandidates(
         code: "UNIQUE_COVERAGE",
         detail: `${Math.round(uniqueCoverage * 100)}% unique task-term coverage.`
       });
+      if (selectedEntry.uniqueCapabilities.size > 0) {
+        reasons.push({
+          code: "MARGINAL_CAPABILITY",
+          detail: boundedCapabilityDetail(selectedEntry.uniqueCapabilities)
+        });
+      }
     } else if (!candidate.candidate.harnessEligible) {
       // The Harness visibility or compatibility reason is the primary exclusion.
     } else if (!candidate.plausible && !candidate.critical && candidate.candidate.harnessEligible) {
       reasons.push({
         code: "LOW_RELEVANCE",
         detail: "Task relevance is below the deterministic threshold."
+      });
+    } else if (candidate.plausible && capabilityRedundancy > 0) {
+      reasons.push({
+        code: "REDUNDANT_CAPABILITY",
+        detail: `${Math.round(capabilityRedundancy * 100)}% capability overlap with the selected set.`
       });
     } else if (redundancyPenalty > 0) {
       reasons.push({
@@ -880,11 +1098,14 @@ function presentCandidates(
         taskCoverage: stableNumber(candidate.taskCoverage),
         skillPrecision: stableNumber(candidate.skillPrecision),
         nameMatch: candidate.nameMatch,
-        projectScopeFit: candidate.projectScopeFit
+        projectScopeFit: candidate.projectScopeFit,
+        capabilityCoverage: stableNumber(candidate.capabilityCoverage),
+        capabilityPrecision: stableNumber(candidate.capabilityPrecision),
+        triggerConfidence: candidate.triggerConfidence
       },
       decision,
       ...(candidate.candidate.source ? { source: candidate.candidate.source } : {}),
-      reasons: reasons.map(({ code, detail }) => ({
+      reasons: reasons.slice(0, 12).map(({ code, detail }) => ({
         code,
         detail: boundedReasonDetail(detail)
       }))
@@ -937,13 +1158,18 @@ export function analyzePreflight(input: AnalyzePreflightInput): PreflightResult 
     includeAvailable: request.includeAvailable,
     maxSkills: request.maxSkills
   });
-  const { candidates, taskTerms } = scoreCandidates(
+  const { candidates, taskTerms, taskCapabilities } = scoreCandidates(
     normalizedTask,
     normalizedCandidates
   );
-  const installed = selectInstalled(candidates, taskTerms, request.maxSkills);
+  const installed = selectInstalled(
+    candidates,
+    taskTerms,
+    taskCapabilities,
+    request.maxSkills
+  );
   const available = request.includeAvailable
-    ? selectAvailable(candidates, taskTerms, installed)
+    ? selectAvailable(candidates, taskTerms, taskCapabilities, installed)
     : [];
   const useCandidateIds = installed.map(({ candidate }) => candidate.candidate.candidateId);
   const installCandidateIds = available.map(({ candidate }) => candidate.candidate.candidateId);

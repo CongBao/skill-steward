@@ -189,7 +189,7 @@ function sessionRequirementsSkill(): SkillRecordV2 {
   );
 }
 
-describe("analyzePreflight schema v4 / algorithm v8", () => {
+describe("analyzePreflight schema v5 / algorithm v9", () => {
   it("requires a visibility-aware inventory before ranking", () => {
     try {
       analyzePreflight({
@@ -1192,13 +1192,16 @@ describe("analyzePreflight schema v4 / algorithm v8", () => {
       harness: "codex"
     });
 
-    expect(result.schemaVersion).toBe(4);
+    expect(result.schemaVersion).toBe(5);
     expect(result.algorithmVersion).toBe(PREFLIGHT_ALGORITHM_VERSION);
     expect(result.candidates[0]?.features).toEqual(expect.objectContaining({
       taskCoverage: expect.any(Number),
       skillPrecision: expect.any(Number),
       nameMatch: expect.any(Boolean),
-      projectScopeFit: expect.any(Boolean)
+      projectScopeFit: expect.any(Boolean),
+      capabilityCoverage: expect.any(Number),
+      capabilityPrecision: expect.any(Number),
+      triggerConfidence: expect.stringMatching(/^(none|partial|exact)$/u)
     }));
     expect(JSON.stringify(result.candidates[0]?.features)).not.toContain("security");
     expect(result.candidates.find(({ name }) => name === "security-installed"))
@@ -2009,7 +2012,12 @@ describe("analyzePreflight schema v4 / algorithm v8", () => {
       report: report([...candidates].reverse())
     });
 
-    expect(result.useCandidateIds).toEqual(["request"]);
+    expect(
+      result.useCandidateIds,
+      JSON.stringify(result.candidates.find(({ candidateId }) =>
+        candidateId === "documentation"
+      ))
+    ).toEqual(["request"]);
     expect(result.selectedContextTokens).toBe(729);
     expect(result.candidates.find(({ candidateId }) => candidateId === "request")?.reasons)
       .toEqual(expect.arrayContaining([

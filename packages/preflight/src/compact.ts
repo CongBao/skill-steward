@@ -8,7 +8,7 @@ import {
   type PreflightResult
 } from "./domain.js";
 
-export const COMPACT_PREFLIGHT_SCHEMA_VERSION = 3 as const;
+export const COMPACT_PREFLIGHT_SCHEMA_VERSION = 4 as const;
 export const COMPACT_PREFLIGHT_MAX_BYTES = 4_096 as const;
 
 const STABLE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u;

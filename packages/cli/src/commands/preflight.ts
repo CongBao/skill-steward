@@ -84,7 +84,11 @@ const reasonLabels: Record<PreflightReasonCode, string> = {
   HARNESS_INACTIVE: "Harness inactive",
   HARNESS_AMBIGUOUS: "Harness ambiguous",
   INVENTORY_RESCAN_REQUIRED: "Inventory rescan required",
-  NEGATIVE_TRIGGER: "Explicit exclusion"
+  NEGATIVE_TRIGGER: "Explicit exclusion",
+  CAPABILITY_MATCH: "Capability match",
+  EXACT_TRIGGER_MATCH: "Exact capability trigger",
+  MARGINAL_CAPABILITY: "Distinct capability",
+  REDUNDANT_CAPABILITY: "Capability overlap"
 };
 
 function renderReason(code: PreflightReasonCode, detail: string): string {
@@ -99,6 +103,7 @@ const exclusionReasonPriority: readonly PreflightReasonCode[] = [
   "NEGATIVE_TRIGGER",
   "CRITICAL_RISK",
   "HARNESS_INCOMPATIBLE",
+  "REDUNDANT_CAPABILITY",
   "REDUNDANT_WITH_SELECTED",
   "LOW_RELEVANCE"
 ];
@@ -113,6 +118,52 @@ function exclusionReason(
   return candidate.reasons.at(-1)?.detail ?? "lower marginal value";
 }
 
+const harnessDisplayNames: Readonly<Record<string, string>> = Object.freeze({
+  codex: "Codex",
+  claude: "Claude Code",
+  "github-copilot": "GitHub Copilot CLI"
+});
+
+function duplicateCandidateDisplayNames(
+  candidates: PreflightResult["candidates"]
+): ReadonlyMap<string, string> {
+  const byName = new Map<string, PreflightResult["candidates"]>();
+  for (const candidate of candidates) {
+    const group = byName.get(candidate.name) ?? [];
+    group.push(candidate);
+    byName.set(candidate.name, group);
+  }
+
+  const displayNames = new Map<string, string>();
+  for (const [name, group] of byName) {
+    if (group.length === 1) {
+      displayNames.set(group[0]!.candidateId, name);
+      continue;
+    }
+    const qualifierFor = (candidate: PreflightResult["candidates"][number]) =>
+      candidate.availability === "available" && candidate.source
+        ? `catalog ${candidate.source.sourceId}`
+        : candidate.compatibleHarnesses.length > 0
+          ? candidate.compatibleHarnesses
+              .map((harness) => harnessDisplayNames[harness] ?? harness)
+              .join(", ")
+          : candidate.availability;
+    const qualifiers = group.map(qualifierFor);
+    for (const [index, candidate] of group.entries()) {
+      const qualifier = qualifiers[index]!;
+      const sameQualifierIndex = qualifiers
+        .slice(0, index + 1)
+        .filter((value) => value === qualifier).length;
+      const sameQualifierCount = qualifiers.filter((value) => value === qualifier).length;
+      displayNames.set(
+        candidate.candidateId,
+        `${name} [${qualifier}${sameQualifierCount > 1 ? ` ${sameQualifierIndex}` : ""}]`
+      );
+    }
+  }
+  return displayNames;
+}
+
 export function renderPreflightHuman(
   result: PreflightResult,
   options: { feedbackAvailable?: boolean } = {}
@@ -122,13 +173,16 @@ export function renderPreflightHuman(
   const excluded = result.candidates.filter(
     ({ decision }) => decision === "excluded"
   );
+  const displayNames = duplicateCandidateDisplayNames(result.candidates);
   const lines = ["Task Preflight", `Run ID: ${result.id}`, "", "Use now:"];
   if (selected.length === 0) {
     lines.push("- none matched the deterministic relevance threshold");
   } else {
     for (const candidate of selected) {
       lines.push(
-        `- ${terminalSafeText(candidate.name)} — relevance ${percentage(candidate.relevance)}, ` +
+        `- ${terminalSafeText(
+          displayNames.get(candidate.candidateId) ?? candidate.name
+        )} — relevance ${percentage(candidate.relevance)}, ` +
           `${candidate.contextTokens} estimated tokens`
       );
       for (const reason of candidate.reasons) {
@@ -143,7 +197,9 @@ export function renderPreflightHuman(
   } else {
     for (const candidate of install) {
       lines.push(
-        `- ${terminalSafeText(candidate.name)} — relevance ${percentage(candidate.relevance)}, ` +
+        `- ${terminalSafeText(
+          displayNames.get(candidate.candidateId) ?? candidate.name
+        )} — relevance ${percentage(candidate.relevance)}, ` +
         `${candidate.contextTokens} estimated tokens`
       );
       if (candidate.source) {
@@ -190,7 +246,10 @@ export function renderPreflightHuman(
   } else {
     const shown = excluded.slice(0, 5);
     for (const candidate of shown) {
-      lines.push(`- ${terminalSafeText(candidate.name)}: ${terminalSafeText(exclusionReason(candidate))}`);
+      lines.push(
+        `- ${terminalSafeText(displayNames.get(candidate.candidateId) ?? candidate.name)}: ` +
+        terminalSafeText(exclusionReason(candidate))
+      );
     }
     if (shown.length < excluded.length) {
       lines.push(

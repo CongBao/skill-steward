@@ -243,7 +243,11 @@ export type PreflightReasonCode =
   | "HARNESS_SHADOWED"
   | "HARNESS_INACTIVE"
   | "HARNESS_AMBIGUOUS"
-  | "INVENTORY_RESCAN_REQUIRED";
+  | "INVENTORY_RESCAN_REQUIRED"
+  | "CAPABILITY_MATCH"
+  | "EXACT_TRIGGER_MATCH"
+  | "MARGINAL_CAPABILITY"
+  | "REDUNDANT_CAPABILITY";
 
 export interface PreflightCandidate {
   candidateId: string;
@@ -269,6 +273,9 @@ export interface PreflightCandidate {
     skillPrecision: number;
     nameMatch: boolean;
     projectScopeFit: boolean;
+    capabilityCoverage: number;
+    capabilityPrecision: number;
+    triggerConfidence: "none" | "partial" | "exact";
   };
   decision: "use" | "install" | "excluded";
   source?: {
@@ -282,7 +289,7 @@ export interface PreflightCandidate {
 }
 
 export interface PreflightResult {
-  schemaVersion: 4;
+  schemaVersion: 5;
   algorithmVersion: number;
   id: string;
   generatedAt: string;

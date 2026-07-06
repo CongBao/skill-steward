@@ -33,6 +33,15 @@ export function preflightReasonDetail(
       return t("preflight.reasonDetail.HARNESS_INCOMPATIBLE");
     case "NEGATIVE_TRIGGER":
       return t("preflight.reasonDetail.NEGATIVE_TRIGGER");
+    case "CAPABILITY_MATCH":
+      return t("preflight.reasonDetail.CAPABILITY_MATCH");
+    case "EXACT_TRIGGER_MATCH":
+      return t("preflight.reasonDetail.EXACT_TRIGGER_MATCH");
+    case "MARGINAL_CAPABILITY":
+      return t("preflight.reasonDetail.MARGINAL_CAPABILITY");
+    case "REDUNDANT_CAPABILITY":
+      return t("preflight.reasonDetail.REDUNDANT_CAPABILITY")
+        .replace("{percent}", percent(candidate.redundancyPenalty));
     default:
       return reason.detail;
   }

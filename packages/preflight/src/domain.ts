@@ -7,7 +7,7 @@ import {
 } from "@skill-steward/engine";
 import { z } from "zod";
 
-export const PREFLIGHT_SCHEMA_VERSION = 4 as const;
+export const PREFLIGHT_SCHEMA_VERSION = 5 as const;
 
 export interface IntlRuntimeVersions {
   cldr: string | undefined;
@@ -23,10 +23,10 @@ export function algorithmVersionForIntlRuntime(runtime: IntlRuntimeVersions): nu
     `icu=${runtime.icu ?? "unknown"}`,
     `unicode=${runtime.unicode ?? "unknown"}`
   ].join(";");
-  if (fingerprint === REFERENCE_INTL_RUNTIME) return 8;
+  if (fingerprint === REFERENCE_INTL_RUNTIME) return 9;
 
   const runtimeHash = sha256(fingerprint).slice("sha256:".length, "sha256:".length + 12);
-  return 8_000_000_000_000 + Number.parseInt(runtimeHash, 16);
+  return 9_000_000_000_000 + Number.parseInt(runtimeHash, 16);
 }
 
 export const PREFLIGHT_ALGORITHM_VERSION = algorithmVersionForIntlRuntime({
@@ -51,7 +51,11 @@ export const preflightReasonCodeSchema = z.enum([
   "HARNESS_INACTIVE",
   "HARNESS_AMBIGUOUS",
   "INVENTORY_RESCAN_REQUIRED",
-  "NEGATIVE_TRIGGER"
+  "NEGATIVE_TRIGGER",
+  "CAPABILITY_MATCH",
+  "EXACT_TRIGGER_MATCH",
+  "MARGINAL_CAPABILITY",
+  "REDUNDANT_CAPABILITY"
 ]);
 
 export const preflightReasonSchema = z.object({
@@ -88,7 +92,10 @@ export const preflightCandidateFeatureSchema = z.object({
   taskCoverage: z.number().min(0).max(1),
   skillPrecision: z.number().min(0).max(1),
   nameMatch: z.boolean(),
-  projectScopeFit: z.boolean()
+  projectScopeFit: z.boolean(),
+  capabilityCoverage: z.number().min(0).max(1),
+  capabilityPrecision: z.number().min(0).max(1),
+  triggerConfidence: z.enum(["none", "partial", "exact"])
 }).strict();
 
 const candidateSourceSchema = z.object({

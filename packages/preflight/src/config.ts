@@ -6,7 +6,6 @@ export const PREFLIGHT_CONFIG = Object.freeze({
   projectScopeWeight: 0.05,
   plausibleThreshold: 0.18,
   minimumMatchedTerms: 2,
-  coverageTarget: 0.8,
   marginalThreshold: 0.12,
   installPenalty: 0.08,
   availableMarginalThreshold: 0.18,
