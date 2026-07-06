@@ -30,11 +30,11 @@ jobs:
         working-directory: packages/cli
         run: npm pack --ignore-scripts --json --pack-destination ../../artifacts/npm
       - name: Verify dry-run package contents
-        run: node packages/cli/tests/verify-packed-artifact.mjs --dry-run artifacts/pack-dry-run.json
+        run: node scripts/verify-cli-package.mjs --dry-run artifacts/pack-dry-run.json
       - name: Verify pnpm packed artifact
-        run: node packages/cli/tests/verify-packed-artifact.mjs artifacts/pnpm/skill-steward-*.tgz
+        run: node scripts/verify-cli-package.mjs artifacts/pnpm/skill-steward-*.tgz
       - name: Verify npm packed artifact
-        run: node packages/cli/tests/verify-packed-artifact.mjs artifacts/npm/skill-steward-*.tgz
+        run: node scripts/verify-cli-package.mjs artifacts/npm/skill-steward-*.tgz
       - name: Build
         run: pnpm build
       - name: Typecheck

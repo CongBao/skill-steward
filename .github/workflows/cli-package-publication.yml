@@ -1,0 +1,108 @@
+name: CLI package publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified CLI package to npm
+        required: true
+        type: boolean
+        default: false
+      authentication:
+        description: Use trusted publishing, except for the reviewed one-time package bootstrap
+        required: true
+        type: choice
+        default: trusted-publisher
+        options:
+          - trusted-publisher
+          - bootstrap-token
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify release contract
+        run: pnpm release:check
+      - name: Pack the exact CLI artifact
+        run: |
+          mkdir -p artifacts/cli
+          pnpm --filter skill-steward pack --pack-destination artifacts/cli
+      - name: Verify the CLI artifact
+        run: node scripts/verify-cli-package.mjs artifacts/cli/skill-steward-*.tgz
+      - name: Prove publisher check-only is offline
+        run: node scripts/publish-cli-package.mjs --check-only artifacts/cli/skill-steward-*.tgz
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: skill-steward-cli-${{ github.sha }}
+          path: artifacts/cli/skill-steward-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: cli-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22.22.1
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Rebuild the trusted package tree
+        run: pnpm --filter skill-steward... build
+      - name: Pin npm trusted-publishing client
+        run: |
+          npm install --global npm@11.17.0
+          test "$(npm --version)" = "11.17.0"
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: skill-steward-cli-${{ github.sha }}
+          path: artifacts/cli
+      - name: Publish with npm trusted publishing
+        if: ${{ inputs.authentication == 'trusted-publisher' }}
+        run: node scripts/publish-cli-package.mjs artifacts/cli/skill-steward-*.tgz
+      - name: Bootstrap the package with the short-lived environment token
+        if: ${{ inputs.authentication == 'bootstrap-token' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: |
+          test -n "$NODE_AUTH_TOKEN"
+          node scripts/publish-cli-package.mjs artifacts/cli/skill-steward-*.tgz
+
+  registry-smoke:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - macos-15
+          - windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22.22.1
+          registry-url: https://registry.npmjs.org
+      - name: Pin registry-install client
+        run: npm install --global npm@11.17.0
+      - name: Install and exercise the public registry package
+        run: node scripts/verify-registry-install.mjs

@@ -7,8 +7,8 @@ import {
   manifestPackagesFromAudit,
   sha256,
   validateRuntimeAuditSnapshot
-} from "../runtime-audit.mjs";
-import { checkReleaseContract } from "../../../scripts/release-contract.mjs";
+} from "../packages/cli/runtime-audit.mjs";
+import { checkReleaseContract } from "./release-contract.mjs";
 
 const BLOCK_SIZE = 512;
 const REQUIRED_FILES = [
@@ -18,9 +18,9 @@ const REQUIRED_FILES = [
   "package/dist/third-party-manifest.json",
   "package/package.json"
 ];
-const defaultTrustedPackageDirectory = fileURLToPath(new URL("../", import.meta.url));
-const runtimeAuditPath = fileURLToPath(new URL("../runtime-audit.json", import.meta.url));
-const release = checkReleaseContract(fileURLToPath(new URL("../../../", import.meta.url)));
+const defaultTrustedPackageDirectory = fileURLToPath(new URL("../packages/cli/", import.meta.url));
+const runtimeAuditPath = fileURLToPath(new URL("../packages/cli/runtime-audit.json", import.meta.url));
+const release = checkReleaseContract(fileURLToPath(new URL("../", import.meta.url)));
 const PNPM_REMOVED_LIFECYCLES = new Set([
   "postpack",
   "postpublish",
@@ -424,13 +424,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const args = process.argv.slice(2);
   if (args[0] === "--dry-run") {
     if (args.length !== 2) {
-      throw new Error("Usage: verify-packed-artifact.mjs --dry-run <pack.json>");
+      throw new Error("Usage: verify-cli-package.mjs --dry-run <pack.json>");
     }
     const result = await verifyDryRun(args[1]);
     process.stdout.write(`Verified ${result.files} dry-run files.\n`);
   } else {
     if (args.length !== 1) {
-      throw new Error("Usage: verify-packed-artifact.mjs <package.tgz>");
+      throw new Error("Usage: verify-cli-package.mjs <package.tgz>");
     }
     const result = await verifyPackedArtifact(args[0]);
     process.stdout.write(`Verified ${result.files} files and ${result.packages} third-party packages.\n`);

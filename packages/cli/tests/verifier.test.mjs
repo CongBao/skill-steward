@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import {
   parseTarEntries,
   verifyPackedArtifact
-} from "./verify-packed-artifact.mjs";
+} from "../../../scripts/verify-cli-package.mjs";
 
 function writeOctal(target, offset, length, value) {
   target.write(`${value.toString(8).padStart(length - 1, "0")}\0`, offset, length, "ascii");
@@ -134,7 +134,7 @@ it.each([
 });
 
 it("rejects missing, symlinked, and non-regular entries in the trusted package tree", async () => {
-  const verifier = import("./verify-packed-artifact.mjs");
+  const verifier = import("../../../scripts/verify-cli-package.mjs");
   await expect(verifier).resolves.toHaveProperty("readTrustedPackageTree");
   const { readTrustedPackageTree } = await verifier;
 

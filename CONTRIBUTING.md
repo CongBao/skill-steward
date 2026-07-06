@@ -35,6 +35,8 @@ The CLI and six native packages share one reviewed [release contract](docs/relea
 
 `release:sync` is never part of build or pack. Running the check or synchronizer does not publish a package or create a GitHub Release.
 
+Publication remains a separate reviewed operation. Read [Native package publication](docs/native-publication.md) and [CLI npm publication](docs/cli-publication.md) before changing either protected workflow.
+
 ## Commits and pull requests
 
 Use a concise imperative commit subject, such as `feat: validate zip entry paths`. A pull request should explain the user outcome, security impact, tests run, screenshots for visible changes, and any compatibility trade-offs.
