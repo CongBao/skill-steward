@@ -376,7 +376,7 @@ async function artifactProof(
 }
 
 describe("integration recovery store", () => {
-  it("accepts retain-only disconnect fingerprints and rejects deletion-shaped recovery", async () => {
+  it("accepts exact retain and final removal disconnect fingerprints", async () => {
     const exact = fingerprint("d");
     const first = await fixture();
     const disconnect: IntegrationRecoveryIntentInput = {
@@ -389,7 +389,21 @@ describe("integration recovery store", () => {
     await expect(createIntegrationRecoveryIntent(first.stateDirectory, disconnect))
       .resolves.toMatchObject({ action: "disconnect", state: "prepared" });
 
-    for (const afterFingerprint of [null, fingerprint("e")]) {
+    const removed = await fixture();
+    await expect(createIntegrationRecoveryIntent(removed.stateDirectory, {
+      ...withoutLifecycleBinding(removed.input),
+      action: "disconnect",
+      beforeFingerprint: exact,
+      afterFingerprint: null,
+      artifactHints: []
+    })).resolves.toMatchObject({
+      action: "disconnect",
+      beforeFingerprint: exact,
+      afterFingerprint: null,
+      state: "prepared"
+    });
+
+    for (const afterFingerprint of [fingerprint("e")]) {
       const current = await fixture();
       await expect(createIntegrationRecoveryIntent(current.stateDirectory, {
         ...withoutLifecycleBinding(current.input),

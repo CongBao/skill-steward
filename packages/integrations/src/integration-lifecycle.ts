@@ -77,7 +77,8 @@ export interface IntegrationDisconnectPlan {
   };
   fingerprintCategory: "recorded";
   artifacts: [{ role: "harness-configuration"; operation: "disconnect" }];
-  companionRetained: true;
+  companion: "retained" | "removed";
+  companionRetained: boolean;
   lastConsumer: boolean;
   remainingConsumers: number;
   createdAt: string;
@@ -109,11 +110,11 @@ export interface IntegrationTransactionReceipt {
   transactionId: string;
   outcome: "ready" | "rolled-back" | "recovery-required";
   hook: "unchanged" | "installed" | "removed" | "restored" | "unknown";
-  companion: "unchanged" | "created" | "upgraded" | "retained" | "restored" | "unknown";
+  companion: "unchanged" | "created" | "upgraded" | "retained" | "removed" | "restored" | "unknown";
   recordId: string;
   cleanup: "clean" | "pending";
   reasonCode: string;
-  nextSafeAction: "none" | "create-new-plan" | "recover-transaction" | "review-final-cleanup";
+  nextSafeAction: "none" | "create-new-plan" | "recover-transaction";
 }
 
 const publicIntegrationErrorDefinitions = {
@@ -475,8 +476,9 @@ export async function planIntegrationDisconnect(
     },
     fingerprintCategory: "recorded",
     artifacts: [{ role: "harness-configuration", operation: "disconnect" }],
-    companionRetained: true,
-    lastConsumer: plan.companion.remainingConsumers.length === 0,
+    companion: plan.companion.status,
+    companionRetained: plan.companion.status === "retained",
+    lastConsumer: plan.companion.status === "removed",
     remainingConsumers: plan.companion.remainingConsumers.length,
     createdAt: plan.createdAt,
     expiresAt: plan.expiresAt

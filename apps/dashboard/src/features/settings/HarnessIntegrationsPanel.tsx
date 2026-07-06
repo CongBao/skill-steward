@@ -69,6 +69,7 @@ const receiptCompanionKeys: Record<IntegrationTransactionReceipt["companion"], T
   created: "settings.integrations.receipt.companion.created",
   upgraded: "settings.integrations.receipt.companion.upgraded",
   retained: "settings.integrations.receipt.companion.retained",
+  removed: "settings.integrations.receipt.companion.removed",
   restored: "settings.integrations.receipt.companion.restored",
   unknown: "settings.integrations.receipt.companion.unknown"
 };
@@ -82,8 +83,7 @@ const receiptNextActionKeys: Record<
 > = {
   none: "settings.integrations.receipt.next.none",
   "create-new-plan": "settings.integrations.receipt.next.create-new-plan",
-  "recover-transaction": "settings.integrations.receipt.next.recover-transaction",
-  "review-final-cleanup": "settings.integrations.receipt.next.review-final-cleanup"
+  "recover-transaction": "settings.integrations.receipt.next.recover-transaction"
 };
 const integrationErrorKeys: Readonly<Record<string, TranslationKey>> = {
   INVALID_INTEGRATION_HARNESS: "settings.integrations.error.invalidHarness",
@@ -300,8 +300,10 @@ export function HarnessIntegrationsPanel() {
               <span>{t(artifactRoleKeys[artifact.role])}</span>
             </li>
           ))}</ul>
-          {plan.action === "disconnect" && plan.lastConsumer
-            ? <p className="integration-retained-note">{t("settings.integrations.lastConsumerRetained")}</p>
+          {plan.action === "disconnect"
+            ? <p className="integration-retained-note">{t(plan.companion === "removed"
+                ? "settings.integrations.lastConsumerRemoved"
+                : "settings.integrations.companionRetainedForOthers")}</p>
             : null}
           {plan.availability.available ? (
             <footer className="integration-plan-actions">
@@ -415,6 +417,7 @@ function receiptFromError(error: unknown): IntegrationTransactionReceipt | null 
       "created",
       "upgraded",
       "retained",
+      "removed",
       "restored",
       "unknown"
     ])
@@ -422,8 +425,7 @@ function receiptFromError(error: unknown): IntegrationTransactionReceipt | null 
     || !isOneOf(receipt.nextSafeAction, [
       "none",
       "create-new-plan",
-      "recover-transaction",
-      "review-final-cleanup"
+      "recover-transaction"
     ])
     || typeof receipt.transactionId !== "string"
     || typeof receipt.recordId !== "string"

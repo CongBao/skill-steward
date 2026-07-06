@@ -74,7 +74,13 @@ it("groups truthful native and convention coverage and discloses every source", 
   expect(within(core).getByRole("article", { name: "Codex: Partial" })).toHaveTextContent("8 sources2 Skills1 effective");
   expect(within(core).getByRole("article", { name: "Claude Code: Unavailable" })).toBeVisible();
   expect(within(core).getByRole("article", { name: "GitHub Copilot CLI: Verified" })).toBeVisible();
-  expect(within(conventions).getByRole("article", { name: "Agent Skills: Convention only" })).toBeVisible();
+  const conventionDisclosure = within(conventions).getByText("Convention-only roots");
+  expect(conventionDisclosure.closest("details")).not.toHaveAttribute("open");
+  expect(within(conventions).getByRole("article", { name: "Agent Skills: Convention only" }))
+    .not.toBeVisible();
+  await user.click(conventionDisclosure);
+  expect(within(conventions).getByRole("article", { name: "Agent Skills: Convention only" }))
+    .toBeVisible();
 
   const disclosure = within(core).getByText("Inspect all 8 local sources");
   expect(disclosure.closest("details")).not.toHaveAttribute("open");
@@ -106,7 +112,7 @@ it("uses natural Chinese coverage labels and diagnostic guidance", async () => {
 
   const panel = await screen.findByRole("region", { name: "清单覆盖情况" });
   expect(await within(panel).findByRole("region", { name: "核心原生适配器" })).toBeVisible();
-  expect(within(panel).getByRole("region", { name: "仅按目录约定检查" })).toBeVisible();
+  expect(within(panel).getByText("仅按目录约定检查")).toBeVisible();
   expect(within(panel).getByRole("article", { name: "Codex：部分覆盖" })).toBeVisible();
 });
 

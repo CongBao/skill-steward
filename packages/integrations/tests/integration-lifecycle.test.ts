@@ -74,6 +74,12 @@ describe("public integration lifecycle compatibility", () => {
     await applyIntegrationPlan(create.planId, { ...options, generateReadiness });
     generateReadiness.mockClear();
     const disconnect = await planIntegrationDisconnect("codex", options);
+    expect(disconnect).toMatchObject({
+      companion: "removed",
+      companionRetained: false,
+      lastConsumer: true,
+      remainingConsumers: 0
+    });
     const before = await readFile(disconnect.targets.hook, "utf8");
 
     await expect(applyIntegrationDisconnect(disconnect.planId, {
@@ -91,7 +97,14 @@ describe("public integration lifecycle compatibility", () => {
       ...options,
       expectedHarness: "codex",
       generateReadiness
-    })).resolves.toMatchObject({ outcome: "ready", hook: "removed" });
+    })).resolves.toMatchObject({
+      outcome: "ready",
+      hook: "removed",
+      companion: "removed",
+      cleanup: "clean",
+      nextSafeAction: "none"
+    });
+    await expect(access(disconnect.targets.companion)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("removes an exact pure-v1 integration through one high-level domain call", async () => {

@@ -445,7 +445,8 @@ export interface IntegrationDisconnectPlan {
   targets: IntegrationPlan["targets"];
   fingerprintCategory: "recorded";
   artifacts: [{ role: "harness-configuration"; operation: "disconnect" }];
-  companionRetained: true;
+  companion: "retained" | "removed";
+  companionRetained: boolean;
   lastConsumer: boolean;
   remainingConsumers: number;
   createdAt: string;
@@ -457,11 +458,11 @@ export interface IntegrationTransactionReceipt {
   transactionId: string;
   outcome: "ready" | "rolled-back" | "recovery-required";
   hook: "unchanged" | "installed" | "removed" | "restored" | "unknown";
-  companion: "unchanged" | "created" | "upgraded" | "retained" | "restored" | "unknown";
+  companion: "unchanged" | "created" | "upgraded" | "retained" | "removed" | "restored" | "unknown";
   recordId: string;
   cleanup: "clean" | "pending";
   reasonCode: string;
-  nextSafeAction: "none" | "create-new-plan" | "recover-transaction" | "review-final-cleanup";
+  nextSafeAction: "none" | "create-new-plan" | "recover-transaction";
 }
 
 export interface IntegrationMutationResult {

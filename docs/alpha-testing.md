@@ -100,7 +100,7 @@ skill-steward integrate remove --harness codex --json
 skill-steward integrate remove --plan <id> --confirm --json
 ```
 
-The selected Hook must be removed without changing unrelated configuration. The companion remains present. After the last consumer disconnects, reconnect must reuse only a lifecycle-proven retained companion; modify, replace, truncate, or make it unreadable and confirm reconnect stops on drift.
+With two connected Harnesses, the selected Hook must be removed without changing unrelated configuration and the companion must remain byte-for-byte identical for the other consumer. The final disconnect must remove only an unchanged tree that matches the recorded installed fingerprint. Modify, replace, truncate, or make that tree unreadable before planning and confirm disconnect stops without changing either Harness. After a completed final removal, reconnect must create a fresh reviewed companion rather than treating the absent tree as drift.
 
 Exercise the cached Hook protocols through temporary-HOME fixtures:
 

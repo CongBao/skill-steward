@@ -392,7 +392,7 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain(
       "skill-steward integrate remove --harness <id>"
     );
-    expect(packageReadme).toMatch(/retains the shared companion Skill/i);
+    expect(packageReadme).toMatch(/removes only the exact recorded tree/i);
     expect(packageReadme).toContain("skill-steward integrate apply --plan <id> --confirm");
     expect(packageReadme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(packageReadme).toContain("runtime-audit.json");

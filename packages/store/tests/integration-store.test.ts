@@ -1269,16 +1269,16 @@ describe("integration store", () => {
     await expect(readIntegrationRecords(retainedState)).resolves.toEqual([retained]);
 
     const lastConsumerState = await mkdtemp(join(tmpdir(), "steward-integration-v2-retain-empty-"));
-    const lastConsumerRetained: IntegrationRecordV2 = {
+    const legacyEmptyRetain: IntegrationRecordV2 = {
       ...removalRecordV2("last-consumer-retained", "retain"),
       companion: {
         ...removalRecordV2("last-consumer-retained", "retain").companion,
         consumers: []
       }
     };
-    await appendIntegrationRecord(lastConsumerState, lastConsumerRetained);
+    await appendIntegrationRecord(lastConsumerState, legacyEmptyRetain);
     await expect(readIntegrationRecords(lastConsumerState))
-      .resolves.toEqual([lastConsumerRetained]);
+      .resolves.toEqual([legacyEmptyRetain]);
 
     const removedState = await mkdtemp(join(tmpdir(), "steward-integration-v2-remove-"));
     const removed = removalRecordV2("removed", "remove");
@@ -1303,7 +1303,7 @@ describe("integration store", () => {
       },
       {
         ...recordV2("apply-retain", "2026-07-03T02:00:00.000Z"),
-        companion: lastConsumerRetained.companion
+        companion: legacyEmptyRetain.companion
       }
     ];
     for (const [index, candidate] of contradictory.entries()) {

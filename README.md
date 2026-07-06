@@ -28,7 +28,7 @@ Inspect the source revision and exact filesystem plan before installation. Confi
 
 - **Task-time help, not another destination:** Codex and Claude Code prompt Hooks can run Preflight where a request starts. Copilot remains observe-only and gets recommendations through the companion Skill or CLI.
 - **One view across tools:** direct and plugin-managed Skills are resolved into one proof-aware inventory instead of being counted by directory presence alone.
-- **Safe local operations:** installation, integration, disconnect, quarantine, restore, and rollback use exact reviewed plans and stop on drift.
+- **Safe local operations:** installation, integration, shared-consumer disconnect, final uninstall, quarantine, restore, and rollback use exact reviewed plans and stop on drift.
 
 The ranking is deterministic and local; it does not require an LLM. Your Harness still decides whether and how to use a recommended Skill.
 
@@ -223,7 +223,7 @@ skill-steward integrate remove --harness codex
 skill-steward integrate remove --plan <plan-id> --confirm
 ```
 
-Disconnect removes only the reviewed Harness Hook and retains the shared companion Skill, so another Harness cannot lose its task-preflight tool. Reconnect can reuse a lifecycle-proven retained companion; modified, stale, unreadable, or unproved content stops for review. Create and upgrade require the packaged no-replace native helper for the current platform. Missing or unsupported helpers block the write instead of falling back to a racy filesystem operation.
+Disconnect removes the reviewed Harness Hook and updates the proven consumer set. The shared companion stays in place while another Harness still uses it. When the last proven consumer disconnects, Skill Steward removes only the exact tree recorded at installation; a modified, unreadable, or unproved tree is left untouched. This uses recorded installed evidence rather than the current package, so an unchanged older companion can still be uninstalled after an upgrade. Create, upgrade, and final uninstall use the packaged no-replace native helper for the current platform. Missing or unsupported helpers block the write instead of falling back to a racy filesystem operation.
 
 Managed Hooks fail open and use cached local state. Codex and Claude Code cover `UserPromptSubmit` and completion Hooks and receive a compact recommendation rather than raw task text or catalog URLs. Codex may still require its native trust review. GitHub Copilot CLI is intentionally observe-only: its documented Hook records lifecycle evidence, while recommendations remain available through the companion Skill or explicit CLI Preflight.
 
@@ -287,7 +287,7 @@ Skill Steward is strongest for developers who use several Harnesses and want loc
 
 | Product | Primary job | Task-time selection | Cross-Harness lifecycle |
 |---|---|---|---|
-| **Skill Steward** | Proof-aware local inventory, task Preflight, evidence, and reversible governance | **Ranks installed and opt-in catalog candidates for the current task** | **Reviewed Hook + companion transactions, rollback, safe disconnect, and local recovery history for three core adapters; convention-only inventory elsewhere** |
+| **Skill Steward** | Proof-aware local inventory, task Preflight, evidence, and reversible governance | **Ranks installed and opt-in catalog candidates for the current task** | **Reviewed Hook + shared companion transactions, exact final uninstall, rollback, and local recovery history for three core adapters; convention-only inventory elsewhere** |
 | [Microsoft APM](https://microsoft.github.io/apm/) | Declarative agent-context package management with manifest, lockfile, transitive dependencies, policy, and CI audit | Installs and compiles declared packages; audit checks integrity and deployment drift | Deploys several primitive types across supported Harnesses with reproducible lockfile and policy controls |
 | [skills.sh](https://www.skills.sh/docs) | Public directory, leaderboard, security checks, and one-command cross-agent Skill installation | Discovery and popularity ranking before install | Installs GitHub-hosted Skills into supported agents; lifecycle centers on CLI install/update |
 | [Tessl](https://docs.tessl.io/) | Versioned Skill registry, evaluation, distribution, and optimization | Registry search plus measured quality/impact before install | Agent-agnostic package installation and hosted evaluation lifecycle |
@@ -317,7 +317,7 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 
 - Task scoring is a deterministic lexical baseline. Algorithm v8 adds one bounded, corroborated lifecycle-trigger signal alongside limited Simplified/Traditional Chinese concepts and high-confidence capability-gap hints; it does not provide general cross-language semantic understanding or measure actual task success.
 - Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
-- Harness lifecycle apply currently covers Codex, Claude Code, and GitHub Copilot CLI only. Disconnect intentionally retains the shared companion Skill; removal of that shared bundle is not offered as a public action.
+- Harness lifecycle apply currently covers Codex, Claude Code, and GitHub Copilot CLI only. Final companion uninstall is available on proven POSIX paths; Windows lifecycle mutation remains blocked until native reparse and identity proof is available.
 - GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.
 - Native inventory is limited to documented local surfaces for Codex, Claude Code, and GitHub Copilot CLI. Copilot Harness coverage can remain `partial` when local runtime or MDM proof is unavailable; an affected source or Skill exposure can remain `ambiguous`.
 - Each scan covers the current workspace and user scopes, not every project or workspace on the machine.

@@ -297,8 +297,10 @@ function validateRecoveryBase(
     ? value.beforeFingerprint === null && value.afterFingerprint !== null
     : value.action === "disconnect"
       ? value.beforeFingerprint !== null
-        && value.afterFingerprint !== null
-        && value.beforeFingerprint === value.afterFingerprint
+        && (
+          value.afterFingerprint === null
+          || value.beforeFingerprint === value.afterFingerprint
+        )
       : value.action === "upgrade"
         ? value.beforeFingerprint !== null
           && value.afterFingerprint !== null

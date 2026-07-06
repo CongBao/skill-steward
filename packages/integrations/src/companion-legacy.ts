@@ -401,6 +401,34 @@ export async function resolveCompanionConsumers(
   return { state: "proven", consumers: [...consumers].sort() };
 }
 
+/** Resolves the complete post-disconnect consumer set from one validated v2 snapshot. */
+export async function resolveCompanionConsumersAfterDisconnect(
+  home: string,
+  removingHarness: IntegrationHarness,
+  journal: IntegrationRecordJournal,
+  options: CompanionConfigProofOptions = {}
+): Promise<CompanionConsumerResolution> {
+  const companionHead = journal.orderedRecords.find((record) => record.schemaVersion === 2);
+  if (
+    companionHead?.schemaVersion !== 2
+    || !companionHead.companion.consumers.includes(removingHarness)
+  ) {
+    return { state: "conflict", reason: "COMPANION_RECORDED_EVIDENCE_CONTRADICTORY" };
+  }
+  const current = await resolveCompanionConsumers(
+    home,
+    removingHarness,
+    journal,
+    options
+  );
+  return current.state === "proven"
+    ? {
+        state: "proven",
+        consumers: current.consumers.filter((consumer) => consumer !== removingHarness)
+      }
+    : current;
+}
+
 export async function resolveCompanionManagedProof(input: {
   home: string;
   stateDirectory: string;

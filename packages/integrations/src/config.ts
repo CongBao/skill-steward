@@ -36,6 +36,7 @@ import {
   type CompanionTransactionAvailability
 } from "./companion-domain.js";
 import { inspectCompanionSkillWithProof } from "./companion-inspector-internal.js";
+import { resolveCompanionConsumersAfterDisconnect } from "./companion-legacy.js";
 import { inspectCompanionTree } from "./companion-manifest.js";
 import type { CompanionSkillStatus } from "./companion-shared.js";
 
@@ -280,7 +281,7 @@ export const integrationDisconnectPlanSchema = z.object({
   }).strict(),
   companion: z.object({
     path: normalizedAbsolutePathSchema,
-    status: z.literal("retained"),
+    status: z.enum(["retained", "removed"]),
     fingerprint: fingerprintSchema,
     installedFingerprint: fingerprintSchema,
     sourceFingerprint: fingerprintSchema,
@@ -348,6 +349,16 @@ export const integrationDisconnectPlanSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["companion", "fingerprint"],
       message: "Disconnect companion must match the recorded installed fingerprint"
+    });
+  }
+  const hasRemainingConsumers = plan.companion.remainingConsumers.length > 0;
+  if (
+    (plan.companion.status === "retained") !== hasRemainingConsumers
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["companion", "status"],
+      message: "Disconnect companion status must match its remaining consumer set"
     });
   }
 });
@@ -932,19 +943,26 @@ async function currentCopilotTombstoneRecord(input: {
     || record.targetPath !== input.targetPath
     || record.afterFingerprint !== tombstoneFingerprint
     || record.beforeFingerprint !== record.installedEntryFingerprint
-    || record.companion.action !== "retain"
     || record.companion.path !== resolve(
       input.home,
       ".agents",
       "skills",
       "skill-steward-preflight"
     )
-    || record.companion.before.state !== "exact"
-    || record.companion.after.state !== "exact"
-    || record.companion.before.fingerprint !== record.companion.installedFingerprint
-    || record.companion.after.fingerprint !== record.companion.installedFingerprint
     || record.companion.consumers.includes("github-copilot")
   ) return null;
+  const companionTransitionIsExact = record.companion.before.state === "exact"
+    && record.companion.before.fingerprint === record.companion.installedFingerprint
+    && (
+      record.companion.action === "retain"
+        ? record.companion.after.state === "exact"
+          && record.companion.after.fingerprint === record.companion.installedFingerprint
+        : record.companion.action === "remove"
+          ? record.companion.after.state === "absent"
+          && record.companion.consumers.length === 0
+          : false
+    );
+  if (!companionTransitionIsExact) return null;
   const currentConsumers = integrationHarnesses.filter((harness) =>
     journal.orderedRecords.find((candidate) => candidate.harness === harness)?.status
       === "installed"
@@ -958,7 +976,14 @@ function companionProvesCurrentCopilotTombstone(
   companion: IntegrationPlan["companion"],
   record: IntegrationRecordV2
 ): boolean {
-  return companion.action === "none"
+  if (record.companion.action === "remove") {
+    return record.companion.after.state === "absent"
+      && companion.action === "create"
+      && companion.expectedBefore.state === "absent"
+      && companion.proof.kind === "new";
+  }
+  return record.companion.action === "retain"
+    && companion.action === "none"
     && companion.expectedBefore.state === "exact"
     && companion.proof.kind === "recorded"
     && companion.proof.recordId === record.id
@@ -1247,7 +1272,21 @@ async function planIntegrationDisconnectInternal(
   const createdAt = (options.now?.() ?? new Date()).toISOString();
   const id = options.id?.() ?? randomUUID();
   const expectedConsumers = [...lifecycleHead.companion.consumers];
-  const remainingConsumers = expectedConsumers.filter((consumer) => consumer !== harness);
+  const consumerResolution = await resolveCompanionConsumersAfterDisconnect(
+    options.home,
+    harness,
+    journal
+  );
+  if (consumerResolution.state === "unknown") {
+    throw unavailableDisconnect("Another companion consumer could not be proven exactly");
+  }
+  if (consumerResolution.state === "conflict") {
+    throw new IntegrationError(
+      "INTEGRATION_DRIFTED",
+      "Another companion consumer changed after lifecycle v2 finalize"
+    );
+  }
+  const remainingConsumers = consumerResolution.consumers;
   const plan = integrationDisconnectPlanSchema.parse({
     lifecycleProtocolVersion: 2,
     action: "disconnect",
@@ -1271,7 +1310,7 @@ async function planIntegrationDisconnectInternal(
     },
     companion: {
       path: companionPath,
-      status: "retained",
+      status: remainingConsumers.length === 0 ? "removed" : "retained",
       fingerprint: companion.fingerprint,
       installedFingerprint: lifecycleHead.companion.installedFingerprint,
       sourceFingerprint: lifecycleHead.companion.source.fingerprint,

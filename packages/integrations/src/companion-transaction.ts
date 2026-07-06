@@ -74,6 +74,7 @@ export const companionTransactionReceiptSchema = z.object({
     "created",
     "upgraded",
     "retained",
+    "removed",
     "restored",
     "unknown"
   ]),
@@ -83,8 +84,7 @@ export const companionTransactionReceiptSchema = z.object({
   nextSafeAction: z.enum([
     "none",
     "create-new-plan",
-    "recover-transaction",
-    "review-final-cleanup"
+    "recover-transaction"
   ])
 }).strict();
 
@@ -337,6 +337,7 @@ function buildDisconnectLifecycleRecord(
   plan: IntegrationDisconnectPlan,
   recordId: string
 ): IntegrationRecordV2 {
+  const removesCompanion = plan.companion.status === "removed";
   return {
     schemaVersion: 2,
     id: recordId,
@@ -348,10 +349,12 @@ function buildDisconnectLifecycleRecord(
     afterFingerprint: plan.configuration.after.fingerprint,
     installedEntryFingerprint: plan.configuration.installedEntryFingerprint,
     companion: {
-      action: "retain",
+      action: removesCompanion ? "remove" : "retain",
       path: plan.companion.path,
-      before: { state: "exact", fingerprint: plan.companion.fingerprint },
-      after: { state: "exact", fingerprint: plan.companion.fingerprint },
+      before: { state: "exact", fingerprint: plan.companion.installedFingerprint },
+      after: removesCompanion
+        ? { state: "absent" }
+        : { state: "exact", fingerprint: plan.companion.installedFingerprint },
       source: { fingerprint: plan.companion.sourceFingerprint },
       proof: { category: "recorded" },
       installedFingerprint: plan.companion.installedFingerprint,
@@ -399,11 +402,22 @@ async function moveOrThrow(
     leaseContext: IntegrationMutationLeaseContext;
     hooks?: OwnedTreeMutationHooks;
   },
-  dependencies: CompanionTransactionDependencies
+  dependencies: CompanionTransactionDependencies,
+  onUncertain?: (handle: OwnedTreeHandle) => Promise<void>
 ): Promise<OwnedTreeHandle> {
   const outcome = await dependencies.moveTree(handle, destination, mutationOptions);
   if (outcome.state === "moved") return outcome.handle;
-  if (outcome.state === "uncertain") throw outcome.error;
+  if (outcome.state === "uncertain") {
+    try {
+      await onUncertain?.(outcome.handle);
+    } catch (checkpointError) {
+      throw new AggregateError(
+        [outcome.error, checkpointError],
+        "Companion move and recovery checkpoint are both uncertain"
+      );
+    }
+    throw outcome.error;
+  }
   throw outcome.cause;
 }
 
@@ -666,6 +680,7 @@ async function runCompanionIntegrationTransaction(
     }
     const disconnecting = isDisconnectPlan(plan);
     const disconnectPlan = disconnecting ? plan as IntegrationDisconnectPlan : undefined;
+    const removesCompanion = disconnectPlan?.companion.status === "removed";
     const applyTransactionPlan = disconnecting
       ? undefined
       : plan as ApplyableIntegrationPlan;
@@ -684,6 +699,7 @@ async function runCompanionIntegrationTransaction(
     let createdAncestors: readonly CreatedOwnedTreeAncestorProof[] = [];
     let configAncestors: readonly CreatedOwnedTreeAncestorProof[] = [];
     let backupMoved = false;
+    let companionRestored = false;
     let installedPublished = false;
     let configHandle: IntegrationFileTransactionHandle | undefined;
     let readinessHandle: IntegrationReadinessTransactionHandle | undefined;
@@ -726,6 +742,7 @@ async function runCompanionIntegrationTransaction(
 
     let record!: IntegrationRecordV2;
     let configBefore!: IntegrationFileExpectedState;
+    let beforeManifest: Awaited<ReturnType<typeof inspectCompanionTree>> | undefined;
     try {
       await checkedBoundary(dependencies, "lease-assert", () =>
         dependencies.assertLease(leaseContext, options.stateDirectory));
@@ -739,8 +756,15 @@ async function runCompanionIntegrationTransaction(
       const companionPath = disconnectPlan?.companion.path
         ?? applyTransactionPlan!.companion.path;
       const parent = dirname(companionPath);
-      const artifactHints = disconnectPlan || applyTransactionPlan!.companion.action === "none"
-        ? []
+      const artifactHints = disconnectPlan
+        ? removesCompanion
+          ? [{
+              role: "backup" as const,
+              path: ownedTreeSiblingPath(parent, transactionId, "cleanup")
+            }]
+          : []
+        : applyTransactionPlan!.companion.action === "none"
+          ? []
         : [
             {
               role: "stage" as const,
@@ -771,8 +795,9 @@ async function runCompanionIntegrationTransaction(
         companionPath,
         configPath: disconnectPlan?.configuration.path ?? applyTransactionPlan!.targetPath,
         beforeFingerprint: companionBeforeFingerprint,
-        afterFingerprint: disconnectPlan?.companion.fingerprint
-          ?? applyTransactionPlan!.companion.after.fingerprint,
+        afterFingerprint: disconnectPlan
+          ? removesCompanion ? null : disconnectPlan.companion.fingerprint
+          : applyTransactionPlan!.companion.after.fingerprint,
         createdAt,
         artifactHints
       }, { leaseContext });
@@ -855,9 +880,8 @@ async function runCompanionIntegrationTransaction(
       }
       const lifecycleRecordBinding = bindIntegrationRecordV2(revalidatedRecord);
       record = revalidatedRecord;
-      let beforeManifest: Awaited<ReturnType<typeof inspectCompanionTree>> | undefined;
-      if (applyTransactionPlan?.companion.action === "upgrade") {
-        beforeManifest = await inspectCompanionTree(applyTransactionPlan.companion.path, {
+      if (applyTransactionPlan?.companion.action === "upgrade" || removesCompanion) {
+        beforeManifest = await inspectCompanionTree(companionPath, {
           boundary: options.home,
           platform: process.platform
         });
@@ -1012,6 +1036,41 @@ async function runCompanionIntegrationTransaction(
         await dependencies.afterBoundary("config-publish");
       }
 
+      if (removesCompanion) {
+        if (!beforeManifest || !disconnectPlan) {
+          throw new Error("Final disconnect companion manifest is unavailable");
+        }
+        backup = await dependencies.proveTree({
+          transactionId,
+          role: "backup",
+          path: disconnectPlan.companion.path,
+          homeBoundaryPath: options.home,
+          expectedManifest: beforeManifest
+        }, mutationOptions);
+        await dependencies.beforeBoundary("backup-rename");
+        backup = await moveOrThrow(
+          backup,
+          ownedTreeSiblingPath(parent, transactionId, "cleanup"),
+          mutationOptions,
+          dependencies,
+          async (uncertainHandle) => {
+            backup = uncertainHandle;
+            backupMoved = true;
+            await checkpoint([ownedTreeRecoveryArtifactProof(uncertainHandle)]);
+          }
+        );
+        backupMoved = true;
+        backup = await dependencies.proveTree({
+          transactionId,
+          role: "backup",
+          path: ownedTreeSiblingPath(parent, transactionId, "cleanup"),
+          homeBoundaryPath: options.home,
+          expectedManifest: beforeManifest
+        }, mutationOptions);
+        await checkpoint([ownedTreeRecoveryArtifactProof(backup)]);
+        await dependencies.afterBoundary("backup-rename");
+      }
+
       const readiness = await checkedBoundary(dependencies, "readiness-generate", () =>
         options.generateReadiness({
           transactionId,
@@ -1076,6 +1135,29 @@ async function runCompanionIntegrationTransaction(
       if (readinessHandle) {
         try {
           await dependencies.restoreReadiness(readinessHandle, mutationOptions);
+        } catch (compensationError) {
+          compensationErrors.push(compensationError);
+          compensationBlocked = true;
+        }
+      }
+      if (!compensationBlocked && removesCompanion && backupMoved && backup) {
+        try {
+          backup = await moveOrThrow(
+            backup,
+            disconnectPlan!.companion.path,
+            mutationOptions,
+            dependencies
+          );
+          backupMoved = false;
+          if (!beforeManifest) throw new Error("Final disconnect restore manifest is unavailable");
+          backup = await dependencies.proveTree({
+            transactionId,
+            role: "backup",
+            path: disconnectPlan!.companion.path,
+            homeBoundaryPath: options.home,
+            expectedManifest: beforeManifest
+          }, mutationOptions);
+          companionRestored = true;
         } catch (compensationError) {
           compensationErrors.push(compensationError);
           compensationBlocked = true;
@@ -1167,7 +1249,9 @@ async function runCompanionIntegrationTransaction(
         reasonCode: primaryCode,
         hook: hookOutcome === "unchanged" ? "unchanged" : "restored",
         companion: disconnectPlan
-          ? "retained"
+          ? removesCompanion
+            ? companionRestored ? "restored" : "unchanged"
+            : "retained"
           : applyTransactionPlan!.companion.action === "none"
             ? "unchanged"
             : "restored"
@@ -1197,7 +1281,7 @@ async function runCompanionIntegrationTransaction(
           outcome: "ready",
           hook: hookOutcome,
           companion: disconnectPlan
-            ? "retained"
+            ? removesCompanion ? "removed" : "retained"
             : applyTransactionPlan!.companion.action === "create"
             ? "created"
             : applyTransactionPlan!.companion.action === "upgrade"
@@ -1222,7 +1306,7 @@ async function runCompanionIntegrationTransaction(
           warnings.push(error);
         }
       }
-      if (applyTransactionPlan?.companion.action === "upgrade" && backup) {
+      if ((applyTransactionPlan?.companion.action === "upgrade" || removesCompanion) && backup) {
         try {
           const cleanup = await checkedBoundary(dependencies, "tree-cleanup", () =>
             dependencies.cleanupTree(backup!, mutationOptions));
@@ -1254,7 +1338,7 @@ async function runCompanionIntegrationTransaction(
         outcome: "ready",
         hook: hookOutcome,
         companion: disconnectPlan
-          ? "retained"
+          ? removesCompanion ? "removed" : "retained"
           : applyTransactionPlan!.companion.action === "create"
           ? "created"
           : applyTransactionPlan!.companion.action === "upgrade"
@@ -1263,15 +1347,9 @@ async function runCompanionIntegrationTransaction(
         recordId,
         cleanup: warnings.length === 0 ? "clean" : "pending",
         reasonCode: warnings.length === 0
-          ? disconnectPlan?.companion.remainingConsumers.length === 0
-            ? "INTEGRATION_READY_FINAL_CLEANUP_PENDING"
-            : "INTEGRATION_READY"
+          ? "INTEGRATION_READY"
           : "INTEGRATION_READY_CLEANUP_PENDING",
-        nextSafeAction: warnings.length === 0
-          ? disconnectPlan?.companion.remainingConsumers.length === 0
-            ? "review-final-cleanup"
-            : "none"
-          : "recover-transaction"
+        nextSafeAction: warnings.length === 0 ? "none" : "recover-transaction"
       });
     }
     }
