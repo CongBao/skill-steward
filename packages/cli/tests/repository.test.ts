@@ -33,6 +33,8 @@ const required = [
   ".github/pull_request_template.md",
   ".github/workflows/ci.yml",
   "docs/architecture.md",
+  "docs/release-contract.md",
+  "release-contract.json",
   "docs/product-review-2026-07-03.md",
   ...englishScreenshots.map((name) => `docs/images/${name}`),
   ...chineseScreenshots.map((name) => `docs/images/${name}`)
@@ -109,6 +111,43 @@ async function expectLocalLinksToExist(markdownPath: string, markdown: string): 
 describe("open-source repository", () => {
   it("contains release, governance, contribution, security, and community files", async () => {
     await Promise.all(required.map((path) => expect(access(join(root, path))).resolves.toBeUndefined()));
+  });
+
+  it("keeps one explicit Alpha release contract without implicit sync or publication", async () => {
+    const contract = JSON.parse(await readFile(join(root, "release-contract.json"), "utf8")) as {
+      version: string; channel: string; npmTag: string; githubPrerelease: boolean; packages: unknown[];
+    };
+    expect(contract).toMatchObject({
+      version: "0.5.0-alpha.4",
+      channel: "alpha",
+      npmTag: "alpha",
+      githubPrerelease: true
+    });
+    expect(contract.packages).toHaveLength(7);
+
+    const workspace = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(workspace.scripts?.["release:check"]).toBe("node scripts/release-contract.mjs check");
+    expect(workspace.scripts?.["release:sync"]).toBe("node scripts/release-contract.mjs sync");
+    expect(workspace.scripts?.check).toMatch(/^pnpm release:check &&/u);
+    expect(workspace.scripts?.build).not.toContain("release:sync");
+    expect(workspace.scripts?.test).not.toContain("release:sync");
+
+    const cli = JSON.parse(await readFile(join(root, "packages/cli/package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(cli.scripts?.prepack).not.toContain("release:sync");
+
+    const guide = await readFile(join(root, "docs/release-contract.md"), "utf8");
+    expect(guide).toContain("pnpm release:check");
+    expect(guide).toContain("pnpm release:sync");
+    expect(guide).toContain("does not publish anything");
+
+    const readme = await readFile(join(root, "README.md"), "utf8");
+    expect(readme).toContain("Status: active alpha");
+    expect(readme).toContain("npm package is not published yet");
+    expect(readme).not.toMatch(/Status:\s*Beta|npm install --global skill-steward/u);
   });
 
   it("ships a substantive README with valid local links and real screenshots", async () => {
@@ -588,7 +627,8 @@ describe("open-source repository", () => {
 
     const alphaTesting = await readFile(join(root, "docs/alpha-testing.md"), "utf8");
     expectInventoryTaxonomies(alphaTesting);
-    expect(alphaTesting).toContain("0.5.0-alpha.4");
+    expect(alphaTesting).toContain("release-contract.json");
+    expect(alphaTesting).toContain("pnpm release:check");
     expect(alphaTesting).toContain("--plan <id> --confirm");
     expect(alphaTesting).toContain("## Current test matrix");
     expect(alphaTesting).toMatch(/create\/upgrade\/no-op\/disconnect[^;]*same recoverable coordinator/i);

@@ -18,6 +18,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify release contract
+        run: pnpm release:check
       - run: mkdir -p artifacts/npm artifacts/pnpm
       - name: Pack with pnpm from a clean checkout
         run: pnpm --filter skill-steward pack --pack-destination artifacts/pnpm
@@ -50,6 +52,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify release contract
+        run: pnpm release:check
       - name: Build integration workspace
         run: pnpm --filter @skill-steward/integrations... build
       - name: Windows integration journal smoke
@@ -71,6 +75,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify release contract
+        run: pnpm release:check
       - name: Build integration workspace
         run: pnpm --filter @skill-steward/integrations... build
       - name: Build and verify Darwin mutation helper

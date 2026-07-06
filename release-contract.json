@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.0-alpha.4",
+  "channel": "alpha",
+  "npmTag": "alpha",
+  "githubPrerelease": true,
+  "packages": [
+    {
+      "name": "skill-steward",
+      "path": "packages/cli",
+      "role": "cli"
+    },
+    {
+      "name": "@skill-steward/rename-noreplace-darwin-arm64",
+      "path": "packages/rename-noreplace-darwin-arm64",
+      "role": "native"
+    },
+    {
+      "name": "@skill-steward/rename-noreplace-darwin-x64",
+      "path": "packages/rename-noreplace-darwin-x64",
+      "role": "native"
+    },
+    {
+      "name": "@skill-steward/rename-noreplace-linux-arm64-gnu",
+      "path": "packages/rename-noreplace-linux-arm64-gnu",
+      "role": "native"
+    },
+    {
+      "name": "@skill-steward/rename-noreplace-linux-arm64-musl",
+      "path": "packages/rename-noreplace-linux-arm64-musl",
+      "role": "native"
+    },
+    {
+      "name": "@skill-steward/rename-noreplace-linux-x64-gnu",
+      "path": "packages/rename-noreplace-linux-x64-gnu",
+      "role": "native"
+    },
+    {
+      "name": "@skill-steward/rename-noreplace-linux-x64-musl",
+      "path": "packages/rename-noreplace-linux-x64-musl",
+      "role": "native"
+    }
+  ]
+}

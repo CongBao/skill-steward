@@ -1,6 +1,6 @@
 # Native package publication
 
-Skill Steward ships six optional native packages for no-replace filesystem operations. Pull requests and pushes build and verify every target, but publication is a separate manual job on the exact `main` ref. The `native-publish` GitHub environment must require reviewer approval. The publish job pins Node 22.22.1 and npm 11.17.0, then verifies the npm version before authentication so trusted publishing never depends on the runner's bundled npm client.
+Skill Steward ships six optional native packages for no-replace filesystem operations. Pull requests and pushes build and verify every target, but publication is a separate manual job on the exact `main` ref. The `native-publish` GitHub environment must require reviewer approval. The publish job pins Node 22.22.1 and npm 11.17.0, then verifies the npm version before authentication so trusted publishing never depends on the runner's bundled npm client. Every build and publication run first validates [`release-contract.json`](../release-contract.json); the publisher accepts only that version and uses its checked npm tag.
 
 ## First publication only
 
@@ -23,5 +23,5 @@ Before approving any deployment, verify:
 
 - the run uses the exact `main` ref;
 - all six matrix builds and packed-tarball checks passed;
-- the version and `alpha` tag are intentional;
+- the version, channel, and npm tag in `release-contract.json` are intentional and `pnpm release:check` passes;
 - the workflow and first-party actions are unchanged or separately reviewed.

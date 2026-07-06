@@ -1,8 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { verifyNativeRenamePackage } from "./verify-native-rename-package.mjs";
+import { checkReleaseContract } from "./release-contract.mjs";
 
 const targets = new Map([
   ["@skill-steward/rename-noreplace-darwin-arm64", ["darwin", "arm64", "none"]],
@@ -13,6 +15,8 @@ const targets = new Map([
   ["@skill-steward/rename-noreplace-linux-x64-musl", ["linux", "x64", "musl"]]
 ]);
 const registry = "https://registry.npmjs.org";
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const release = checkReleaseContract(repositoryRoot);
 
 function readManifest(artifact) {
   return JSON.parse(execFileSync(
@@ -46,6 +50,9 @@ const verified = artifacts.map((artifact) => {
   const target = targets.get(candidate.name);
   if (!target) throw new Error(`Unexpected native package ${candidate.name ?? basename(artifact)}`);
   const manifest = verifyNativeRenamePackage(artifact, ...target);
+  if (manifest.version !== release.version) {
+    throw new Error(`Native package ${manifest.name} version differs from the release contract`);
+  }
   return { artifact, manifest, integrity: integrity(artifact) };
 });
 if (new Set(verified.map(({ manifest }) => manifest.name)).size !== targets.size) {
@@ -85,7 +92,7 @@ for (const item of publicationPlan) {
       "--access",
       "public",
       "--tag",
-      "alpha",
+      release.npmTag,
       "--provenance",
       `--registry=${registry}`
     ],

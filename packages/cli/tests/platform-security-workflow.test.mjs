@@ -24,6 +24,10 @@ it("keeps named Windows and macOS platform-security gates in CI", async () => {
       /run: pnpm --filter @skill-steward\/integrations\.\.\. build/g
     )
   ).toHaveLength(2);
+  expect(
+    workflow.match(/name: Verify release contract/g),
+    "every CI job must fail before packaging or building when release identity drifts"
+  ).toHaveLength(3);
 
   const actions = [...workflow.matchAll(/uses:\s*([^@\s]+)@([^\s]+)/g)];
   expect(actions.length).toBeGreaterThan(0);
