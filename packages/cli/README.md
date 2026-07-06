@@ -1,17 +1,16 @@
 # Skill Steward
 
-Skill Steward is a local-first companion for Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses. It helps you understand the Skills already on your machine, choose a small set for the task at hand, and review changes before applying them.
+Skill Steward is the local-first, cross-Harness operations layer for Agent Skills. It inventories what is installed, preflights the current task—including useful Skills you do not have yet—and makes reviewed, reversible changes across Codex, Claude Code, and GitHub Copilot CLI.
 
 It is not a Harness, and it does not install recommendations automatically.
 
-> Status: Alpha. This package is currently verified as a local tarball; registry publication is not part of this release.
+> Status: 0.5.0-beta.1 prerelease package. Check the repository's Packages and Releases for current distribution availability.
 
 ## Install
 
-```bash
-npm install --global ./skill-steward-*.tgz
-skill-steward --version
-```
+From a source checkout, `pnpm candidate:install` builds, verifies, and installs this CLI plus exactly one matching native helper on supported macOS/Linux. Windows installs the CLI without the native lifecycle helper; managed integration lifecycle and recovery writes remain unavailable. Installing a standalone CLI tarball with `npm install --global --omit=optional ./skill-steward-*.tgz` intentionally omits those lifecycle writes.
+
+After installation, run `skill-steward --version`.
 
 Node.js 22 or newer is required.
 

@@ -2,13 +2,15 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Know which Agent Skills you have, which ones a task needs, and change them safely.
+**The cross-Harness operations layer for Agent Skills.**
 
-Skill Steward is a cross-Harness companion and local control console for Agent Skills. Its three core adapters give Codex, Claude Code, and GitHub Copilot CLI one proof-aware inventory and one reviewed mutation contract; the wider Harness catalog uses directory conventions where native behavior has not been verified.
+Skill Steward gives Codex, Claude Code, and GitHub Copilot CLI one local, proof-aware Skill inventory and one reviewed change path. It helps you understand what is installed, preflight each task—including useful Skills you do not have yet—and make reversible changes backed by exact plans and local evidence.
 
-It is not another Harness: it does not answer prompts, route models, or run agents. Your Harness keeps doing the work; Skill Steward helps it choose a small, relevant Skill set and keeps Skill changes reviewable and reversible.
+It works beside your Harness instead of replacing it. Your Harness still runs the task; Skill Steward keeps Skill selection small, relevant, reviewable, and recoverable. Native behavior is verified for the three core adapters above; the wider 30-Harness catalog is convention-only inventory and installation coverage.
 
-> Status: active alpha. Install from source or a local tarball; the npm package is not published yet.
+> Status: Beta release candidate 0.5.0-beta.1. The npm packages and GitHub prerelease are not public yet; install the verified local candidate bundle below.
+
+**Try locally:** [install the candidate](#installation), then run `skill-steward scan`, one real `skill-steward preflight`, and `skill-steward dashboard`. Inventory and Preflight work on Node.js platforms; reviewed integration lifecycle writes currently require the matching macOS or Linux native helper prepared by the installer.
 
 ## Three jobs
 
@@ -69,18 +71,17 @@ Screenshots in this README use the English locale. The [Chinese README](README.z
 
 - Node.js 22 or newer
 - pnpm 10 or newer to build the local package
+- A C compiler available as `cc` to build the macOS/Linux lifecycle helper; Windows does not build that helper
 
-### Install the verified local CLI package
+### Install the verified local candidate
 
-Until the npm package is published, build and install the same verified tarball that the repository tests. The first-value commands below then use one global `skill-steward` binary from start to finish.
+Until the npm package is published, prepare and install the same verified local artifacts that the repository tests. On macOS and Linux, the command selects exactly one helper for the current platform, architecture, libc, and Beta version, verifies it together with the CLI, then installs both. Windows installs the complete CLI without the native lifecycle helper: scan, Task Preflight, and the Dashboard remain available, while managed integration lifecycle and recovery writes remain unavailable.
 
 ```bash
 git clone https://github.com/CongBao/skill-steward.git
 cd skill-steward
 pnpm install --frozen-lockfile
-package_dir="$(mktemp -d)"
-pnpm --filter skill-steward pack --pack-destination "$package_dir"
-npm install --global "$package_dir"/skill-steward-*.tgz
+pnpm candidate:install
 skill-steward --version
 ```
 
@@ -90,7 +91,7 @@ SSH works too:
 git clone git@github.com:CongBao/skill-steward.git
 ```
 
-If an older global build is already installed, repack and reinstall it before testing repository changes. Check the active binary with `skill-steward --version`.
+The candidate installer replaces an older current-platform helper before installing the CLI, so the two versions cannot silently diverge. Check the active binary with `skill-steward --version`. Use `pnpm candidate:pack` instead when you only want the verified tarballs and `candidate-manifest.json` without changing the global installation. Both commands write to a new private system temporary directory and print its path; pass `-- --output <empty-directory>` when you need a fixed location, then remove it after inspection if it is no longer needed.
 
 For source-development setup and the full contributor quality checks, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -139,7 +140,7 @@ printf '%s' "Review this pull request" | skill-steward preflight --stdin --compa
 skill-steward preflight --task "Review this pull request" --installed-only
 ```
 
-Algorithm v9 is a deterministic local ranker, not an LLM or a general semantic search engine. It combines lexical relevance with a versioned English/Chinese workflow grammar that recognizes bounded actions, objects, and local action-object pairs. Selection rewards uncovered capabilities, penalizes redundant candidates, preserves risk and Harness eligibility gates, and includes estimated context cost. Explicit negative instructions keep rejected capabilities out; broad nouns such as “Skill”, “code”, or “agent” cannot activate a candidate alone. Capability gaps appear only when the evidence is specific enough to be a plausible Skill search hint. The public 28-case benchmark reports 96.3% precision, 92.9% recall, 92.9% exact-set accuracy, 92.9% bilingual decision parity, and zero negative-control false positives. Run it with `pnpm test:preflight-quality`. These numbers describe the included synthetic corpus, not every possible task or real-world task success. Exact boundaries are documented in [Architecture](docs/architecture.md#task-time-data-flow) and the [Alpha testing protocol](docs/alpha-testing.md#compact-and-bilingual-preflight).
+Algorithm v9 is a deterministic local ranker, not an LLM or a general semantic search engine. It combines lexical relevance with a versioned English/Chinese workflow grammar that recognizes bounded actions, objects, and local action-object pairs. Selection rewards uncovered capabilities, penalizes redundant candidates, preserves risk and Harness eligibility gates, and includes estimated context cost. Explicit negative instructions keep rejected capabilities out; broad nouns such as “Skill”, “code”, or “agent” cannot activate a candidate alone. Capability gaps appear only when the evidence is specific enough to be a plausible Skill search hint. The public 28-case benchmark reports 96.3% precision, 92.9% recall, 92.9% exact-set accuracy, 92.9% bilingual decision parity, and zero negative-control false positives. Run it with `pnpm test:preflight-quality`. These numbers describe the included synthetic corpus, not every possible task or real-world task success. Exact boundaries are documented in [Architecture](docs/architecture.md#task-time-data-flow) and the [Beta candidate testing protocol](docs/alpha-testing.md#compact-and-bilingual-preflight).
 
 Use `--compact-json` for Harness or companion-Skill handoff. Compact schema v4 emits one line and at most 4,096 UTF-8 bytes, with selected use/install recommendations and stable warning codes but no raw task or capability details. Its feedback command is `null` when evidence persistence failed. `--json` returns the complete `PreflightResult`; full result schema v5 adds capability coverage, capability precision, and trigger confidence alongside candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage. Available catalog candidates may include catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. The portfolio reports and dashboard preserve those records; Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain capped at 2,048 bytes.
 

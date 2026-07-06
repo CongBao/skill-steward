@@ -183,6 +183,7 @@ it("rejects an empty trusted dependency baseline even when the tarball matches i
   await Promise.all([
     writeFile(join(directory, "LICENSE"), files["package/LICENSE"]),
     writeFile(join(directory, "README.md"), files["package/README.md"]),
+    writeFile(join(directory, "package.json"), files["package/package.json"]),
     writeFile(
       join(directory, "dist", "third-party-manifest.json"),
       files["package/dist/third-party-manifest.json"]
@@ -194,7 +195,7 @@ it("rejects an empty trusted dependency baseline even when the tarball matches i
   ]);
   await expect(
     verifyPackedArtifact(await writeArtifact(files), { trustedPackageDirectory: directory })
-  ).rejects.toThrow(/vite|commander|react|fastify|yaml|zod|trusted/i);
+  ).rejects.toThrow(/vite|commander|react|fastify|yaml|zod|trusted|source-controlled/i);
 });
 
 it("does not let a caller replace the source-controlled full audit with a fake six-entry baseline", async () => {
@@ -221,6 +222,7 @@ it("does not let a caller replace the source-controlled full audit with a fake s
   await Promise.all([
     writeFile(join(directory, "LICENSE"), files["package/LICENSE"]),
     writeFile(join(directory, "README.md"), files["package/README.md"]),
+    writeFile(join(directory, "package.json"), files["package/package.json"]),
     writeFile(
       join(directory, "dist", "third-party-manifest.json"),
       files["package/dist/third-party-manifest.json"]

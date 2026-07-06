@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "description": "Cross-Harness operations for Agent Skills: task preflight, missing-Skill discovery, local evidence, and reversible governance.",
+  "topics": [
+    "agent-skills",
+    "ai-agents",
+    "codex",
+    "claude-code",
+    "github-copilot",
+    "developer-tools",
+    "task-preflight",
+    "local-first",
+    "skill-discovery",
+    "typescript"
+  ],
+  "socialPreview": "docs/images/social-preview.png"
+}

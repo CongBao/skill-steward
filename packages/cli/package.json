@@ -1,12 +1,14 @@
 {
   "name": "skill-steward",
-  "version": "0.5.0-alpha.4",
-  "description": "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
+  "version": "0.5.0-beta.1",
+  "description": "Cross-Harness Agent Skill task preflight, missing-Skill discovery, local evidence, and reversible governance",
   "license": "MIT",
   "keywords": [
     "agent-skills",
-    "skill-discovery",
+    "ai-agents",
     "task-preflight",
+    "skill-discovery",
+    "local-first",
     "reversible-governance",
     "codex",
     "claude-code",
@@ -72,11 +74,11 @@
     "spdx-expression-parse": "^4.0.0"
   },
   "optionalDependencies": {
-    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-alpha.4",
-    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-alpha.4"
+    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-beta.1",
+    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-beta.1",
+    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-beta.1",
+    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-beta.1",
+    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-beta.1",
+    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-beta.1"
   }
 }

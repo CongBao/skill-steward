@@ -125,22 +125,22 @@ importers:
         version: 4.0.0
     optionalDependencies:
       '@skill-steward/rename-noreplace-darwin-arm64':
-        specifier: 0.5.0-alpha.4
+        specifier: 0.5.0-beta.1
         version: link:../rename-noreplace-darwin-arm64
       '@skill-steward/rename-noreplace-darwin-x64':
-        specifier: 0.5.0-alpha.4
+        specifier: 0.5.0-beta.1
         version: link:../rename-noreplace-darwin-x64
       '@skill-steward/rename-noreplace-linux-arm64-gnu':
-        specifier: 0.5.0-alpha.4
+        specifier: 0.5.0-beta.1
         version: link:../rename-noreplace-linux-arm64-gnu
       '@skill-steward/rename-noreplace-linux-arm64-musl':
-        specifier: 0.5.0-alpha.4
+        specifier: 0.5.0-beta.1
         version: link:../rename-noreplace-linux-arm64-musl
       '@skill-steward/rename-noreplace-linux-x64-gnu':
-        specifier: 0.5.0-alpha.4
+        specifier: 0.5.0-beta.1
         version: link:../rename-noreplace-linux-x64-gnu
       '@skill-steward/rename-noreplace-linux-x64-musl':
-        specifier: 0.5.0-alpha.4
+        specifier: 0.5.0-beta.1
         version: link:../rename-noreplace-linux-x64-musl
 
   packages/dashboard-server:

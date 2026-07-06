@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -8,6 +8,10 @@ import {
 } from "../src/companion-native-capability.js";
 import { assertOwnedTreeNativeCapability } from "../src/companion-owned-tree-native.js";
 import type { IntegrationPlan } from "../src/config.js";
+
+const release = JSON.parse(
+  await readFile(new URL("../../../release-contract.json", import.meta.url), "utf8")
+) as { version: string };
 
 function plan(input: {
   action: "create" | "upgrade" | "none";
@@ -67,6 +71,6 @@ describe("companion native capability planning", () => {
 
   it("loads the production current-platform helper", () => {
     if (process.platform === "win32") return;
-    expect(() => assertOwnedTreeNativeCapability()).not.toThrow();
+    expect(() => assertOwnedTreeNativeCapability(release.version)).not.toThrow();
   });
 });

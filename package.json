@@ -9,6 +9,8 @@
   "scripts": {
     "release:check": "node scripts/release-contract.mjs check",
     "release:sync": "node scripts/release-contract.mjs sync",
+    "candidate:pack": "node scripts/prepare-local-candidate.mjs",
+    "candidate:install": "node scripts/prepare-local-candidate.mjs --install",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:preflight-quality": "pnpm --filter @skill-steward/preflight test:quality",

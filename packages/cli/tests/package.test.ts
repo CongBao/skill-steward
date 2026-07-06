@@ -81,7 +81,7 @@ it("packages the built dashboard alongside the CLI binary", async () => {
 it("declares complete public package metadata", async () => {
   expect(await packageJson()).toMatchObject({
     version: release.version,
-    description: "Local-first Agent Skill discovery, task preflight, and reversible governance across AI coding Harnesses",
+    description: "Cross-Harness Agent Skill task preflight, missing-Skill discovery, local evidence, and reversible governance",
     repository: {
       type: "git",
       url: "git+https://github.com/CongBao/skill-steward.git"

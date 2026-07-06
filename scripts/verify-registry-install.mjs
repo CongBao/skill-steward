@@ -55,7 +55,7 @@ async function defaultNativePackageCheck(name, context) {
   const requireFromCli = createRequire(join(context.packageRoot, "package.json"));
   const manifest = JSON.parse(await readFile(requireFromCli.resolve(`${name}/package.json`), "utf8"));
   const binding = requireFromCli(name);
-  const expectedMetadata = `skill-steward.owned-tree-native.v2:${context.platform}:${context.arch}:${context.libc}`;
+  const expectedMetadata = `skill-steward.owned-tree-native.v3:${context.version}:${context.platform}:${context.arch}:${context.libc}`;
   if (
     manifest.name !== name
     || manifest.version !== context.version

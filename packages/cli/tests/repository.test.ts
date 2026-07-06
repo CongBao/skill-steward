@@ -114,14 +114,14 @@ describe("open-source repository", () => {
     await Promise.all(required.map((path) => expect(access(join(root, path))).resolves.toBeUndefined()));
   });
 
-  it("keeps one explicit Alpha release contract without implicit sync or publication", async () => {
+  it("keeps one explicit Beta candidate contract without implicit sync or publication", async () => {
     const contract = JSON.parse(await readFile(join(root, "release-contract.json"), "utf8")) as {
       version: string; channel: string; npmTag: string; githubPrerelease: boolean; packages: unknown[];
     };
     expect(contract).toMatchObject({
-      version: "0.5.0-alpha.4",
-      channel: "alpha",
-      npmTag: "alpha",
+      version: "0.5.0-beta.1",
+      channel: "beta",
+      npmTag: "beta",
       githubPrerelease: true
     });
     expect(contract.packages).toHaveLength(7);
@@ -146,9 +146,9 @@ describe("open-source repository", () => {
     expect(guide).toContain("does not publish anything");
 
     const readme = await readFile(join(root, "README.md"), "utf8");
-    expect(readme).toContain("Status: active alpha");
-    expect(readme).toContain("npm package is not published yet");
-    expect(readme).not.toMatch(/Status:\s*Beta|npm install --global skill-steward/u);
+    expect(readme).toContain("Status: Beta release candidate 0.5.0-beta.1");
+    expect(readme).toContain("npm packages and GitHub prerelease are not public yet");
+    expect(readme).not.toMatch(/npm install --global skill-steward|npm package is (?:now )?available|downloads? badge/iu);
   });
 
   it("documents protected CLI publication without claiming that npm is already available", async () => {
@@ -164,7 +164,7 @@ describe("open-source repository", () => {
 
     for (const readmePath of ["README.md", "README.zh-CN.md"]) {
       const readme = await readFile(join(root, readmePath), "utf8");
-      expect(readme).toMatch(/npm[^\n]*(?:not published|尚未发布)/iu);
+      expect(readme).toMatch(/npm[^\n]*(?:not public|尚未公开|尚未发布)/iu);
       expect(readme).not.toMatch(/npm install (?:--global|-g) skill-steward/u);
     }
   });
@@ -192,11 +192,11 @@ describe("open-source repository", () => {
     expect(readme).not.toContain("not a design mockup or a real user's portfolio");
     expect(readme).not.toContain("OpenSpec");
     expect(readme).toContain(
-      "Know which Agent Skills you have, which ones a task needs, and change them safely."
+      "The cross-Harness operations layer for Agent Skills."
     );
-    expect(readme).toContain("a cross-Harness companion and local control console for Agent Skills");
+    expect(readme).toContain("task—including useful Skills you do not have yet");
     expect(readme).toContain("Codex, Claude Code, and GitHub Copilot CLI");
-    expect(readme).toContain("It is not another Harness");
+    expect(readme).toContain("works beside your Harness instead of replacing it");
     expect(readme.indexOf("## Three jobs")).toBeLessThan(readme.indexOf("## Screenshots"));
     expect(readme.indexOf("## Screenshots")).toBeLessThan(readme.indexOf("## First use"));
     expect(readme).toContain("skill-steward preflight");
@@ -244,7 +244,7 @@ describe("open-source repository", () => {
     expect(readme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(readme).toContain("runtime-audit.json");
     expect(readme).toMatch(/real npm and pnpm tarballs/i);
-    expect(readme).toContain("Status: active alpha");
+    expect(readme).toContain("Status: Beta release candidate 0.5.0-beta.1");
     expect(readme).toContain("does not change any Skill or Harness configuration");
     expect(readme).toContain("privacy-reduced Preflight evidence under `~/.skill-steward`");
     const nativeHeading = readme.indexOf("## Native inventory visibility");
@@ -297,7 +297,7 @@ describe("open-source repository", () => {
       /CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use/
     );
     expect(readme).not.toContain("Managed native prompt Hooks are available only for Codex and Claude Code");
-    expect(readme).not.toMatch(/status:\s*beta|beta-ready|complete native plugin (?:coverage|inventory)|universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/i);
+    expect(readme).not.toMatch(/status:\s*beta(?:\s+(?:is\s+)?(?:public|available|ready)|[.!]\s*$)|beta-ready|complete native plugin (?:coverage|inventory)|universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/im);
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.md", readme);
@@ -319,9 +319,7 @@ describe("open-source repository", () => {
 
     const journey = `${installation}\n${firstUse}`;
     for (const command of [
-      'package_dir="$(mktemp -d)"',
-      'pnpm --filter skill-steward pack --pack-destination "$package_dir"',
-      'npm install --global "$package_dir"/skill-steward-*.tgz',
+      "pnpm candidate:install",
       "skill-steward --version",
       "skill-steward scan",
       "skill-steward preflight",
@@ -331,9 +329,7 @@ describe("open-source repository", () => {
       expect(journey).toContain(command);
     }
     expect(installation).not.toContain("mkdir -p artifacts");
-    expect(journey.indexOf("pnpm --filter skill-steward pack"))
-      .toBeLessThan(journey.indexOf("npm install --global"));
-    expect(journey.indexOf("npm install --global"))
+    expect(journey.indexOf("pnpm candidate:install"))
       .toBeLessThan(journey.indexOf("skill-steward scan"));
   });
 
@@ -359,9 +355,9 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("[English](README.md)");
     expect(chineseReadme).not.toContain("并非设计稿");
     expect(chineseReadme).not.toContain("OpenSpec");
-    expect(chineseReadme).toContain("先看清、再选择、最后安全地调整你的 Agent Skills。");
+    expect(chineseReadme).toContain("面向 Agent Skills 的跨 Harness 运维层。");
     expect(chineseReadme).toContain("Codex、Claude Code 和 GitHub Copilot CLI");
-    expect(chineseReadme).toContain("它不是另一款 Harness");
+    expect(chineseReadme).toContain("它与现有 Harness 配合工作，而不是取代 Harness");
     expect(chineseReadme.indexOf("## 它主要做三件事")).toBeLessThan(
       chineseReadme.indexOf("## 界面截图")
     );
@@ -413,7 +409,7 @@ describe("open-source repository", () => {
     expect(chineseReadme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(chineseReadme).toContain("runtime-audit.json");
     expect(chineseReadme).toMatch(/npm 和 pnpm[^。]*真实 tarball/);
-    expect(chineseReadme).toContain("当前状态：活跃 Alpha");
+    expect(chineseReadme).toContain("当前状态：Beta 发布候选版 0.5.0-beta.1");
     expect(chineseReadme).toContain("不会修改任何 Skill 或 Harness 配置");
     expect(chineseReadme).toContain("经过隐私裁剪的预检证据写入 `~/.skill-steward`");
     const chineseNativeHeading = chineseReadme.indexOf("## 原生盘点可见性");
@@ -472,7 +468,7 @@ describe("open-source repository", () => {
       /CLI 的安装、集成应用、证据策略、证据清除、隔离和恢复计划保存在私有目录、会过期且只能使用一次/
     );
     expect(chineseReadme).not.toContain("托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code");
-    expect(chineseReadme).not.toMatch(/当前状态：\s*Beta|Beta 就绪|完整(?:的)?原生插件(?:覆盖|盘点)|通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/i);
+    expect(chineseReadme).not.toMatch(/当前状态：\s*Beta(?:\s*(?:已公开|已就绪)|[。！]\s*$)|Beta 就绪|完整(?:的)?原生插件(?:覆盖|盘点)|通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/im);
     for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
     for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.zh-CN.md", chineseReadme);
@@ -505,7 +501,7 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain("skill-steward dashboard");
     expect(packageReadme).toContain("skill-steward --version");
     expect(packageReadme).toContain("--harness codex");
-    expect(packageReadme.indexOf("npm install --global ./skill-steward-*.tgz"))
+    expect(packageReadme.indexOf("pnpm candidate:install"))
       .toBeLessThan(packageReadme.indexOf("skill-steward scan"));
     expect(packageReadme).toContain("local-first");
     expect(packageReadme).toContain("reversible");
@@ -519,7 +515,8 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain("THIRD_PARTY_NOTICES.txt");
     expect(packageReadme).toContain("runtime-audit.json");
     expect(packageReadme).toMatch(/real npm and pnpm tarballs/i);
-    expect(packageReadme).toContain("Alpha");
+    expect(packageReadme).toContain("0.5.0-beta.1 prerelease package");
+    expect(packageReadme).not.toMatch(/has not (?:been )?published|not public yet/i);
     expect(packageReadme).toContain("not a Harness");
     expect(packageReadme).not.toContain("OpenSpec");
     expect(await readFile(join(root, "packages/cli/LICENSE"), "utf8"))

@@ -73,7 +73,12 @@ describe.skipIf(process.platform !== "win32")("native Windows integration safety
       libc: "none",
       runtimePlatform: "win32",
       runtimeArch: process.arch,
-      requirePackage
+      releaseVersion: "0.5.0-beta.1",
+      requirePackage,
+      requirePackageManifest: () => ({
+        name: "unused",
+        version: "0.5.0-beta.1"
+      })
     })).toThrow(expect.objectContaining({ code: "INTEGRATION_CONFIGURATION_INVALID" }));
     expect(requirePackage).not.toHaveBeenCalled();
   });

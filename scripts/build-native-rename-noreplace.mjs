@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -38,7 +39,14 @@ if (!matches) process.exit(0);
 const packageDirectory = process.cwd();
 const workspaceDirectory = resolve(packageDirectory, "../..");
 const output = join(packageDirectory, "rename_noreplace.node");
-const token = `skill-steward.owned-tree-native.v2:${targetPlatform}:${targetArch}:${targetLibc}`;
+const packageManifest = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8"));
+if (
+  typeof packageManifest.version !== "string"
+  || !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta)\.(?:0|[1-9][0-9]*))?$/u.test(packageManifest.version)
+) {
+  throw new Error("Native helper package has no valid Skill Steward release version");
+}
+const token = `skill-steward.owned-tree-native.v3:${packageManifest.version}:${targetPlatform}:${targetArch}:${targetLibc}`;
 if (mode !== "--verify-only") {
   const nodeRoot = dirname(dirname(process.execPath));
   const includeDirectory = join(nodeRoot, "include", "node");

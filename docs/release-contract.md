@@ -2,7 +2,7 @@
 
 [`release-contract.json`](../release-contract.json) is the reviewed source for Skill Steward's public version and release channel. It covers exactly seven packages: the CLI and six optional native no-replace helpers. Private workspace packages keep independent internal versions.
 
-The current contract remains Alpha. It does not publish anything and does not claim that npm installation is available.
+The current contract is the `0.5.0-beta.1` Beta release candidate. It does not publish anything and does not claim that npm installation is available.
 
 ## Check the current contract
 
