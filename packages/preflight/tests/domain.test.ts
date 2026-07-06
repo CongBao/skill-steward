@@ -12,7 +12,7 @@ const hash = (character: string) => `sha256:${character.repeat(64)}`;
 
 function result(candidate: Record<string, unknown>) {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -34,13 +34,14 @@ function result(candidate: Record<string, unknown>) {
   };
 }
 
-describe("preflight v4 domain", () => {
+describe("preflight v5 domain", () => {
   it("keeps ordered phrase and polarity internals out of the public package API", () => {
     expect(publicApi).not.toHaveProperty("tokenizeSequence");
     expect(publicApi).not.toHaveProperty("positiveTaskText");
     expect(publicApi).not.toHaveProperty("negativeTaskClauses");
     expect(publicApi).not.toHaveProperty("positiveRoutingText");
     expect(publicApi).not.toHaveProperty("negativeRoutingClauses");
+    expect(publicApi).not.toHaveProperty("extractCapabilities");
     expect(publicApi).toHaveProperty("tokenize");
     expect(publicApi).toHaveProperty("normalizeTask");
   });
@@ -50,13 +51,13 @@ describe("preflight v4 domain", () => {
       cldr: "48.0",
       icu: "78.2",
       unicode: "17.0"
-    })).toBe(8);
+    })).toBe(9);
     const alternate = algorithmVersionForIntlRuntime({
       cldr: "47.0",
       icu: "76.1",
       unicode: "16.0"
     });
-    expect(alternate).toBeGreaterThan(8_000_000_000_000);
+    expect(alternate).toBeGreaterThan(9_000_000_000_000);
     expect(algorithmVersionForIntlRuntime({
       cldr: "47.0",
       icu: "76.1",
@@ -119,7 +120,10 @@ describe("preflight v4 domain", () => {
         taskCoverage: 0.75,
         skillPrecision: 0.5,
         nameMatch: true,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0,
+        capabilityPrecision: 0,
+        triggerConfidence: "none"
       },
       decision: "use",
       reasons: [{ code: "UNIQUE_COVERAGE", detail: "Covers review" }]
@@ -178,12 +182,15 @@ describe("preflight v4 domain", () => {
         taskCoverage: 0.75,
         skillPrecision: 0.5,
         nameMatch: true,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0,
+        capabilityPrecision: 0,
+        triggerConfidence: "none"
       },
       decision: "use",
       reasons: [{ code: "UNIQUE_COVERAGE", detail: "Covers review" }]
     };
-    expect(preflightResultSchema.parse(result(candidate)).schemaVersion).toBe(4);
+    expect(preflightResultSchema.parse(result(candidate)).schemaVersion).toBe(5);
     expect(() => preflightResultSchema.parse(result({
       ...candidate,
       installedSkillId: undefined,
@@ -214,7 +221,10 @@ describe("preflight v4 domain", () => {
         taskCoverage: 0.75,
         skillPrecision: 0.5,
         nameMatch: true,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0,
+        capabilityPrecision: 0,
+        triggerConfidence: "none"
       },
       decision: "excluded",
       reasons: [{
@@ -283,7 +293,10 @@ describe("preflight v4 domain", () => {
         taskCoverage: 0.5,
         skillPrecision: 0.5,
         nameMatch: false,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0,
+        capabilityPrecision: 0,
+        triggerConfidence: "none"
       },
       decision: "install",
       source: {

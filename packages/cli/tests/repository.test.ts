@@ -188,10 +188,15 @@ describe("open-source repository", () => {
     expect(readme).toMatch(/does not crawl every project or workspace/i);
     expect(readme).toMatch(/Copilot Harness coverage[^.]*`partial`/i);
     expect(readme).toMatch(/source or Skill exposure[^.]*`ambiguous`/i);
-    expect(readme).toContain("Algorithm v8");
-    expect(readme).toContain("deterministic local lexical ranker");
+    expect(readme).toContain("Algorithm v9");
+    expect(readme).toContain("deterministic local ranker");
+    expect(readme).toMatch(/bounded English\/Chinese capability model/i);
+    expect(readme).toMatch(/actions, objects, and local action-object pairs/i);
+    expect(readme).toContain("28-case benchmark");
+    expect(readme).toContain("96.3% precision");
+    expect(readme).toContain("zero negative-control false positives");
     expect(readme).toContain("not an LLM or a general semantic search engine");
-    expect(readme).toMatch(/explicit negative instructions[^.]*keep related review workflows out/i);
+    expect(readme).toMatch(/explicit negative instructions[^.]*keep rejected capabilities out/i);
     expect(readme).toMatch(/Capability gaps appear only when the evidence is specific enough/i);
     expect(readme).toContain("docs/architecture.md#task-time-data-flow");
     expect(readme).toContain("docs/alpha-testing.md#compact-and-bilingual-preflight");
@@ -324,11 +329,16 @@ describe("open-source repository", () => {
     expect(chineseReadme).toMatch(/不会遍历本机上的每个项目或工作区/);
     expect(chineseReadme).toMatch(/Copilot 的 Harness 覆盖状态[^。]*`partial`/);
     expect(chineseReadme).toMatch(/来源或 Skill 可见状态[^。]*`ambiguous`/);
-    expect(chineseReadme).toContain("算法 v8");
-    expect(chineseReadme).toContain("确定性词法排序");
+    expect(chineseReadme).toContain("算法 v9");
+    expect(chineseReadme).toContain("本机确定性运行");
+    expect(chineseReadme).toMatch(/中英文能力模型/);
+    expect(chineseReadme).toMatch(/动作、对象与局部动作—对象组合/);
+    expect(chineseReadme).toContain("28 个合成场景基准");
+    expect(chineseReadme).toContain("96.3% 精确率");
+    expect(chineseReadme).toContain("4 个负例没有误报");
     expect(chineseReadme).toContain("不依赖 LLM，也不是通用语义搜索");
-    expect(chineseReadme).toMatch(/“不要评审”[^。]*排除相关工作流/);
-    expect(chineseReadme).toMatch(/能力缺口只有在证据足够具体时才显示/);
+    expect(chineseReadme).toMatch(/明确否定的能力[^。]*不会进入选择/);
+    expect(chineseReadme).toMatch(/能力缺口只有在证据足够具体[^。]*时才显示/);
     expect(chineseReadme).toContain("docs/architecture.md#task-time-data-flow");
     expect(chineseReadme).toContain("docs/alpha-testing.md#compact-and-bilingual-preflight");
     expect(chineseReadme).toContain("--stdin --compact-json");
@@ -449,6 +459,8 @@ describe("open-source repository", () => {
     expectInventoryTaxonomies(changelog);
     expect(changelog).toContain("Preflight algorithm v7 and result schema v4");
     expect(changelog).toMatch(/Preflight algorithm v8[^.]*corroborated lifecycle trigger/i);
+    expect(changelog).toMatch(/Preflight algorithm v9[^.]*result schema v5/i);
+    expect(changelog).toMatch(/28-case synthetic benchmark/i);
     expect(changelog).toMatch(/high-confidence capability-gap search hints/i);
     expect(changelog).toMatch(/gap-only canonical namespace[^.]*negative usage clauses/i);
     expect(changelog).toMatch(/generic single-token names[^.]*corroborat/i);
@@ -482,14 +494,12 @@ describe("open-source repository", () => {
     expect(architecture).toContain("evidence-events.jsonl");
     expect(architecture).toContain("governance.jsonl");
     expect(architecture).toContain("observe-only");
-    expect(architecture).toContain("Preflight algorithm v8 / schema v4");
-    expect(architecture).toMatch(/versioned trigger-rule table/i);
-    expect(architecture).toMatch(/request[^.]*code[^.]*review[^.]*Skill-name signature/i);
+    expect(architecture).toContain("Preflight algorithm v9 / schema v5");
+    expect(architecture).toMatch(/versioned capability evidence/i);
+    expect(architecture).toMatch(/actions, objects, and local action-object pairs/i);
     expect(architecture).toMatch(/candidate-corroborated capability-gap search hints/i);
-    expect(architecture).toMatch(/positive candidate metadata[^.]*selected positive coverage/i);
-    expect(architecture).toMatch(/capability-gap corroboration[^.]*positive matched terms[^.]*complete route-term denominator/i);
-    expect(architecture).toMatch(/negative metadata cannot raise its relevance gate/i);
-    expect(architecture).toMatch(/name match[^.]*specific canonical concept/i);
+    expect(architecture).toMatch(/greedy selection tracks uncovered task capabilities/i);
+    expect(architecture).toMatch(/broad object[^.]*cannot/i);
     expect(architecture).toContain("native inventory and visibility resolver");
     expectInventoryTaxonomies(architecture);
     expect(architecture).toContain("Across the total 30 Harnesses");
@@ -498,11 +508,11 @@ describe("open-source repository", () => {
     expect(architecture).toContain("--compact-json");
     expect(architecture).toContain("4,096 UTF-8 bytes");
     expect(architecture).toContain("selected use/install recommendations");
-    expect(architecture).toContain("full `--json` output is the complete `PreflightResult`");
+    expect(architecture).toContain("Full result schema v5");
     expect(architecture).toContain("catalog `source` metadata");
     expect(architecture).toMatch(/does not (?:embed|include)[^.]*native inventory[^.]*ownership[^.]*plugin[^.]*exposure records/i);
     expect(architecture).toMatch(/reports and (?:the )?dashboard[^.]*preserve/i);
-    expect(architecture).toMatch(/reason codes and inventory warnings/i);
+    expect(architecture).toMatch(/candidate reason codes and inventory warnings/i);
     expect(architecture).toContain("2,048 bytes");
     expect(architecture).not.toContain("stale/error status");
     expect(architecture).toContain("explicit CLI feedback command");
@@ -537,10 +547,12 @@ describe("open-source repository", () => {
     expect(alphaTesting).toContain("## Reviewed installation concurrency");
     expect(alphaTesting).toMatch(/Exactly one process must succeed/);
     expect(alphaTesting).toMatch(/low-confidence two-character fragments[^.]*empty/i);
-    expect(alphaTesting).toMatch(/negative usage clauses[^.]*neither corroborate nor cover/i);
+    expect(alphaTesting).toMatch(/negative clauses[^.]*neither lexical nor capability evidence/i);
     expect(alphaTesting).toMatch(/generic exact names[^.]*empty gap list/i);
-    expect(alphaTesting).toContain("Algorithm v8/result schema v4");
-    expect(alphaTesting).toContain("compact schema v3");
+    expect(alphaTesting).toContain("Algorithm v9/result schema v5");
+    expect(alphaTesting).toContain("compact schema v4");
+    expect(alphaTesting).toContain("96.3% precision");
+    expect(alphaTesting).toContain("zero negative-control false positives");
     expect(alphaTesting).toMatch(/phase-checklist[^.]*documentation-review/i);
     expect(alphaTesting).toMatch(/Do not review before merge[^.]*positive lifecycle trigger/i);
     expect(alphaTesting).not.toMatch(/OpenSpec|Superpowers|status:\s*beta/i);
@@ -551,15 +563,15 @@ describe("open-source repository", () => {
       "CI=true pnpm --filter skill-steward exec vitest run tests/package.test.ts tests/runtime-audit.test.mjs tests/verifier.test.mjs",
       "CI=true pnpm --filter skill-steward exec vitest run tests/binary.test.ts",
       "CI=true pnpm --filter @skill-steward/engine exec vitest run tests/codex-inventory.test.ts tests/claude-inventory.test.ts tests/copilot-inventory.test.ts tests/inventory-workspace.test.ts tests/visibility-resolution.test.ts",
-      "CI=true pnpm --filter @skill-steward/preflight exec vitest run tests/analyze.test.ts tests/tokenize.test.ts tests/compact.test.ts",
+      "CI=true pnpm test:preflight-quality",
       "CI=true pnpm --filter skill-steward exec vitest run tests/govern.test.ts tests/preflight.test.ts"
     ]) {
       expect(alphaTesting).toContain(command);
     }
     for (const coverage of [
       "native adapter coverage",
-      "compact handoff output",
-      "bilingual concept matching",
+      "compact handoff",
+      "bilingual decision parity",
       "native governance refusal",
       "current-workspace snapshot limitation"
     ]) {

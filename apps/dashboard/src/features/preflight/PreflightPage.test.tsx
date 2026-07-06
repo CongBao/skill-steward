@@ -11,8 +11,8 @@ import {
 import { PreflightPage } from "./PreflightPage.js";
 
 const result = {
-  schemaVersion: 4,
-  algorithmVersion: 8,
+  schemaVersion: 5,
+  algorithmVersion: 9,
   id: "run-1",
   generatedAt: "2026-07-03T01:00:00.000Z",
   portfolioFingerprint: `sha256:${"a".repeat(64)}`,
@@ -44,10 +44,16 @@ const result = {
         taskCoverage: 0.82,
         skillPrecision: 0.6,
         nameMatch: true,
-        projectScopeFit: true
+        projectScopeFit: true,
+        capabilityCoverage: 0.5,
+        capabilityPrecision: 0.5,
+        triggerConfidence: "exact"
       },
       decision: "use",
       reasons: [
+        { code: "CAPABILITY_MATCH", detail: "raw internal capability list" },
+        { code: "EXACT_TRIGGER_MATCH", detail: "raw internal action-object pair" },
+        { code: "MARGINAL_CAPABILITY", detail: "raw internal marginal capability" },
         { code: "HIGH_CONFIDENCE_TRIGGER", detail: "raw internal lifecycle-trigger detail" },
         { code: "UNIQUE_COVERAGE", detail: "57% unique task-term coverage." },
         { code: "NEGATIVE_TRIGGER", detail: "raw internal negative-trigger detail" }
@@ -75,7 +81,10 @@ const result = {
         taskCoverage: 0.72,
         skillPrecision: 0.5,
         nameMatch: false,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0.4,
+        capabilityPrecision: 0.4,
+        triggerConfidence: "exact"
       },
       decision: "install",
       source: {
@@ -109,7 +118,10 @@ const result = {
         taskCoverage: 0.1,
         skillPrecision: 0.1,
         nameMatch: false,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0,
+        capabilityPrecision: 0,
+        triggerConfidence: "none"
       },
       decision: "excluded",
       reasons: [{ code: "LOW_RELEVANCE", detail: "Low relevance" }]
@@ -136,7 +148,10 @@ const result = {
         taskCoverage: 0.2,
         skillPrecision: 0.2,
         nameMatch: false,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0,
+        capabilityPrecision: 0,
+        triggerConfidence: "none"
       },
       decision: "excluded",
       source: {
@@ -230,6 +245,11 @@ describe("PreflightPage v2", () => {
     expect(screen.getByText("Lifecycle trigger")).toBeVisible();
     expect(screen.getByText("Task and Skill routing share a verified lifecycle trigger."))
       .toBeVisible();
+    expect(screen.getAllByText("Capability coverage")[0]).toBeVisible();
+    expect(screen.getByText("Exact capability trigger")).toBeVisible();
+    expect(screen.getByText("Task and Skill routing share an exact action-and-object capability."))
+      .toBeVisible();
+    expect(screen.getByText("Distinct capability")).toBeVisible();
     expect(screen.getByText("Excluded candidates (2)")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Inspect docx", hidden: true })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Inspect test-review" }));
@@ -281,5 +301,10 @@ describe("PreflightPage v2", () => {
     expect(screen.getByText("生命周期触发")).toBeVisible();
     expect(screen.getByText("任务与 Skill 路由信息共享一项已核验的生命周期触发条件。"))
       .toBeVisible();
+    expect(screen.getAllByText("能力覆盖")[0]).toBeVisible();
+    expect(screen.getByText("精确能力触发")).toBeVisible();
+    expect(screen.getByText("任务与 Skill 路由信息命中了相同的动作—对象能力。"))
+      .toBeVisible();
+    expect(screen.getByText("新增能力")).toBeVisible();
   });
 });

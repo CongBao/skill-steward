@@ -23,7 +23,7 @@ afterEach(async () => {
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T01:00:00.000Z",
@@ -55,7 +55,10 @@ function result(): PreflightResult {
         taskCoverage: 0.7,
         skillPrecision: 0.6,
         nameMatch: true,
-        projectScopeFit: false
+        projectScopeFit: false,
+        capabilityCoverage: 0.5,
+        capabilityPrecision: 0.5,
+        triggerConfidence: "exact"
       },
       decision: "use",
       reasons: [{ code: "TASK_TERM_MATCH", detail: "review, change" }]
@@ -93,7 +96,7 @@ describe("preflight services", () => {
 
     expect(currentPortfolio).toHaveBeenCalledOnce();
     expect(catalogState).toHaveBeenCalledOnce();
-    expect(output).toMatchObject({ id: "run-1", schemaVersion: 4 });
+    expect(output).toMatchObject({ id: "run-1", schemaVersion: 5 });
     expect(await readPreflightEvidence(stateDirectory)).toEqual([
       expect.objectContaining({
         harness: "claude-code",
@@ -106,7 +109,7 @@ describe("preflight services", () => {
 });
 
 describe("preflight routes", () => {
-  it("requires the mutation token and returns a version-4 result", async () => {
+  it("requires the mutation token and returns a version-5 result", async () => {
     const services: PreflightServices = {
       run: vi.fn(async () => result()),
       feedback: vi.fn(async () => undefined)
@@ -143,7 +146,7 @@ describe("preflight routes", () => {
       includeAvailable: true
     });
     expect(response.json()).toMatchObject({
-      data: { id: "run-1", schemaVersion: 4, useCandidateIds: ["skill-1"] },
+      data: { id: "run-1", schemaVersion: 5, useCandidateIds: ["skill-1"] },
       error: null
     });
     expect(response.body).not.toContain("Review security and missing tests");

@@ -12,6 +12,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### Changed
 
+- Preflight algorithm v9 and full result schema v5 add a bounded English/Chinese developer-workflow capability grammar. Exact action-object evidence can make a safe candidate plausible; greedy selection prefers uncovered capabilities and excludes candidates that add neither a term nor a capability. Broad nouns and partial capability overlap cannot bypass existing Harness, risk, polarity, or relevance gates. Compact schema v4 carries the new stable reason codes without raw task or capability details. The public 28-case synthetic benchmark gates precision, recall, exact-set accuracy, bilingual parity, negative controls, context accounting, and determinism.
 - Integration publication is one recoverable, lease-scoped transaction. It revalidates the claimed plan immediately before mutation, restores Hook and companion state after definite pre-finalize failures, persists uncertainty or failed compensation for recovery, and reports path-free structured receipts through every public surface.
 - Dashboard integration cards now show action-specific create, upgrade, connect, unchanged, blocked, and disconnect states in English and Chinese. Apply, retry, and force controls are absent from blocked states.
 - CLI, loopback API, and Dashboard disconnect plans now agree on `retained` versus `removed`, and final-uninstall receipts expose exact cleanup or recovery state instead of deferring an unspecified manual cleanup.

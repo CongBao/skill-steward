@@ -48,7 +48,7 @@
 .preflight-candidate h3 { margin: 0; font-size: 16px; }
 .preflight-candidate header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .preflight-token-cost { flex: none; padding: 5px 7px; border-radius: 8px; color: var(--muted); background: var(--surface); font-size: 11px; }
-.preflight-scores { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.preflight-scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr)); gap: 12px; margin-top: 16px; }
 .preflight-score > div { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
 .preflight-score strong { color: var(--ink); font-variant-numeric: tabular-nums; }
 .preflight-score-track { display: block; height: 5px; overflow: hidden; border-radius: 99px; background: var(--line); }

@@ -18,7 +18,7 @@ Scan standard user and project Skill directories for 30 Harnesses, inspect compl
 
 ### 2. Preflight the current task
 
-Compare the task with both installed Skills and candidates from public catalogs you explicitly enabled. Results separate **Use now**, **Consider installing**, **Capability gaps**, and **Excluded**, so an uninstalled candidate is visible without being treated as already trusted.
+Compare the task with both installed Skills and candidates from public catalogs you explicitly enabled. A bounded English/Chinese capability model separates incidental word overlap from action-and-object intent, then selects the smallest set that adds distinct value. Results separate **Use now**, **Consider installing**, **Capability gaps**, and **Excluded**, so an uninstalled candidate is visible without being treated as already trusted.
 
 ### 3. Make reviewed, reversible changes
 
@@ -146,9 +146,9 @@ printf '%s' "Review this pull request" | skill-steward preflight --stdin --compa
 skill-steward preflight --task "Review this pull request" --installed-only
 ```
 
-Algorithm v8 is a deterministic local lexical ranker, not an LLM or a general semantic search engine. It compares relevance, unique coverage, risk, redundancy, Harness compatibility, and estimated context, and ranks installed candidates ahead of otherwise similar catalog candidates. Bounded Simplified/Traditional Chinese concepts and a narrow pre-merge code-review signal improve common routing cases; explicit negative instructions such as “do not review” keep related review workflows out. Capability gaps appear only when the evidence is specific enough, so low-confidence input can correctly produce no suggestion. The exact parser, trigger, and adversarial boundaries are documented in [Architecture](docs/architecture.md#task-time-data-flow) and the [Alpha testing protocol](docs/alpha-testing.md#compact-and-bilingual-preflight).
+Algorithm v9 is a deterministic local ranker, not an LLM or a general semantic search engine. It combines lexical relevance with a versioned English/Chinese workflow grammar that recognizes bounded actions, objects, and local action-object pairs. Selection rewards uncovered capabilities, penalizes redundant candidates, preserves risk and Harness eligibility gates, and includes estimated context cost. Explicit negative instructions keep rejected capabilities out; broad nouns such as “Skill”, “code”, or “agent” cannot activate a candidate alone. Capability gaps appear only when the evidence is specific enough to be a plausible Skill search hint. The public 28-case benchmark reports 96.3% precision, 92.9% recall, 92.9% exact-set accuracy, 92.9% bilingual decision parity, and zero negative-control false positives. Run it with `pnpm test:preflight-quality`. These numbers describe the included synthetic corpus, not every possible task or real-world task success. Exact boundaries are documented in [Architecture](docs/architecture.md#task-time-data-flow) and the [Alpha testing protocol](docs/alpha-testing.md#compact-and-bilingual-preflight).
 
-Use `--compact-json` for Harness or companion-Skill handoff. Compact schema v3 emits one line and at most 4,096 UTF-8 bytes, with selected use/install recommendations and stable warning codes but no raw task. Its feedback command is `null` when evidence persistence failed. `--json` returns the complete `PreflightResult`: candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage. Available catalog candidates may include catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. The portfolio reports and dashboard preserve those records; Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain capped at 2,048 bytes.
+Use `--compact-json` for Harness or companion-Skill handoff. Compact schema v4 emits one line and at most 4,096 UTF-8 bytes, with selected use/install recommendations and stable warning codes but no raw task or capability details. Its feedback command is `null` when evidence persistence failed. `--json` returns the complete `PreflightResult`; full result schema v5 adds capability coverage, capability precision, and trigger confidence alongside candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage. Available catalog candidates may include catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. The portfolio reports and dashboard preserve those records; Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain capped at 2,048 bytes.
 
 If the private state directory is readable but cannot be written by the current Harness sandbox, Preflight still returns the recommendation with exit code zero. It emits `PREFLIGHT_PERSISTENCE_UNAVAILABLE`, does not expose the failed path, and makes clear that this run cannot accept feedback because its report and evidence were not saved.
 
@@ -188,7 +188,7 @@ Custom sources must be credential-free public HTTPS Git repositories. Adding a s
 
 The **minimal mode is the default**. It retains privacy-reduced Preflight metadata and explicit `useful`, `incomplete`, or `incorrect` feedback, but no lifecycle correlation keys or ranking feature snapshots.
 
-Learning mode is opt-in. It adds bounded numeric feature snapshots and content-free Hook events with HMAC-SHA256 pseudonyms. A private per-install salt is stored with mode `0600` and is never included in export, API responses, or the dashboard. Prompts, extracted terms, working-directory paths, raw session/turn IDs, transcripts, assistant messages, tool arguments, and tool output are excluded.
+Learning mode is opt-in. It adds bounded numeric feature snapshots—including capability coverage, capability precision, and trigger confidence—and content-free Hook events with HMAC-SHA256 pseudonyms. It never stores the extracted capability names or pairs. A private per-install salt is stored with mode `0600` and is never included in export, API responses, or the dashboard. Prompts, extracted terms, working-directory paths, raw session/turn IDs, transcripts, assistant messages, tool arguments, and tool output are excluded.
 
 ```bash
 skill-steward evidence policy --json
@@ -326,7 +326,7 @@ Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boun
 
 ## Current limitations
 
-- Task scoring is a deterministic lexical baseline. Algorithm v8 adds one bounded, corroborated lifecycle-trigger signal alongside limited Simplified/Traditional Chinese concepts and high-confidence capability-gap hints; it does not provide general cross-language semantic understanding or measure actual task success.
+- Task scoring is deterministic and bounded. Algorithm v9 adds a published English/Chinese developer-workflow capability grammar and benchmark, but it is not general semantic understanding and does not measure actual task success.
 - Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
 - Harness lifecycle apply currently covers Codex, Claude Code, and GitHub Copilot CLI only. Final companion uninstall is available on proven POSIX paths; Windows lifecycle mutation remains blocked until native reparse and identity proof is available.
 - GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.

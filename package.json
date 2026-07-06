@@ -9,6 +9,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "test:preflight-quality": "pnpm --filter @skill-steward/preflight test:quality",
     "test:phase7": "pnpm --filter @skill-steward/store test && pnpm --filter @skill-steward/integrations test && pnpm --filter skill-steward exec vitest run tests/platform-security-workflow.test.mjs tests/native-workflow-policy.test.mjs",
     "typecheck": "pnpm -r typecheck",
     "check": "pnpm build && pnpm typecheck && pnpm test"

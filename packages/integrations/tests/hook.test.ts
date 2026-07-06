@@ -10,7 +10,7 @@ const rawTask = "PRIVATE rotate customer encryption keys";
 
 function result(): PreflightResult {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     algorithmVersion: PREFLIGHT_ALGORITHM_VERSION,
     id: "run-1",
     generatedAt: "2026-07-03T00:00:00.000Z",
@@ -43,7 +43,10 @@ function result(): PreflightResult {
           taskCoverage: 0.8,
           skillPrecision: 0.6,
           nameMatch: true,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0.5,
+          capabilityPrecision: 0.5,
+          triggerConfidence: "exact"
         },
         decision: "use",
         reasons: [{ code: "TASK_TERM_MATCH", detail: rawTask }]
@@ -70,7 +73,10 @@ function result(): PreflightResult {
           taskCoverage: 0.5,
           skillPrecision: 0.4,
           nameMatch: false,
-          projectScopeFit: false
+          projectScopeFit: false,
+          capabilityCoverage: 0.25,
+          capabilityPrecision: 0.25,
+          triggerConfidence: "partial"
         },
         decision: "install",
         source: {

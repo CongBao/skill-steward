@@ -89,6 +89,10 @@ const ROUTING_NEGATION_PATTERN = new RegExp(
 
 const TASK_NEGATION_HINT = /\b(?:do\s+not|don['\u2019]t|never|avoid|without)\b/iu;
 const ROUTING_NEGATION_HINT = /\b(?:do\s+not|don['\u2019]t|never|avoid)\b/iu;
+const CJK_TASK_NEGATION_HINT = /(?:不要|不需要|無需|无需|避免|禁止)/u;
+const CJK_TASK_NEGATION_PATTERN = /(?:不要|不需要|無需|无需|避免|禁止)([^。！？；\r\n\u2028\u2029]*)(?=[。！？；\r\n\u2028\u2029]|$)/gu;
+const CJK_ROUTING_NEGATION_HINT = /(?:不要使用|不应使用|不應使用|避免使用|禁止使用)/u;
+const CJK_ROUTING_NEGATION_PATTERN = /(?:不要使用|不应使用|不應使用|避免使用|禁止使用)([^。！？；\r\n\u2028\u2029]*)(?=[。！？；\r\n\u2028\u2029]|$)/gu;
 
 function replaceClauses(value: string, pattern: RegExp): string {
   pattern.lastIndex = 0;
@@ -108,24 +112,48 @@ function capturedClauses(value: string, pattern: RegExp): string[] {
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function positiveTaskText(task: string): string {
-  if (!TASK_NEGATION_HINT.test(task)) return task;
-  return replaceClauses(task, TASK_NEGATION_PATTERN);
+  let result = task;
+  if (TASK_NEGATION_HINT.test(result)) {
+    result = replaceClauses(result, TASK_NEGATION_PATTERN);
+  }
+  if (CJK_TASK_NEGATION_HINT.test(result)) {
+    result = replaceClauses(result, CJK_TASK_NEGATION_PATTERN);
+  }
+  return result;
 }
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function negativeTaskClauses(task: string): string[] {
-  if (!TASK_NEGATION_HINT.test(task)) return [];
-  return capturedClauses(task, TASK_NEGATION_PATTERN);
+  return [
+    ...(TASK_NEGATION_HINT.test(task)
+      ? capturedClauses(task, TASK_NEGATION_PATTERN)
+      : []),
+    ...(CJK_TASK_NEGATION_HINT.test(task)
+      ? capturedClauses(task, CJK_TASK_NEGATION_PATTERN)
+      : [])
+  ];
 }
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function positiveRoutingText(description: string): string {
-  if (!ROUTING_NEGATION_HINT.test(description)) return description;
-  return replaceClauses(description, ROUTING_NEGATION_PATTERN);
+  let result = description;
+  if (ROUTING_NEGATION_HINT.test(result)) {
+    result = replaceClauses(result, ROUTING_NEGATION_PATTERN);
+  }
+  if (CJK_ROUTING_NEGATION_HINT.test(result)) {
+    result = replaceClauses(result, CJK_ROUTING_NEGATION_PATTERN);
+  }
+  return result;
 }
 
 /** @internal Bounded English polarity parsing; not a package-root API. */
 export function negativeRoutingClauses(description: string): string[] {
-  if (!ROUTING_NEGATION_HINT.test(description)) return [];
-  return capturedClauses(description, ROUTING_NEGATION_PATTERN);
+  return [
+    ...(ROUTING_NEGATION_HINT.test(description)
+      ? capturedClauses(description, ROUTING_NEGATION_PATTERN)
+      : []),
+    ...(CJK_ROUTING_NEGATION_HINT.test(description)
+      ? capturedClauses(description, CJK_ROUTING_NEGATION_PATTERN)
+      : [])
+  ];
 }
