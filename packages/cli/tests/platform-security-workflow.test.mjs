@@ -15,6 +15,15 @@ it("keeps named Windows and macOS platform-security gates in CI", async () => {
   expect(workflow).toContain("runs-on: macos-15");
   expect(workflow).toContain("build-native-rename-noreplace.mjs darwin arm64 none");
   expect(workflow).toContain("tests/integration-process-crash.test.ts");
+  expect(
+    workflow.match(/name: Build integration workspace/g),
+    "each platform-security job must build workspace dependencies before Vitest"
+  ).toHaveLength(2);
+  expect(
+    workflow.match(
+      /run: pnpm --filter @skill-steward\/integrations\.\.\. build/g
+    )
+  ).toHaveLength(2);
 
   const actions = [...workflow.matchAll(/uses:\s*([^@\s]+)@([^\s]+)/g)];
   expect(actions.length).toBeGreaterThan(0);

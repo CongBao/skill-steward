@@ -50,6 +50,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build integration workspace
+        run: pnpm --filter @skill-steward/integrations... build
       - name: Windows integration journal smoke
         run: pnpm --filter @skill-steward/store exec vitest run tests/integration-store.windows.test.ts
       - name: Windows integration safety
@@ -69,6 +71,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build integration workspace
+        run: pnpm --filter @skill-steward/integrations... build
       - name: Build and verify Darwin mutation helper
         working-directory: packages/rename-noreplace-darwin-arm64
         run: node ../../scripts/build-native-rename-noreplace.mjs darwin arm64 none
