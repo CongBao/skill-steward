@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
-import { fetchDashboard, runScan, type KpiResult } from "../../api/client.js";
+import { fetchDashboard, type KpiResult } from "../../api/client.js";
 import { KpiCard } from "../../components/KpiCard.js";
 import { formatKpiValue } from "../../components/kpiFormatting.js";
 import { PageHeader } from "../../components/PageHeader.js";
@@ -9,6 +9,8 @@ import { StatePanel } from "../../components/StatePanel.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 import { usePreferences } from "../../theme/preferences.js";
 import { resolveFindingSkillNames } from "../findings/findingSkills.js";
+import { useScan } from "../scan/ScanProvider.js";
+import { FirstValueGuide } from "./FirstValueGuide.js";
 import "./overview.css";
 
 function kpiLabel(id: string): TranslationKey {
@@ -18,12 +20,8 @@ function kpiLabel(id: string): TranslationKey {
 export function OverviewPage() {
   const { locale, t } = useI18n();
   const { preferences } = usePreferences();
-  const queryClient = useQueryClient();
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
-  const scan = useMutation({
-    mutationFn: runScan,
-    onSuccess: (data) => queryClient.setQueryData(["dashboard"], data)
-  });
+  const scan = useScan();
 
   if (dashboard.isError) {
     return <StatePanel title={t("app.loadError")} description={t("app.loadErrorCopy")} action={<button className="button" onClick={() => dashboard.refetch()}>{t("app.retry")}</button>} />;
@@ -38,7 +36,7 @@ export function OverviewPage() {
         <StatePanel
           title={t("overview.firstRun.title")}
           description={t("overview.firstRun.description")}
-          action={<button className="button primary" onClick={() => scan.mutate()}>{scan.isPending ? t("app.scanning") : t("overview.firstRun.action")}</button>}
+          action={<button className="button primary" disabled={scan.isPending} onClick={scan.run}>{scan.isPending ? t("app.scanning") : t("overview.firstRun.action")}</button>}
         />
       </>
     );
@@ -50,15 +48,16 @@ export function OverviewPage() {
         <PageHeader
           title={t("page.overview.title")}
           description={t("page.overview.description")}
-          actions={<button className="button primary" onClick={() => scan.mutate()} disabled={scan.isPending}><RefreshCw size={16} />{scan.isPending ? t("app.scanning") : t("app.scanNow")}</button>}
+          actions={<button className="button primary" onClick={scan.run} disabled={scan.isPending}><RefreshCw size={16} />{scan.isPending ? t("app.scanning") : t("app.scanNow")}</button>}
         />
         <div className="scan-freshness">
           <span className="live-dot" /> {t("overview.updated")} {new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(dashboard.data.latest.generatedAt))}
         </div>
+        {preferences.showFirstValueGuide ? <FirstValueGuide /> : null}
         <StatePanel
           title={t("overview.noSkills.title")}
           description={t("overview.noSkills.description")}
-          action={<div className="state-actions"><a className="button primary" href="/skills">{t("overview.noSkills.skillsAction")}</a><a className="button" href="/settings">{t("overview.noSkills.settingsAction")}</a></div>}
+          action={<div className="state-actions"><a className="button primary" href="/settings#catalog-sources">{t("overview.noSkills.settingsAction")}</a><a className="button" href="/skills">{t("overview.noSkills.skillsAction")}</a></div>}
         />
       </>
     );
@@ -75,11 +74,12 @@ export function OverviewPage() {
       <PageHeader
         title={t("page.overview.title")}
         description={t("page.overview.description")}
-        actions={<button className="button primary" onClick={() => scan.mutate()} disabled={scan.isPending}><RefreshCw size={16} />{scan.isPending ? t("app.scanning") : t("app.scanNow")}</button>}
+        actions={<button className="button primary" onClick={scan.run} disabled={scan.isPending}><RefreshCw size={16} />{scan.isPending ? t("app.scanning") : t("app.scanNow")}</button>}
       />
       <div className="scan-freshness">
         <span className="live-dot" /> {t("overview.updated")} {new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(dashboard.data.latest?.generatedAt ?? ""))}
       </div>
+      {preferences.showFirstValueGuide ? <FirstValueGuide /> : null}
       <section className="kpi-grid" aria-label="Portfolio KPIs">
         {selected.map((kpi, index) => (
           <KpiCard

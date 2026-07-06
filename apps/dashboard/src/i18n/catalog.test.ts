@@ -12,4 +12,7 @@ it("uses natural discovery and Settings copy in both supported languages", () =>
   expect(translation("zh-CN", "kpi.inventory-coverage")).toBe("已核验清单覆盖");
   expect(translation("zh-CN", "governance.operation.verify-staging")).toBe("校验暂存副本");
   expect(translation("zh-CN", "evidence.lifecycle.userExit")).toBe("用户退出");
+  expect(translation("en-US", "overview.guide.catalogCopy")).toContain("optional public sources");
+  expect(translation("zh-CN", "overview.guide.catalogCopy")).toContain("可选公共来源");
+  expect(translation("zh-CN", "app.scanErrorTitle")).toBe("扫描未完成");
 });

@@ -1,5 +1,16 @@
 .scan-freshness { display: flex; align-items: center; gap: 7px; margin: -11px 0 16px; color: var(--muted); font-size: 12px; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 13%, transparent); }
+.first-value-guide { min-width: 0; margin-bottom: 18px; padding: 16px; border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--line)); border-radius: 14px; background: linear-gradient(135deg, color-mix(in srgb, var(--brand-soft) 35%, var(--surface)), var(--surface)); }
+.first-value-guide > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.first-value-guide h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: -.025em; }
+.first-value-guide-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.first-value-guide-card { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: color-mix(in srgb, var(--surface) 86%, transparent); overflow-wrap: anywhere; text-decoration: none; }
+.first-value-guide-card:hover { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
+.first-value-guide-card > svg { color: var(--brand); }
+.first-value-guide-card strong, .first-value-guide-card small { display: block; }
+.first-value-guide-card strong { font-size: 12px; line-height: 1.35; }
+.first-value-guide-card small { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.first-value-guide-card.primary { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); background: color-mix(in srgb, var(--brand-soft) 52%, var(--surface)); }
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; container-type: inline-size; }
 .overview-panel { margin-top: 18px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .overview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }.overview-panel h2 { margin: 3px 0 0; font-size: 18px; letter-spacing: -.025em; }
@@ -7,3 +18,4 @@
 .finding-list { display: grid; }.finding-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 2px; border-top: 1px solid var(--line); }.finding-row strong, .finding-row code { display: block; }.finding-row code { margin-top: 4px; color: var(--muted); font-size: 11px; }.confidence { color: var(--muted); font-variant-numeric: tabular-nums; }.empty-copy { color: var(--muted); }
 .finding-row .affected-skills { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
 @container (max-width: 520px) { .kpi-card.hero { grid-column: auto; } }
+@media (max-width: 620px) { .first-value-guide-actions { grid-template-columns: 1fr; } }

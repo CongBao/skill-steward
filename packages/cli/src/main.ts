@@ -402,6 +402,7 @@ export async function run(
 
   program
     .command("discover")
+    .description("List discovered Skill roots without changing them")
     .option("--root <path...>", "skill roots", [])
     .option("--json", "JSON output", false)
     .action(async (options: { root: string[]; json: boolean }) => {
@@ -413,6 +414,7 @@ export async function run(
 
   program
     .command("scan")
+    .description("Scan installed Skills and save a local portfolio report")
     .option("--root <path...>", "skill roots", [])
     .option("--json", "JSON output", false)
     .option("--strict", "exit 2 for severe findings", false)
@@ -431,6 +433,7 @@ export async function run(
 
   program
     .command("report")
+    .description("Render the latest local portfolio report")
     .option("--format <format>", "markdown or json", "markdown")
     .option("--output <path>")
     .action(async (options: { format: string; output?: string }) => {
@@ -445,6 +448,7 @@ export async function run(
 
   program
     .command("diff")
+    .description("Compare the latest report with an earlier snapshot")
     .option("--before <path>")
     .option("--format <format>", "markdown or json", "markdown")
     .action(async (options: { before?: string; format: string }) => {
@@ -457,6 +461,7 @@ export async function run(
 
   program
     .command("explain")
+    .description("Explain one finding from the latest report")
     .argument("<finding-id>")
     .option("--format <format>", "markdown or json", "markdown")
     .action(async (id: string, options: { format: string }) => {
@@ -469,6 +474,7 @@ export async function run(
 
   program
     .command("label")
+    .description("Record local feedback for one report finding")
     .argument("<finding-id>")
     .argument("<label>")
     .option("--comment <text>")
@@ -539,10 +545,16 @@ export async function run(
 
   program
     .command("doctor")
+    .description("Check the local runtime and private state directory")
     .option("--json", "JSON output", false)
     .action(async (options: { json: boolean }) => {
       exitCode = await doctorCommand(options.json, context);
     });
+
+  if (argv.length === 0) {
+    context.stdout(program.helpInformation());
+    return 0;
+  }
 
   try {
     await program.parseAsync(["node", "skill-steward", ...argv]);

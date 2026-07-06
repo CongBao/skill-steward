@@ -68,16 +68,20 @@ Skill Steward 是一款跨 Harness 的 Agent Skills 本地助手与控制台。C
 ### 环境要求
 
 - Node.js 22 或更高版本
-- 从源码开发时需要 pnpm 10 或更高版本
+- 构建本地安装包时需要 pnpm 10 或更高版本
 
-### 从源码运行
+### 安装经过校验的本地 CLI 包
+
+在 npm 包正式发布前，先生成并安装仓库测试过的同一份 tarball。后面的首次体验全程使用全局 `skill-steward` 命令，不会在源码入口和安装后的命令之间来回切换。
 
 ```bash
 git clone https://github.com/CongBao/skill-steward.git
 cd skill-steward
 pnpm install --frozen-lockfile
-pnpm check
-node packages/cli/dist/main.js dashboard
+package_dir="$(mktemp -d)"
+pnpm --filter skill-steward pack --pack-destination "$package_dir"
+npm install --global "$package_dir"/skill-steward-*.tgz
+skill-steward --version
 ```
 
 也可以使用 SSH：
@@ -86,22 +90,9 @@ node packages/cli/dist/main.js dashboard
 git clone git@github.com:CongBao/skill-steward.git
 ```
 
-如果只想输出回环地址而不自动打开浏览器：
-
-```bash
-node packages/cli/dist/main.js dashboard --no-open --port 4762
-```
-
-### 安装本地打包的 CLI
-
-```bash
-mkdir -p artifacts
-pnpm --filter skill-steward pack --pack-destination artifacts
-npm install --global ./artifacts/skill-steward-*.tgz
-skill-steward dashboard
-```
-
 如果电脑上已有较旧的全局版本，测试仓库新改动前要重新打包并安装。可以用 `skill-steward --version` 确认当前实际调用的版本。
+
+源码开发环境和完整的贡献者质量检查见[贡献指南](CONTRIBUTING.md)。
 
 CLI 包中会带上专用的 `README.md`、MIT `LICENSE`、自动生成的 `THIRD_PARTY_NOTICES.txt` 和机器可读的第三方依赖清单。校验程序会同时检查 npm 和 pnpm 生成的真实 tarball，并拿包内文件与可信构建目录、仓库锁定的 `runtime-audit.json` 对照；普通构建只验证这份审计记录，不会悄悄改写它。
 
@@ -117,7 +108,9 @@ skill-steward preflight \
 skill-steward dashboard
 ```
 
-这三步不会修改任何 Skill 或 Harness 配置，但会把最新本地报告和经过隐私裁剪的预检证据写入 `~/.skill-steward`；原始任务文本不会保存。以后真正要安装、接入 Harness、改策略或隔离时，先停在预览结果，确认无误后再执行其中给出的完整命令。
+可安装的候选 Skill 一定会显示自己的 Candidate ID。这个示例明确给出了受支持的 Harness，因此还会得到一条完整、可复制的审阅预览命令。目录没有声明安装范围（scope）时，命令会使用 `--scope project`，CLI 会把未填写的工作区解析为当前目录；它不会猜测 Harness，也不会擅自扩大到全局安装。
+
+这三步不会修改任何 Skill 或 Harness 配置，但会把最新本地报告和经过隐私裁剪的预检证据写入 `~/.skill-steward`；原始任务文本不会保存。安装预览只生成待审计划，不会直接安装。确认内容无误后，仍要另行执行它输出的 `--plan <id> --confirm` 完整命令。接入 Harness、改策略和治理操作也遵循同样的先预览、后确认流程。
 
 如果只需要命令行清单和报告：
 

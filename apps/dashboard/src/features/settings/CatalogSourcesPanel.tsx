@@ -60,7 +60,7 @@ export function CatalogSourcesPanel() {
   };
 
   return (
-    <section className="settings-card catalog-sources-card">
+    <section className="settings-card catalog-sources-card" id="catalog-sources" tabIndex={-1}>
       <header>
         <div><Database size={17} /><div><h2>{t("settings.catalogSources.title")}</h2><p>{t("settings.catalogSources.copy")}</p></div></div>
         <button className="button" aria-label={t("settings.catalogSources.refresh")} disabled={refresh.isPending} onClick={refreshExplicitly}>

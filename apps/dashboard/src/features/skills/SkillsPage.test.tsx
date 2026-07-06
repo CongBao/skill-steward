@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { PreferencesProvider } from "../../theme/preferences.js";
@@ -41,10 +42,176 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-function renderSkillsPage() {
+function renderSkillsPage(initialEntries: ComponentProps<typeof MemoryRouter>["initialEntries"] = ["/"]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><PreferencesProvider><MemoryRouter><SkillsPage /></MemoryRouter></PreferencesProvider></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><PreferencesProvider><MemoryRouter initialEntries={initialEntries}><SkillsPage /></MemoryRouter></PreferencesProvider></QueryClientProvider>);
 }
+
+function routeInstallationFetch(compatibleHarnesses: string[]) {
+  return vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    const data = url.endsWith("/governance/transactions")
+      ? []
+      : url.endsWith("/catalog/sources")
+        ? {
+            sources: [],
+            snapshot: {
+              schemaVersion: 1,
+              generatedAt: "2026-07-06T00:00:00.000Z",
+              sources: [],
+              skills: [{ id: "testing", compatibleHarnesses, compatibility: "declared" }]
+            }
+          }
+        : url.includes("/catalog/candidates/testing/inspect-installation")
+          ? {
+              catalogCandidateId: "testing",
+              previewId: "preview-reload",
+              expiresAt: Date.now() + 60_000,
+              source: { kind: "git" },
+              candidates: [{
+                id: "root",
+                relativePath: ".",
+                name: "recommended-review",
+                description: "Recommended after reload",
+                fingerprint: `sha256:${"d".repeat(64)}`,
+                files: [], estimatedTokens: 180, scripts: [], executables: [], findings: []
+              }]
+            }
+          : {
+              status: "ready", latest: null, kpis: [], skills: [], priorityFindings: [], history: [], roots: []
+            };
+    return { ok: true, json: async () => ({ data, error: null, meta: { apiVersion: 1 } }) };
+  });
+}
+
+it.each(["codex", "claude", "github-copilot"])(
+  "restores the %s Preflight candidate and target after a route reload",
+  async (harness) => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routeInstallationFetch([harness]));
+
+    renderSkillsPage([`/skills?installCandidate=testing&harness=${harness}`]);
+
+    const inspect = await screen.findByRole("button", { name: "Inspect recommendation" });
+    const mockedFetch = vi.mocked(fetch);
+    expect(mockedFetch.mock.calls.some(([input]) => String(input).includes("inspect-installation"))).toBe(false);
+    await user.click(inspect);
+    expect(await screen.findByText("Recommended after reload")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByLabelText("Target harness")).toHaveValue(harness);
+  }
+);
+
+it.each([
+  ["unsupported target", "forged", ["codex"]],
+  ["incompatible pair", "claude", ["codex"]]
+])("uses a neutral target for an %s and orders compatible targets first", async (_case, harness, compatibleHarnesses) => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", routeInstallationFetch(compatibleHarnesses));
+
+  renderSkillsPage([`/skills?installCandidate=testing&harness=${harness}`]);
+
+  await user.click(await screen.findByRole("button", { name: "Inspect recommendation" }));
+  expect(await screen.findByText("Recommended after reload")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  const target = screen.getByLabelText<HTMLSelectElement>("Target harness");
+  expect(target).toHaveValue("");
+  expect([...target.options].filter(({ value }) => value).map(({ value }) => value).slice(0, 2))
+    .toEqual(["codex", "agents"]);
+});
+
+it("uses the local Catalog as compatibility authority instead of router state", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", routeInstallationFetch(["codex"]));
+  const installationPreview = {
+    catalogCandidateId: "testing",
+    previewId: "preview-navigation",
+    expiresAt: Date.now() + 60_000,
+    source: { kind: "git" },
+    candidates: [{
+      id: "root", relativePath: ".", name: "recommended-review",
+      description: "Recommended in the same navigation", fingerprint: `sha256:${"e".repeat(64)}`,
+      files: [], estimatedTokens: 180, scripts: [], executables: [], findings: []
+    }]
+  };
+
+  renderSkillsPage([{
+    pathname: "/skills",
+    search: "?installCandidate=testing&harness=claude",
+    state: {
+      installationPreview,
+      installationContext: { candidateId: "testing", compatibleHarnesses: ["claude"] }
+    }
+  }]);
+
+  expect(await screen.findByText("Recommended in the same navigation")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(screen.getByLabelText("Target harness")).toHaveValue("");
+});
+
+it("shows a sanitized retry when the local recommendation cannot be restored", async () => {
+  const user = userEvent.setup();
+  let catalogAttempts = 0;
+  const baseFetch = routeInstallationFetch(["codex"]);
+  const mockedFetch = vi.fn(async (input: string | URL | Request) => {
+    if (String(input).endsWith("/catalog/sources") && ++catalogAttempts === 1) {
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({ data: null, error: { message: "/Users/private/catalog failed" }, meta: { apiVersion: 1 } })
+      };
+    }
+    return baseFetch(input);
+  });
+  vi.stubGlobal("fetch", mockedFetch);
+
+  renderSkillsPage(["/skills?installCandidate=testing&harness=codex"]);
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Recommendation could not be restored");
+  expect(alert).not.toHaveTextContent("/Users/private");
+  expect(screen.queryByRole("dialog", { name: "Install a Skill" })).not.toBeInTheDocument();
+  await user.click(within(alert).getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: "Inspect recommendation" })).toBeVisible();
+});
+
+it("keeps inspection explicit and retryable after a Catalog staging failure", async () => {
+  const user = userEvent.setup();
+  let inspectionAttempts = 0;
+  const baseFetch = routeInstallationFetch(["codex"]);
+  const mockedFetch = vi.fn(async (input: string | URL | Request) => {
+    if (String(input).includes("inspect-installation") && ++inspectionAttempts === 1) {
+      return {
+        ok: false,
+        status: 502,
+        json: async () => ({ data: null, error: { message: "git credential: secret" }, meta: { apiVersion: 1 } })
+      };
+    }
+    return baseFetch(input);
+  });
+  vi.stubGlobal("fetch", mockedFetch);
+
+  renderSkillsPage(["/skills?installCandidate=testing&harness=codex"]);
+  await user.click(await screen.findByRole("button", { name: "Inspect recommendation" }));
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Recommendation inspection did not finish");
+  expect(alert).not.toHaveTextContent("secret");
+  await user.click(within(alert).getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("Recommended after reload")).toBeVisible();
+});
+
+it("rejects a malformed candidate route without inspecting it", async () => {
+  const mockedFetch = routeInstallationFetch(["codex"]);
+  vi.stubGlobal("fetch", mockedFetch);
+
+  renderSkillsPage(["/skills?installCandidate=%3Cscript%3E&harness=codex"]);
+
+  expect(await screen.findByRole("dialog", { name: "Install a Skill" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Local folder" })).toBeVisible();
+  expect(mockedFetch.mock.calls.some(([input]) => String(input).includes("inspect-installation")))
+    .toBe(false);
+});
 
 it("separates active and quarantined Skills with only reversible governance actions", async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => ({

@@ -10,29 +10,24 @@ It is not a Harness, and it does not install recommendations automatically.
 
 ```bash
 npm install --global ./skill-steward-*.tgz
+skill-steward --version
 ```
 
 Node.js 22 or newer is required.
 
 ## Five-minute start
 
-Scan the local Skill portfolio:
+Scan the local Skill portfolio, preflight a real task for an explicit Harness, and open the dashboard:
 
 ```bash
 skill-steward scan
-```
-
-Run task preflight without storing the raw task text:
-
-```bash
-printf '%s' 'Review this repository for security risks' | skill-steward preflight --stdin
-```
-
-Open the local dashboard:
-
-```bash
+skill-steward preflight \
+  --task 'Review this repository for security risks' \
+  --harness codex
 skill-steward dashboard
 ```
+
+Available catalog recommendations always show their Candidate ID. With an explicit supported Harness, human output also prints a complete reviewed preview command. An unknown catalog scope defaults only to the current project with `--scope project`; the CLI resolves the omitted workspace to the current directory. Skill Steward does not guess a Harness or widen that destination to global scope. The preview creates a plan but does not install anything.
 
 The dashboard and CLI use the same local state. Governance, installation, and Harness integration actions show an exact plan first and require explicit confirmation; installation rollback, integration rollback, quarantine, restore, shared-consumer disconnect, and final uninstall are reversible or fail closed with recovery evidence.
 

@@ -78,6 +78,22 @@ function expectInventoryTaxonomies(
   expectTaxonomyLine(markdown, labels.exposure, inventoryTaxonomies.exposure);
 }
 
+function markdownSection(markdown: string, start: string, end: string): string {
+  const from = markdown.indexOf(start);
+  const to = markdown.indexOf(end, from + start.length);
+  expect(from, `missing section ${start}`).toBeGreaterThanOrEqual(0);
+  expect(to, `missing section ${end}`).toBeGreaterThan(from);
+  return markdown.slice(from, to);
+}
+
+function shellCommandLines(markdown: string): string[] {
+  return [...markdown.matchAll(/```bash\n([\s\S]*?)```/gu)]
+    .flatMap((match) => (match[1] ?? "").trim().split("\n"))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/--task\s+"[^"]+"/u, '--task "<task>"'));
+}
+
 async function expectLocalLinksToExist(markdownPath: string, markdown: string): Promise<void> {
   const links = [...markdown.matchAll(/\[[^\]]*\]\((?!https?:|#)([^)]+)\)/g)].map(
     (match) => match[1] as string
@@ -227,6 +243,40 @@ describe("open-source repository", () => {
     for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
     await expectLocalLinksToExist("README.md", readme);
+  });
+
+  it("documents one coherent packaged first-value command path in both locales", async () => {
+    const readme = await readFile(join(root, "README.md"), "utf8");
+    const chineseReadme = await readFile(join(root, "README.zh-CN.md"), "utf8");
+    const installation = markdownSection(readme, "## Installation", "## First use");
+    const chineseInstallation = markdownSection(chineseReadme, "## 安装", "## 第一次使用");
+    const firstUse = markdownSection(readme, "## First use", "## Task preflight");
+    const chineseFirstUse = markdownSection(chineseReadme, "## 第一次使用", "## 任务预检");
+
+    expect(installation).not.toContain("pnpm check");
+    expect(chineseInstallation).not.toContain("pnpm check");
+    expect(await readFile(join(root, "CONTRIBUTING.md"), "utf8")).toContain("pnpm check");
+    expect(shellCommandLines(chineseInstallation)).toEqual(shellCommandLines(installation));
+    expect(shellCommandLines(chineseFirstUse)).toEqual(shellCommandLines(firstUse));
+
+    const journey = `${installation}\n${firstUse}`;
+    for (const command of [
+      'package_dir="$(mktemp -d)"',
+      'pnpm --filter skill-steward pack --pack-destination "$package_dir"',
+      'npm install --global "$package_dir"/skill-steward-*.tgz',
+      "skill-steward --version",
+      "skill-steward scan",
+      "skill-steward preflight",
+      "--harness codex",
+      "skill-steward dashboard"
+    ]) {
+      expect(journey).toContain(command);
+    }
+    expect(installation).not.toContain("mkdir -p artifacts");
+    expect(journey.indexOf("pnpm --filter skill-steward pack"))
+      .toBeLessThan(journey.indexOf("npm install --global"));
+    expect(journey.indexOf("npm install --global"))
+      .toBeLessThan(journey.indexOf("skill-steward scan"));
   });
 
   it("ships a complete Chinese README with mutual language navigation", async () => {
@@ -395,6 +445,10 @@ describe("open-source repository", () => {
     expect(packageReadme).toContain("skill-steward scan");
     expect(packageReadme).toContain("skill-steward preflight");
     expect(packageReadme).toContain("skill-steward dashboard");
+    expect(packageReadme).toContain("skill-steward --version");
+    expect(packageReadme).toContain("--harness codex");
+    expect(packageReadme.indexOf("npm install --global ./skill-steward-*.tgz"))
+      .toBeLessThan(packageReadme.indexOf("skill-steward scan"));
     expect(packageReadme).toContain("local-first");
     expect(packageReadme).toContain("reversible");
     expect(packageReadme).toContain("--plan <id> --confirm");

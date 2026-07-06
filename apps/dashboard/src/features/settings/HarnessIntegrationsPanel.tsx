@@ -279,7 +279,7 @@ export function HarnessIntegrationsPanel() {
     : "";
 
   return (
-    <section className="settings-card integrations-card">
+    <section className="settings-card integrations-card" id="harness-integrations" tabIndex={-1}>
       <header>
         <div>
           <Cable size={17} />

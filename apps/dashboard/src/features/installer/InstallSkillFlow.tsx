@@ -12,18 +12,15 @@ import {
 } from "../../api/client.js";
 import { SeverityBadge } from "../../components/SeverityBadge.js";
 import { useI18n } from "../../i18n/catalog.js";
+import {
+  initialInstallerHarness,
+  orderedInstallerHarnesses,
+  type InstallerHarness
+} from "./installRoute.js";
 import "./installer.css";
 
 type SourceKind = "folder" | "zip" | "git";
 type Step = "source" | "inspect" | "destination" | "conflicts" | "confirm" | "result";
-
-const harnesses = [
-  "agents", "amazon-q", "antigravity", "auggie", "bob", "claude", "cline",
-  "codebuddy", "codex", "forgecode", "continue", "costrict", "crush", "cursor",
-  "factory", "gemini", "github-copilot", "iflow", "junie", "kilocode", "kimi",
-  "kiro", "lingma", "vibe", "opencode", "pi", "qoder", "qwen", "roocode",
-  "trae", "windsurf"
-];
 
 async function base64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -32,7 +29,17 @@ async function base64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-export function InstallSkillFlow({ onClose, initialInspection }: { onClose(): void; initialInspection?: InspectionResult }) {
+export function InstallSkillFlow({
+  onClose,
+  initialInspection,
+  initialHarness = "claude",
+  compatibleHarnesses = []
+}: {
+  onClose(): void;
+  initialInspection?: InspectionResult;
+  initialHarness?: InstallerHarness | "";
+  compatibleHarnesses?: readonly string[];
+}) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const initialCandidate = initialInspection?.candidates.find(({ fingerprint }) => fingerprint) ?? initialInspection?.candidates[0];
@@ -43,7 +50,9 @@ export function InstallSkillFlow({ onClose, initialInspection }: { onClose(): vo
   const [git, setGit] = useState({ url: "", ref: "", subdirectory: "" });
   const [inspection, setInspection] = useState<InspectionResult | null>(initialInspection ?? null);
   const [candidateId, setCandidateId] = useState(initialCandidate?.id ?? "");
-  const [harness, setHarness] = useState("claude");
+  const [harness, setHarness] = useState<InstallerHarness | "">(() =>
+    initialInstallerHarness(initialHarness || null, compatibleHarnesses)
+  );
   const [scope, setScope] = useState<"global" | "project">("global");
   const [workspace, setWorkspace] = useState("");
   const [targetName, setTargetName] = useState(initialCandidate?.name ?? "");
@@ -153,11 +162,11 @@ export function InstallSkillFlow({ onClose, initialInspection }: { onClose(): vo
 
       {step === "destination" ? (
         <section className="install-section"><div className="form-grid two">
-          <label>{t("install.targetHarness")}<select value={harness} onChange={(event) => setHarness(event.target.value)}>{harnesses.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label>{t("install.targetHarness")}<select value={harness} onChange={(event) => setHarness(event.target.value as InstallerHarness | "")}><option value="">{t("install.targetHarness")}</option>{orderedInstallerHarnesses(compatibleHarnesses).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
           <label>{t("install.scope")}<select value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("install.global")}</option><option value="project">{t("install.project")}</option></select></label>
           {scope === "project" ? <label>{t("install.workspace")}<input value={workspace} onChange={(event) => setWorkspace(event.target.value)} placeholder="/path/to/project" /></label> : null}
           <label>{t("install.targetName")}<input value={targetName} onChange={(event) => setTargetName(event.target.value)} /></label>
-        </div><footer><button className="button primary" disabled={!targetName || (scope === "project" && !workspace) || planMutation.isPending} onClick={() => planMutation.mutate(undefined)}>{t("install.reviewPlan")}</button></footer></section>
+        </div><footer><button className="button primary" disabled={!harness || !targetName || (scope === "project" && !workspace) || planMutation.isPending} onClick={() => planMutation.mutate(undefined)}>{t("install.reviewPlan")}</button></footer></section>
       ) : null}
 
       {step === "conflicts" ? (

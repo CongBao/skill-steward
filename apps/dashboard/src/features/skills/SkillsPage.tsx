@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Archive, ArchiveRestore, Download, Search, ShieldAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  fetchCatalogSources,
   fetchDashboard,
   fetchGovernanceTransactions,
+  inspectCatalogCandidate,
   type HarnessExposure,
   type InspectionResult,
   type SkillSummary
@@ -14,7 +16,9 @@ import { PageHeader } from "../../components/PageHeader.js";
 import { StatePanel } from "../../components/StatePanel.js";
 import { useI18n, type TranslationKey } from "../../i18n/catalog.js";
 import { InstallSkillFlow } from "../installer/InstallSkillFlow.js";
+import { parseInstallerRoute } from "../installer/installRoute.js";
 import { GovernanceDialog, type GovernanceDialogAction } from "./GovernanceDialog.js";
+import "./routeInstallation.css";
 import "./skills.css";
 
 function pathName(path: string): string {
@@ -62,6 +66,24 @@ function exposureIdentity(exposure: HarnessExposure): string {
   ]);
 }
 
+interface InstallationContext {
+  candidateId: string;
+  compatibleHarnesses: string[];
+}
+
+type CatalogInstallationPreview = InspectionResult & { catalogCandidateId: string };
+
+function catalogInstallationContext(skills: unknown[], candidateId: string | null): InstallationContext | null {
+  if (!candidateId) return null;
+  const candidate = skills.find((item) =>
+    Boolean(item) && typeof item === "object" && (item as Record<string, unknown>).id === candidateId
+  );
+  if (!candidate || typeof candidate !== "object") return null;
+  const compatibleHarnesses = (candidate as Record<string, unknown>).compatibleHarnesses;
+  if (!Array.isArray(compatibleHarnesses) || !compatibleHarnesses.every((item) => typeof item === "string")) return null;
+  return { candidateId, compatibleHarnesses };
+}
+
 function SkillProvenance({ skill }: { skill: SkillSummary }) {
   const { t } = useI18n();
   if (!skill.ownership) return null;
@@ -87,12 +109,40 @@ export function SkillsPage() {
   const { locale, t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
-  const installationPreview = (location.state as { installationPreview?: InspectionResult } | null)?.installationPreview;
+  const routeInstallation = useMemo(() => parseInstallerRoute(location.search), [location.search]);
+  const routeState = location.state as {
+    installationPreview?: CatalogInstallationPreview;
+  } | null;
+  const statePreview = routeState?.installationPreview;
+  const statePreviewMatches = Boolean(statePreview && routeInstallation.candidateId
+    && statePreview.catalogCandidateId === routeInstallation.candidateId);
   const [search, setSearch] = useState("");
-  const [installing, setInstalling] = useState(Boolean(installationPreview));
+  const [manualInstalling, setManualInstalling] = useState(false);
   const [governanceAction, setGovernanceAction] = useState<GovernanceDialogAction | null>(null);
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const governance = useQuery({ queryKey: ["governance", "transactions"], queryFn: fetchGovernanceTransactions });
+  const routeCatalog = useQuery({
+    queryKey: ["catalog-sources"],
+    queryFn: fetchCatalogSources,
+    enabled: routeInstallation.requested && Boolean(routeInstallation.candidateId)
+  });
+  const catalogContext = catalogInstallationContext(
+    routeCatalog.data?.snapshot?.skills ?? [],
+    routeInstallation.candidateId
+  );
+  const routeInspection = useMutation({
+    mutationFn: () => inspectCatalogCandidate(routeInstallation.candidateId ?? "")
+  });
+  const installationPreview = statePreviewMatches ? statePreview : routeInspection.data;
+  const routePending = routeInstallation.requested && Boolean(routeInstallation.candidateId) && routeCatalog.isLoading;
+  const routeUnavailable = routeInstallation.requested && Boolean(routeInstallation.candidateId)
+    && routeCatalog.isSuccess && !catalogContext;
+  const routeFailed = routeCatalog.isError || routeInspection.isError;
+  const routeReadyToInspect = routeInstallation.requested && Boolean(catalogContext)
+    && !installationPreview && !routeFailed;
+  const installing = manualInstalling
+    || (routeInstallation.requested && !routeInstallation.candidateId)
+    || Boolean(installationPreview && catalogContext && !routePending && !routeFailed);
   const skills = useMemo(
     () => (dashboard.data?.skills ?? []).filter((skill) => `${skill.name} ${skill.description} ${skill.visibleTo.join(" ")}`.toLowerCase().includes(search.toLowerCase())),
     [dashboard.data?.skills, search]
@@ -133,7 +183,11 @@ export function SkillsPage() {
 
   return (
     <>
-      <PageHeader title={t("page.skills.title")} description={t("page.skills.description")} actions={<button className="button primary" onClick={() => setInstalling(true)}><Download size={16} />{t("skills.install")}</button>} />
+      <PageHeader title={t("page.skills.title")} description={t("page.skills.description")} actions={<button className="button primary" onClick={() => setManualInstalling(true)}><Download size={16} />{t("skills.install")}</button>} />
+      {routePending ? <section className="route-installation-notice" role="status"><strong>{t("skills.recommendation.loading")}</strong><p>{t("skills.recommendation.loadingCopy")}</p></section> : null}
+      {routeFailed ? <section className="route-installation-notice error" role="alert"><strong>{routeCatalog.isError ? t("skills.recommendation.restoreError") : t("skills.recommendation.inspectError")}</strong><p>{t("skills.recommendation.errorCopy")}</p><button className="button" onClick={() => { if (routeCatalog.isError) void routeCatalog.refetch(); else routeInspection.mutate(); }}>{t("app.retry")}</button></section> : null}
+      {routeUnavailable ? <section className="route-installation-notice error" role="alert"><strong>{t("skills.recommendation.unavailable")}</strong><p>{t("skills.recommendation.unavailableCopy")}</p><button className="button" onClick={() => setManualInstalling(true)}>{t("skills.install")}</button></section> : null}
+      {routeReadyToInspect ? <section className="route-installation-notice" role="status"><strong>{t("skills.recommendation.ready")}</strong><p>{t("skills.recommendation.readyCopy")}</p><button className="button primary" disabled={routeInspection.isPending} onClick={() => routeInspection.mutate()}>{routeInspection.isPending ? t("install.inspecting") : t("skills.recommendation.inspect")}</button></section> : null}
       <div className="toolbar"><label className="search-field"><Search size={16} /><span className="sr-only">{t("skills.search")}</span><input aria-label={t("skills.search")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("skills.search")} /></label><span>{skills.length + quarantined.length}</span></div>
       {dashboard.isLoading ? <StatePanel title={t("page.skills.title")} description={t("app.scanning")} /> : (
         <div className="skill-state-stack">
@@ -155,7 +209,7 @@ export function SkillsPage() {
           {!hasAnySkills && !governance.isError ? <StatePanel title={t("skills.empty")} description={t("skills.emptyCopy")} /> : null}
         </div>
       )}
-      {installing ? <Dialog title={t("install.title")} onClose={() => { setInstalling(false); navigate(location.pathname, { replace: true, state: null }); }}><InstallSkillFlow {...(installationPreview ? { initialInspection: installationPreview } : {})} onClose={() => { setInstalling(false); navigate(location.pathname, { replace: true, state: null }); }} /></Dialog> : null}
+      {installing ? <Dialog title={t("install.title")} onClose={() => { setManualInstalling(false); navigate(location.pathname, { replace: true, state: null }); }}><InstallSkillFlow {...(installationPreview ? { initialInspection: installationPreview } : {})} initialHarness={catalogContext ? routeInstallation.harness ?? "" : ""} compatibleHarnesses={catalogContext?.compatibleHarnesses ?? []} onClose={() => { setManualInstalling(false); navigate(location.pathname, { replace: true, state: null }); }} /></Dialog> : null}
       {governanceAction ? <Dialog title={governanceTitle} onClose={() => setGovernanceAction(null)}><GovernanceDialog action={governanceAction} onComplete={completeGovernance} /></Dialog> : null}
     </>
   );

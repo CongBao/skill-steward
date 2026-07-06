@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -294,4 +294,65 @@ it("verifies the real pnpm-packed artifact", async () => {
   expect(artifact).toBeDefined();
   await expect(execFileAsync(process.execPath, [verifier, join(directory, artifact!)]))
     .resolves.toMatchObject({ stdout: expect.stringContaining("Verified") });
+}, 120_000);
+
+it("installs the fresh tarball and reaches first recommendation value in private state", async () => {
+  const base = await mkdtemp(join(tmpdir(), "steward-installed-first-value-"));
+  const packed = join(base, "packed");
+  const prefix = join(base, "prefix");
+  const home = join(base, "home");
+  const state = join(base, "state");
+  const workspace = join(base, "workspace");
+  const cache = join(base, "npm-cache");
+  await Promise.all([
+    mkdir(packed, { recursive: true }),
+    mkdir(join(workspace, ".agents", "skills", "testing"), { recursive: true })
+  ]);
+  await writeFile(join(workspace, ".agents", "skills", "testing", "SKILL.md"), `---
+name: testing
+description: Review TypeScript changes for missing tests and test coverage.
+---
+
+# Testing
+
+Use when reviewing code changes for missing tests and regressions.
+`, "utf8");
+
+  await execFileAsync("pnpm", ["pack", "--pack-destination", packed], {
+    cwd: packageDirectory,
+    env: { ...process.env, NODE_ENV: "production" }
+  });
+  const artifact = join(packed, (await readdir(packed)).find((name) => name.endsWith(".tgz"))!);
+  await execFileAsync("npm", [
+    "install", "--global", "--prefix", prefix, "--ignore-scripts", "--omit=optional", "--offline", artifact
+  ], { env: { ...process.env, npm_config_cache: cache } });
+
+  const binary = join(prefix, "bin", "skill-steward");
+  const environment = { ...process.env, HOME: home, SKILL_STEWARD_HOME: state };
+  const bare = await execFileAsync(binary, [], { cwd: workspace, env: environment });
+  expect(bare.stdout).toContain("Usage: skill-steward");
+  const version = await execFileAsync(binary, ["--version"], { cwd: workspace, env: environment });
+  expect(version.stdout.trim()).toBe("0.5.0-alpha.4");
+  const dashboardHelp = await execFileAsync(binary, ["dashboard", "--help"], {
+    cwd: workspace,
+    env: environment
+  });
+  expect(dashboardHelp.stdout).toContain("Launch the local Skill Steward dashboard");
+
+  const scan = await execFileAsync(binary, ["scan", "--json"], {
+    cwd: workspace,
+    env: environment
+  });
+  expect(JSON.parse(scan.stdout)).toMatchObject({
+    skills: [expect.objectContaining({ name: "testing", scope: "project" })]
+  });
+
+  const preflight = await execFileAsync(binary, [
+    "preflight", "--task", "Review this TypeScript change for missing tests", "--harness", "codex", "--compact-json"
+  ], { cwd: workspace, env: environment });
+  expect(JSON.parse(preflight.stdout)).toMatchObject({
+    installedCoverage: 1,
+    use: [expect.objectContaining({ name: "testing" })]
+  });
+  await expect(access(join(state, "preflights.json"))).resolves.toBeUndefined();
 }, 120_000);

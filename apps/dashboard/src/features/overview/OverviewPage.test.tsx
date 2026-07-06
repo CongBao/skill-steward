@@ -1,7 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { PreferencesProvider } from "../../theme/preferences.js";
+import { ScanProvider } from "../scan/ScanProvider.js";
 import { OverviewPage } from "./OverviewPage.js";
 
 const snapshot = {
@@ -54,7 +57,9 @@ function wrapper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>
-      <PreferencesProvider>{children}</PreferencesProvider>
+      <PreferencesProvider>
+        <MemoryRouter><ScanProvider>{children}</ScanProvider></MemoryRouter>
+      </PreferencesProvider>
     </QueryClientProvider>
   );
 }
@@ -79,6 +84,21 @@ it("renders the six recommended KPIs and priority findings", async () => {
   expect(screen.queryByRole("article", { name: /Bundle size/ })).not.toBeInTheDocument();
   expect(screen.getByText("Broken relative reference")).toBeVisible();
   expect(screen.getByText("Release steward")).toBeVisible();
+});
+
+it("guides first value with explicit links and persists dismissal locally", async () => {
+  const user = userEvent.setup();
+  render(<OverviewPage />, { wrapper: wrapper() });
+
+  const guide = await screen.findByRole("region", { name: "Your next useful actions" });
+  expect(within(guide).getByRole("link", { name: "Run task Preflight" })).toHaveAttribute("href", "/preflight");
+  expect(within(guide).getByRole("link", { name: "Review optional Catalog sources" })).toHaveAttribute("href", "/settings#catalog-sources");
+  expect(within(guide).getByRole("link", { name: "Review Harness integration" })).toHaveAttribute("href", "/settings#harness-integrations");
+
+  await user.click(within(guide).getByRole("button", { name: "Dismiss first-value guide" }));
+
+  expect(screen.queryByRole("region", { name: "Your next useful actions" })).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("skill-steward:preferences") ?? "{}").showFirstValueGuide).toBe(false);
 });
 
 it("shows discovery actions instead of a misleading perfect score when a scan finds no Skills", async () => {
@@ -106,7 +126,8 @@ it("shows discovery actions instead of a misleading perfect score when a scan fi
   expect(screen.queryByRole("article", { name: /Health score: 100/ })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Portfolio KPIs")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open Skills" })).toHaveAttribute("href", "/skills");
-  expect(screen.getByRole("link", { name: "Review discovery settings" })).toHaveAttribute("href", "/settings");
+  expect(screen.getByText(/Public Catalog sources remain disabled and uncontacted/)).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open optional Catalog settings" })).toHaveAttribute("href", "/settings#catalog-sources");
 });
 
 it("shows a first-run action when no report exists", async () => {
@@ -120,4 +141,32 @@ it("shows a first-run action when no report exists", async () => {
   })));
   render(<OverviewPage />, { wrapper: wrapper() });
   expect(await screen.findByRole("button", { name: "Run first scan" })).toBeVisible();
+});
+
+it("submits at most one first-run scan while the first request is pending", async () => {
+  const user = userEvent.setup();
+  let resolveScan: ((value: unknown) => void) | undefined;
+  const scanResponse = new Promise((resolve) => { resolveScan = resolve; });
+  const mockedFetch = vi.fn(async (input: string | URL | Request) => {
+    if (String(input).endsWith("/api/v1/scans")) return scanResponse;
+    return {
+      ok: true,
+      json: async () => ({
+        data: { ...snapshot, status: "first-run", latest: null, kpis: [], priorityFindings: [] },
+        error: null,
+        meta: { apiVersion: 1 }
+      })
+    };
+  });
+  vi.stubGlobal("fetch", mockedFetch);
+  render(<OverviewPage />, { wrapper: wrapper() });
+
+  const action = await screen.findByRole("button", { name: "Run first scan" });
+  await user.dblClick(action);
+  expect(mockedFetch.mock.calls.filter(([input]) => String(input).endsWith("/api/v1/scans"))).toHaveLength(1);
+
+  resolveScan?.({
+    ok: true,
+    json: async () => ({ data: snapshot, error: null, meta: { apiVersion: 1 } })
+  });
 });
