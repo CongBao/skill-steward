@@ -35,8 +35,7 @@ interface ScoredCandidate {
   routeTerms: Set<string>;
   matchedTaskTerms: Set<string>;
   negativeTaskTerms: Set<string>;
-  capabilities: CapabilitySet;
-  matchedCapabilities: Set<string>;
+  matchedCapabilities: ReadonlySet<string>;
   capabilityCoverage: number;
   capabilityPrecision: number;
   triggerConfidence: "none" | "partial" | "exact";
@@ -76,7 +75,11 @@ function intersection(
   left: ReadonlySet<string>,
   right: ReadonlySet<string>
 ): Set<string> {
-  return new Set([...left].filter((term) => right.has(term)));
+  const matched = new Set<string>();
+  for (const term of left) {
+    if (right.has(term)) matched.add(term);
+  }
+  return matched;
 }
 
 const BROAD_ROUTE_TERMS = new Set([
@@ -101,9 +104,13 @@ function weightedCapabilityRatio(
   numerator: ReadonlySet<string>,
   denominator: ReadonlySet<string>
 ): number {
-  const total = [...denominator].reduce((sum, value) => sum + capabilityWeight(value), 0);
+  if (numerator.size === 0) return 0;
+  let total = 0;
+  for (const value of denominator) total += capabilityWeight(value);
   if (total === 0) return 0;
-  return [...numerator].reduce((sum, value) => sum + capabilityWeight(value), 0) / total;
+  let matched = 0;
+  for (const value of numerator) matched += capabilityWeight(value);
+  return matched / total;
 }
 
 function boundedCapabilityDetail(values: ReadonlySet<string>): string {
@@ -576,7 +583,14 @@ function scoreCandidates(
   const taskTerms = new Set(tokenize(positiveTask).terms);
   const taskCapabilities = extractCapabilities(task);
   const taskPhrases = anchoredTriggerPhrases(positiveTask);
-  const capabilityCache = new Map<string, CapabilitySet>();
+  const capabilityScoreCache = new Map<string, {
+    matchedCapabilities: ReadonlySet<string>;
+    matchedCapabilityPairs: ReadonlySet<string>;
+    capabilityCoverage: number;
+    capabilityPrecision: number;
+    triggerConfidence: "none" | "partial" | "exact";
+    exactCapability: boolean;
+  }>();
   const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
     const normalizedName = candidate.name.replace(/[-_]+/g, " ");
     const nameTerms = tokenize(normalizedName).terms;
@@ -584,36 +598,52 @@ function scoreCandidates(
     const positiveDescription = routingNegativeClauses.length === 0
       ? candidate.description
       : positiveRoutingText(candidate.description);
-    const capabilityInput = normalizeTask(
-      `${normalizedName}. ${positiveDescription}`
-    ).toLowerCase().replace(/[0-9]+/gu, "0");
-    let capabilities = capabilityCache.get(capabilityInput);
-    if (!capabilities) {
-      capabilities = extractCapabilities(capabilityInput);
-      capabilityCache.set(capabilityInput, capabilities);
+    const capabilityInput = `${normalizedName}. ${positiveDescription}`;
+    const capabilityCacheKey = capabilityInput
+      .toLowerCase()
+      .replace(/[0-9]+/gu, "0");
+    let capabilityScore = capabilityScoreCache.get(capabilityCacheKey);
+    if (!capabilityScore) {
+      const capabilities = extractCapabilities(capabilityInput);
+      const matchedCapabilities = intersection(
+        taskCapabilities.all,
+        capabilities.all
+      );
+      const matchedCapabilityPairs = intersection(
+        taskCapabilities.pairs,
+        capabilities.pairs
+      );
+      const capabilityCoverage = weightedCapabilityRatio(
+        matchedCapabilities,
+        taskCapabilities.all
+      );
+      const capabilityPrecision = weightedCapabilityRatio(
+        matchedCapabilities,
+        capabilities.all
+      );
+      const exactCapability = matchedCapabilityPairs.size > 0;
+      capabilityScore = {
+        matchedCapabilities,
+        matchedCapabilityPairs,
+        capabilityCoverage,
+        capabilityPrecision,
+        exactCapability,
+        triggerConfidence: exactCapability
+          ? "exact"
+          : matchedCapabilities.size > 0
+            ? "partial"
+            : "none"
+      };
+      capabilityScoreCache.set(capabilityCacheKey, capabilityScore);
     }
-    const matchedCapabilities = intersection(
-      taskCapabilities.all,
-      capabilities.all
-    );
-    const matchedCapabilityPairs = intersection(
-      taskCapabilities.pairs,
-      capabilities.pairs
-    );
-    const capabilityCoverage = weightedCapabilityRatio(
+    const {
       matchedCapabilities,
-      taskCapabilities.all
-    );
-    const capabilityPrecision = weightedCapabilityRatio(
-      matchedCapabilities,
-      capabilities.all
-    );
-    const exactCapability = matchedCapabilityPairs.size > 0;
-    const triggerConfidence = exactCapability
-      ? "exact" as const
-      : matchedCapabilities.size > 0
-        ? "partial" as const
-        : "none" as const;
+      matchedCapabilityPairs,
+      capabilityCoverage,
+      capabilityPrecision,
+      exactCapability,
+      triggerConfidence
+    } = capabilityScore;
     const routeTerms = new Set(
       tokenize(`${normalizedName} ${candidate.description}`).terms
     );
@@ -784,7 +814,6 @@ function scoreCandidates(
       routeTerms,
       matchedTaskTerms,
       negativeTaskTerms,
-      capabilities,
       matchedCapabilities,
       capabilityCoverage,
       capabilityPrecision,
@@ -859,7 +888,7 @@ function selectInstalled(
       const redundancyPenalty = Math.max(
         jaccard(candidate.routeTerms, selectedRouteTerms) *
           PREFLIGHT_CONFIG.redundancyWeight,
-        jaccard(candidate.capabilities.all, selectedCapabilityTerms) * 0.45
+        jaccard(candidate.matchedCapabilities, selectedCapabilityTerms) * 0.45
       );
       const marginal = clamp(
         candidate.relevance + uniqueCoverage + capabilityGain * 0.8 -
@@ -884,7 +913,7 @@ function selectInstalled(
     next.candidate.matchedTaskTerms.forEach((term) => coveredTerms.add(term));
     next.candidate.matchedCapabilities.forEach((term) => coveredCapabilities.add(term));
     next.candidate.routeTerms.forEach((term) => selectedRouteTerms.add(term));
-    next.candidate.capabilities.all.forEach((term) => selectedCapabilityTerms.add(term));
+    next.candidate.matchedCapabilities.forEach((term) => selectedCapabilityTerms.add(term));
     remaining.splice(remaining.indexOf(next.candidate), 1);
   }
 
@@ -913,7 +942,7 @@ function selectAvailable(
     installed.flatMap(({ candidate }) => [...candidate.routeTerms])
   );
   const selectedCapabilityTerms = new Set(
-    installed.flatMap(({ candidate }) => [...candidate.capabilities.all])
+    installed.flatMap(({ candidate }) => [...candidate.matchedCapabilities])
   );
 
   while (
@@ -939,7 +968,7 @@ function selectAvailable(
       const redundancyPenalty = Math.max(
         jaccard(candidate.routeTerms, selectedRouteTerms) *
           PREFLIGHT_CONFIG.redundancyWeight,
-        jaccard(candidate.capabilities.all, selectedCapabilityTerms) * 0.45
+        jaccard(candidate.matchedCapabilities, selectedCapabilityTerms) * 0.45
       );
       const marginal = clamp(
         candidate.relevance + uniqueCoverage + capabilityGain * 0.8 - redundancyPenalty -
@@ -962,7 +991,7 @@ function selectAvailable(
     next.candidate.matchedTaskTerms.forEach((term) => coveredTerms.add(term));
     next.candidate.matchedCapabilities.forEach((term) => coveredCapabilities.add(term));
     next.candidate.routeTerms.forEach((term) => selectedRouteTerms.add(term));
-    next.candidate.capabilities.all.forEach((term) => selectedCapabilityTerms.add(term));
+    next.candidate.matchedCapabilities.forEach((term) => selectedCapabilityTerms.add(term));
     remaining.splice(remaining.indexOf(next.candidate), 1);
   }
 
@@ -985,14 +1014,14 @@ function presentCandidates(
     selected.flatMap(({ candidate }) => [...candidate.routeTerms])
   );
   const selectedCapabilities = new Set(
-    selected.flatMap(({ candidate }) => [...candidate.capabilities.all])
+    selected.flatMap(({ candidate }) => [...candidate.matchedCapabilities])
   );
 
   return candidates.map((candidate): PreflightCandidate => {
     const id = candidate.candidate.candidateId;
     const selectedEntry = selectedById.get(id);
     const capabilityRedundancy = jaccard(
-      candidate.capabilities.all,
+      candidate.matchedCapabilities,
       selectedCapabilities
     );
     const redundancyPenalty = selectedEntry
