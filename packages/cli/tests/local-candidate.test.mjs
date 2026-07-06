@@ -62,16 +62,23 @@ it("launches verified Windows npm and pnpm JavaScript entries without a shell", 
   const physicalPnpm = await realpath(pnpm);
   const physicalNpm = await realpath(npm);
 
-  expect(packageManagerInvocation("pnpm", ["pack"], {
+  const pnpmInvocation = packageManagerInvocation("pnpm", ["pack"], {
     platform: "win32",
     env: { npm_execpath: pnpm, npm_node_execpath: node },
     execPath: node
-  })).toEqual({ command: physicalNode, args: [physicalPnpm, "pack"] });
-  expect(packageManagerInvocation("npm", ["root", "--global"], {
+  });
+  expect(await realpath(pnpmInvocation.command)).toBe(physicalNode);
+  expect(await realpath(pnpmInvocation.args[0])).toBe(physicalPnpm);
+  expect(pnpmInvocation.args.slice(1)).toEqual(["pack"]);
+
+  const npmInvocation = packageManagerInvocation("npm", ["root", "--global"], {
     platform: "win32",
     env: { npm_node_execpath: node },
     execPath: node
-  })).toEqual({ command: physicalNode, args: [physicalNpm, "root", "--global"] });
+  });
+  expect(await realpath(npmInvocation.command)).toBe(physicalNode);
+  expect(await realpath(npmInvocation.args[0])).toBe(physicalNpm);
+  expect(npmInvocation.args.slice(1)).toEqual(["root", "--global"]);
 });
 
 it("rejects a linked output directory without deleting its external contents", async () => {
