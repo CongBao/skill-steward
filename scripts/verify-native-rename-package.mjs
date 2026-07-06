@@ -1,10 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { checkReleaseContract } from "./release-contract.mjs";
+import { parseTarEntries } from "./verify-cli-package.mjs";
 
 const exactFiles = ["LICENSE", "README.md", "package.json", "rename_noreplace.node"];
 const exactArchiveFiles = exactFiles.map((file) => `package/${file}`);
@@ -15,9 +14,9 @@ function exactArray(value, expected) {
     && value.every((item, index) => item === expected[index]);
 }
 
-export function verifyNativeRenamePackage(artifact, platform, arch, libc) {
-  if (!artifact || !platform || !arch || !libc || !artifact.endsWith(".tgz")) {
-    throw new Error("Usage: verify-native-rename-package.mjs <artifact.tgz> <platform> <arch> <libc>");
+export function verifyNativeRenamePackageBytes(bytes, platform, arch, libc, options = {}) {
+  if (!Buffer.isBuffer(bytes) || !platform || !arch || !libc) {
+    throw new Error("Native package bytes, platform, architecture, and libc are required");
   }
   const expectedName = `@skill-steward/rename-noreplace-${platform}-${arch}${
     platform === "linux" ? `-${libc}` : ""
@@ -31,55 +30,49 @@ export function verifyNativeRenamePackage(artifact, platform, arch, libc) {
     "package.json"
   ), "utf8"));
   const expectedLibc = platform === "linux" ? [libc === "gnu" ? "glibc" : libc] : undefined;
-  const directory = mkdtempSync(join(tmpdir(), "steward-native-package-"));
+  const files = parseTarEntries(bytes, options.maximumUnpackedBytes);
+  if (!exactArray([...files.keys()].sort(), exactArchiveFiles)) {
+    throw new Error("Native package archive members are not the exact four regular files");
+  }
+  let manifest;
   try {
-    const archiveEntries = execFileSync("tar", ["-tzf", artifact], {
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024
-    }).split("\n").filter(Boolean);
-    const archiveDetails = execFileSync("tar", ["-tvzf", artifact], {
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024
-    }).split("\n").filter(Boolean);
-    if (
-      !exactArray([...archiveEntries].sort(), exactArchiveFiles)
-      || archiveDetails.length !== exactArchiveFiles.length
-      || archiveDetails.some((line) => !line.startsWith("-"))
-    ) {
-      throw new Error(`Native package ${basename(artifact)} archive members are not the exact four regular files`);
+    manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(files.get("package/package.json")));
+  } catch {
+    throw new Error("Native package metadata or payload is incomplete");
+  }
+  const metadataValid = isDeepStrictEqual(manifest, expectedManifest)
+    && manifest.name === expectedName
+    && manifest.version === release.version
+    && manifest.type === "commonjs"
+    && manifest.main === "rename_noreplace.node"
+    && exactArray(manifest.os, [platform])
+    && exactArray(manifest.cpu, [arch])
+    && (expectedLibc === undefined ? manifest.libc === undefined : exactArray(manifest.libc, expectedLibc))
+    && exactArray(manifest.files, ["rename_noreplace.node", "README.md", "LICENSE"])
+    && manifest.publishConfig?.access === "public"
+    && manifest.engines?.node === ">=22";
+  if (
+    !metadataValid
+    || !files.get("package/rename_noreplace.node")?.length
+    || !files.get("package/README.md")?.toString("utf8").trim()
+    || !files.get("package/LICENSE")?.toString("utf8").includes("MIT License")
+  ) {
+    throw new Error("Native package metadata or payload is incomplete");
+  }
+  return manifest;
+}
+
+export function verifyNativeRenamePackage(artifact, platform, arch, libc) {
+  if (!artifact || !platform || !arch || !libc || !artifact.endsWith(".tgz")) {
+    throw new Error("Usage: verify-native-rename-package.mjs <artifact.tgz> <platform> <arch> <libc>");
+  }
+  try {
+    return verifyNativeRenamePackageBytes(readFileSync(artifact), platform, arch, libc);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Native package ")) {
+      error.message = error.message.replace("Native package ", `Native package ${basename(artifact)} `);
     }
-    execFileSync("tar", ["-xzf", artifact, "-C", directory, ...exactArchiveFiles]);
-    const root = join(directory, "package");
-    const files = readdirSync(root, { withFileTypes: true });
-    if (
-      files.some((entry) => !entry.isFile())
-      || !exactArray(files.map((entry) => entry.name).sort(), exactFiles)
-    ) {
-      throw new Error(`Native package ${basename(artifact)} must contain exactly ${exactFiles.join(", ")}`);
-    }
-    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-    const metadataValid = isDeepStrictEqual(manifest, expectedManifest)
-      && manifest.name === expectedName
-      && manifest.version === release.version
-      && manifest.type === "commonjs"
-      && manifest.main === "rename_noreplace.node"
-      && exactArray(manifest.os, [platform])
-      && exactArray(manifest.cpu, [arch])
-      && (expectedLibc === undefined ? manifest.libc === undefined : exactArray(manifest.libc, expectedLibc))
-      && exactArray(manifest.files, ["rename_noreplace.node", "README.md", "LICENSE"])
-      && manifest.publishConfig?.access === "public"
-      && manifest.engines?.node === ">=22";
-    if (
-      !metadataValid
-      || !readFileSync(join(root, "rename_noreplace.node")).length
-      || !readFileSync(join(root, "README.md"), "utf8").trim()
-      || !readFileSync(join(root, "LICENSE"), "utf8").includes("MIT License")
-    ) {
-      throw new Error(`Native package ${basename(artifact)} metadata or payload is incomplete`);
-    }
-    return manifest;
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
+    throw error;
   }
 }
 

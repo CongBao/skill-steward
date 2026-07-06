@@ -41,4 +41,4 @@ Release candidates, custom prerelease labels, build metadata, mismatched tags, a
 
 The JSON contract cannot expand its own authority. The checker independently fixes the CLI and six native names and physical repository paths. A missing, renamed, extra, symlinked, or out-of-repository public package fails before synchronization or publication.
 
-The contract does not replace the existing protected environment, exact-`main` requirement, artifact verification, byte-identity preflight, provenance, or one-time bootstrap controls described in [Native package publication](native-publication.md) and [CLI npm publication](cli-publication.md).
+The contract does not replace the existing protected environment, exact-`main` requirement, artifact verification, byte-identity preflight, provenance, or one-time bootstrap controls described in [Native package publication](native-publication.md), [CLI npm publication](cli-publication.md), and [Attested GitHub prerelease](github-prerelease.md).

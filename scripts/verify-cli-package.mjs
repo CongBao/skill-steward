@@ -9,6 +9,7 @@ import {
   validateRuntimeAuditSnapshot
 } from "../packages/cli/runtime-audit.mjs";
 import { checkReleaseContract } from "./release-contract.mjs";
+import { boundedDiagnostic, MAX_UNPACKED_PACKAGE_BYTES } from "./release-assets.mjs";
 
 const BLOCK_SIZE = 512;
 const REQUIRED_FILES = [
@@ -87,19 +88,27 @@ function safeArchivePath(input) {
     || input.startsWith("/")
     || /^[A-Za-z]:/.test(input)
   ) {
-    throw new Error(`Unsafe tar path '${input}'`);
+    throw new Error(`Unsafe tar path '${boundedDiagnostic(input, 512)}'`);
   }
   const segments = input.split("/").filter((segment) => segment !== "" && segment !== ".");
-  if (segments.includes("..")) throw new Error(`Unsafe tar path '${input}'`);
+  if (segments.includes("..")) throw new Error(`Unsafe tar path '${boundedDiagnostic(input, 512)}'`);
   const normalized = segments.join("/");
   if (normalized !== "package" && !normalized.startsWith("package/")) {
-    throw new Error(`Tar entry is outside package/: '${input}'`);
+    throw new Error(`Tar entry is outside package/: '${boundedDiagnostic(input, 512)}'`);
   }
   return normalized;
 }
 
-export function parseTarEntries(compressed) {
-  const archive = gunzipSync(compressed);
+export function parseTarEntries(compressed, maximumUnpackedBytes = MAX_UNPACKED_PACKAGE_BYTES) {
+  let archive;
+  try {
+    archive = gunzipSync(compressed, { maxOutputLength: maximumUnpackedBytes });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error("Tar archive exceeds the unpacked byte limit");
+    }
+    throw error;
+  }
   if (archive.length % BLOCK_SIZE !== 0) {
     throw new Error("Tar archive has a partial trailing block");
   }
@@ -162,9 +171,11 @@ export function parseTarEntries(compressed) {
     const path = safeArchivePath(metadata.path ?? nextPath ?? headerPath);
     localPax = {};
     nextPath = undefined;
-    if (seenPaths.has(path)) throw new Error(`Duplicate tar path '${path}'`);
+    if (seenPaths.has(path)) throw new Error(`Duplicate tar path '${boundedDiagnostic(path, 512)}'`);
     seenPaths.add(path);
-    if (type === "0" || type === "\0" || type === "") {
+    if (type === "5") {
+      files.set(path, Buffer.alloc(0));
+    } else if (type === "0" || type === "\0" || type === "") {
       files.set(path, Buffer.from(content));
     }
   }
@@ -332,11 +343,17 @@ async function assertPackedManifest(actual, expected, packageDirectory) {
 async function assertExactPackageTree(files, expected, packageDirectory) {
   const paths = [...files.keys()].sort(compare);
   const expectedPaths = [...expected.keys()].sort(compare);
-  if (JSON.stringify(paths) !== JSON.stringify(expectedPaths)) {
+  if (paths.length !== expectedPaths.length || paths.some((path, index) => path !== expectedPaths[index])) {
     const missing = expectedPaths.filter((path) => !files.has(path));
     const extra = paths.filter((path) => !expected.has(path));
     throw new Error(
-      `Packed package tree differs from expected files; missing=[${missing.join(", ")}], extra=[${extra.join(", ")}]`
+      `Packed package tree differs from expected files; missing=[${missing
+        .slice(0, 5)
+        .map((path) => boundedDiagnostic(path, 256))
+        .join(", ")}], extra=[${extra
+        .slice(0, 5)
+        .map((path) => boundedDiagnostic(path, 256))
+        .join(", ")}]`
     );
   }
   for (const [path, value] of expected) {
@@ -357,8 +374,8 @@ async function sourceControlledAudit() {
   }
 }
 
-export async function verifyPackedArtifact(path) {
-  const files = parseTarEntries(await readFile(path));
+export async function verifyPackedArtifactBytes(bytes) {
+  const files = parseTarEntries(bytes);
   for (const required of REQUIRED_FILES) {
     if (!files.has(required)) throw new Error(`Missing ${required}`);
   }
@@ -392,7 +409,7 @@ export async function verifyPackedArtifact(path) {
   const notices = files.get("package/dist/THIRD_PARTY_NOTICES.txt").toString("utf8");
   for (const identifier of identifiers) {
     if (!notices.includes(`## ${identifier}\n`)) {
-      throw new Error(`Third-party notices do not cover ${identifier}`);
+      throw new Error(`Third-party notices do not cover ${boundedDiagnostic(identifier, 512)}`);
     }
   }
   if (/(?:^|[\s('"`])(?:\/[Uu]sers\/|\/home\/|\/private\/|\/tmp\/|[A-Za-z]:[\\/])/m.test(notices)) {
@@ -405,6 +422,10 @@ export async function verifyPackedArtifact(path) {
     throw new Error("Packed manifest differs from the source-controlled full runtime audit");
   }
   return { files: files.size, packages: identifiers.length };
+}
+
+export async function verifyPackedArtifact(path) {
+  return verifyPackedArtifactBytes(await readFile(path));
 }
 
 export async function verifyDryRun(path) {
