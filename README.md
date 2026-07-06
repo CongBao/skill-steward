@@ -207,7 +207,7 @@ The Evidence dashboard shows the numerator and denominator for feedback rate, us
 
 ## Harness integration
 
-Skill Steward can connect Codex, Claude Code, and GitHub Copilot CLI without replacing them. The managed Hook observes the native lifecycle; the shared companion Skill gives the Harness an explicit task-preflight tool. JSON status v2 keeps those two pieces separate, including each target, reason, availability, and the companion proof category. A connected Hook therefore cannot hide a missing, outdated, modified, or unreadable companion:
+Skill Steward can connect Codex, Claude Code, and GitHub Copilot CLI without replacing them. The managed Hook observes the native lifecycle; the shared companion Skill gives the Harness an explicit task-preflight tool. JSON status v3 keeps those two pieces separate, including each target, reason, availability, and the companion proof category. The temporary Alpha top-level aliases have been removed, so consumers read the nested `hook` and `companion` domains directly. A connected Hook therefore cannot hide a missing, outdated, modified, or unreadable companion:
 
 ```bash
 skill-steward integrate status --json
@@ -232,7 +232,7 @@ skill-steward integrate recovery plan
 skill-steward integrate recovery apply --plan <plan-id> --confirm
 ```
 
-Recovery covers interrupted create, upgrade, connect, retained disconnect, and final uninstall transactions on supported POSIX platforms. Apply revalidates the record, transaction sequence, artifact roles, platform, and plan expiry under the shared lease. A partial recovery remains blocked with a fresh-plan instruction instead of reporting success. Windows recovery writes remain unavailable in this Alpha.
+Recovery covers interrupted create, upgrade, connect, retained disconnect, and final uninstall transactions on supported POSIX platforms. Apply revalidates the record, transaction sequence, artifact roles, platform, and plan expiry under the shared lease. A partial recovery remains blocked with a fresh-plan instruction instead of reporting success. Windows CI verifies native journal identities, junction refusal, Win32 manifest modes, and fail-closed planning, but recovery and lifecycle writes remain unavailable until native reparse detection and handle-relative mutation authority are implemented.
 
 Disconnect removes the reviewed Harness Hook and updates the proven consumer set. The shared companion stays in place while another Harness still uses it. When the last proven consumer disconnects, Skill Steward removes only the exact tree recorded at installation; a modified, unreadable, or unproved tree is left untouched. This uses recorded installed evidence rather than the current package, so an unchanged older companion can still be uninstalled after an upgrade. Create, upgrade, and final uninstall use the packaged no-replace native helper for the current platform. Missing or unsupported helpers block the write instead of falling back to a racy filesystem operation.
 

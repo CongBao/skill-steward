@@ -11,9 +11,9 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
           cache: pnpm
@@ -40,19 +40,42 @@ jobs:
       - name: Test
         run: pnpm test
 
-  windows-smoke:
+  windows-security:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Windows integration journal smoke
         run: pnpm --filter @skill-steward/store exec vitest run tests/integration-store.windows.test.ts
+      - name: Windows integration safety
+        run: pnpm --filter @skill-steward/integrations exec vitest run tests/integration-platform.windows.test.ts
       - name: Build CLI
         run: pnpm build
       - name: Run packaged CLI help
         run: node packages/cli/dist/main.js --help
+
+  macos-security:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build and verify Darwin mutation helper
+        working-directory: packages/rename-noreplace-darwin-arm64
+        run: node ../../scripts/build-native-rename-noreplace.mjs darwin arm64 none
+      - name: macOS integration safety
+        run: >-
+          pnpm --filter @skill-steward/integrations exec vitest run
+          tests/companion-manifest.test.ts
+          tests/companion-owned-tree-native.test.ts
+          tests/integration-process-crash.test.ts
+          tests/integration-recovery-coordinator.test.ts

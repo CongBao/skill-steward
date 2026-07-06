@@ -415,7 +415,8 @@ describe("open-source repository", () => {
     expect(workflow).toContain("verify-packed-artifact.mjs");
     expect(workflow).toContain("artifacts/npm/skill-steward-");
     expect(workflow).toContain("artifacts/pnpm/skill-steward-");
-    expect(workflow).toContain("windows-smoke:");
+    expect(workflow).toContain("windows-security:");
+    expect(workflow).toContain("macos-security:");
   });
 
   it("keeps runtime audit updates explicit and outside normal build and CI", async () => {

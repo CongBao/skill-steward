@@ -41,7 +41,7 @@ function status(
         reason: hookAvailable ? reason : `HOOK_${hookStatus.replaceAll("-", "_").toUpperCase()}`
       };
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     harness,
     hook: {
       status: hookStatus,
@@ -66,10 +66,7 @@ function status(
         ? { state: "available", available: true, reason: null }
         : availability
     },
-    availability,
-    status: companion,
-    reason,
-    hookStatus
+    availability
   };
 }
 

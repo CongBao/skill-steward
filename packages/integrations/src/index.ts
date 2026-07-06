@@ -34,7 +34,7 @@ export type {
   IntegrationRecoveryStatusOptions,
   IntegrationStatus,
   IntegrationStatusAvailability,
-  IntegrationStatusV2,
+  IntegrationStatusV3,
   IntegrationTransactionOptions,
   IntegrationTransactionReceipt,
   PublicIntegrationError,

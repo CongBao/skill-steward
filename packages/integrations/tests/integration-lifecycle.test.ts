@@ -33,8 +33,8 @@ function readinessReport() {
 }
 
 describe("public integration lifecycle compatibility", () => {
-  it("publishes separate v2 Hook and companion domains with exact compatibility aliases", async () => {
-    const home = await mkdtemp(join(tmpdir(), "steward-public-status-v2-"));
+  it("publishes separate v3 Hook and companion domains without Alpha aliases", async () => {
+    const home = await mkdtemp(join(tmpdir(), "steward-public-status-v3-"));
     const value = await integrationStatus("codex", {
       home,
       stateDirectory: join(home, "state"),
@@ -42,7 +42,7 @@ describe("public integration lifecycle compatibility", () => {
     });
 
     expect(value).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       harness: "codex",
       hook: {
         status: "not-installed",
@@ -57,14 +57,11 @@ describe("public integration lifecycle compatibility", () => {
         proofCategory: "new",
         availability: { state: "available", available: true, reason: null }
       },
-      availability: { state: "available", available: true, reason: null },
-      status: "missing",
-      reason: "COMPANION_MISSING",
-      hookStatus: "not-installed"
+      availability: { state: "available", available: true, reason: null }
     });
-    expect(value.status).toBe(value.companion.status);
-    expect(value.reason).toBe(value.companion.reason);
-    expect(value.hookStatus).toBe(value.hook.status);
+    expect(value).not.toHaveProperty("status");
+    expect(value).not.toHaveProperty("reason");
+    expect(value).not.toHaveProperty("hookStatus");
   });
 
   it("rejects the wrong expected Harness before consuming a reviewed apply plan", async () => {
@@ -95,7 +92,7 @@ describe("public integration lifecycle compatibility", () => {
       generateReadiness
     })).resolves.toMatchObject({ outcome: "ready", hook: "installed" });
     await expect(integrationStatus("codex", options)).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       hook: { lastChangedAt: "2026-07-05T00:00:00.000Z" },
       companion: { lastChangedAt: "2026-07-05T00:00:00.000Z" },
       lastChangedAt: "2026-07-05T00:00:00.000Z"

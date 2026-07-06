@@ -182,6 +182,7 @@ export type CompanionTransactionBoundary =
 export interface CompanionTransactionDependencies {
   transactionId(): string;
   recordId(): string;
+  assertNativeCapability: typeof assertCompanionPlanNativeCapability;
   beforeBoundary(boundary: CompanionTransactionBoundary): Promise<void>;
   afterBoundary(boundary: CompanionTransactionBoundary): Promise<void>;
   ownedTreeHooks?: OwnedTreeMutationHooks;
@@ -211,6 +212,7 @@ export interface CompanionTransactionDependencies {
 const defaultDependencies: CompanionTransactionDependencies = {
   transactionId: randomUUID,
   recordId: randomUUID,
+  assertNativeCapability: assertCompanionPlanNativeCapability,
   beforeBoundary: async () => undefined,
   afterBoundary: async () => undefined,
   appendRecord: appendIntegrationRecord,
@@ -710,7 +712,7 @@ async function runCompanionIntegrationTransaction(
       ? undefined
       : plan as ApplyableIntegrationPlan;
     if (applyTransactionPlan !== undefined) {
-      await assertCompanionPlanNativeCapability(applyTransactionPlan);
+      await dependencies.assertNativeCapability(applyTransactionPlan);
     }
     const mutationOptions = {
       stateDirectory: options.stateDirectory,

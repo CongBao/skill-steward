@@ -103,6 +103,19 @@ async function seedCatalog(current: Fixture): Promise<void> {
 }
 
 describe("preflight command", () => {
+  it("documents the bounded max-skills range in command help", async () => {
+    const stdout: string[] = [];
+    const exitCode = await run(["preflight", "--help"], {
+      cwd: process.cwd(),
+      home: process.cwd(),
+      stateDir: join(process.cwd(), ".test-state"),
+      stdout: (value) => stdout.push(value),
+      stderr: () => undefined
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.join(" ")).toContain("--max-skills <1-5>");
+  });
   let current: Fixture;
 
   beforeEach(async () => {

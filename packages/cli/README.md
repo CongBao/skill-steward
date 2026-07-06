@@ -44,7 +44,7 @@ skill-steward install --plan <id> --confirm
 
 The same `--plan <id> --confirm` contract applies to evidence-policy, evidence-erasure, quarantine, and restore plans. Plans are private, expiring, and single-use.
 
-`skill-steward integrate status --json` and `skill-steward integrate plan --harness <id>` inspect the Harness Hook and shared companion Skill separately. Apply accepts only the emitted single-use plan, revalidates it under a state-scoped cross-process lease, and transactionally publishes the companion, Hook configuration, readiness report, and history record. A definite pre-finalize failure restores the exact prior state; uncertainty or failed compensation retains recovery evidence and returns `recovery-required`.
+`skill-steward integrate status --json` returns schema v3 and inspects the Harness Hook and shared companion Skill in separate nested domains; the old Alpha top-level status aliases are no longer emitted. `skill-steward integrate plan --harness <id>` creates the reviewed change. Apply accepts only the emitted single-use plan, revalidates it under a state-scoped cross-process lease, and transactionally publishes the companion, Hook configuration, readiness report, and history record. A definite pre-finalize failure restores the exact prior state; uncertainty or failed compensation retains recovery evidence and returns `recovery-required`.
 
 ```bash
 skill-steward integrate apply --plan <id> --confirm
@@ -67,7 +67,7 @@ skill-steward integrate recovery plan
 skill-steward integrate recovery apply --plan <id> --confirm
 ```
 
-Recovery plans are expiring and single-use. Apply revalidates exact local evidence under the same mutation lease. Uncertain evidence exposes no recovery action, and an incomplete recovery asks for a fresh review instead of claiming success. Recovery mutation is POSIX-only in this Alpha.
+Recovery plans are expiring and single-use. Apply revalidates exact local evidence under the same mutation lease. Uncertain evidence exposes no recovery action, and an incomplete recovery asks for a fresh review instead of claiming success. Recovery mutation remains POSIX-only; Windows runs native read/fail-closed CI gates but does not yet have the reparse and handle-relative mutation authority needed for writes.
 
 ## Package trust
 
