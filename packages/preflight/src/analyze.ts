@@ -72,7 +72,10 @@ function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function intersection(left: Set<string>, right: Set<string>): Set<string> {
+function intersection(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>
+): Set<string> {
   return new Set([...left].filter((term) => right.has(term)));
 }
 
@@ -115,9 +118,16 @@ function ratio(numerator: number, denominator: number): number {
   return denominator === 0 ? 0 : numerator / denominator;
 }
 
-function jaccard(left: Set<string>, right: Set<string>): number {
+function jaccard(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>
+): number {
   if (left.size === 0 && right.size === 0) return 0;
-  return intersection(left, right).size / new Set([...left, ...right]).size;
+  let overlap = 0;
+  for (const value of left) {
+    if (right.has(value)) overlap += 1;
+  }
+  return overlap / (left.size + right.size - overlap);
 }
 
 function stableNumber(value: number): number {
@@ -566,6 +576,7 @@ function scoreCandidates(
   const taskTerms = new Set(tokenize(positiveTask).terms);
   const taskCapabilities = extractCapabilities(task);
   const taskPhrases = anchoredTriggerPhrases(positiveTask);
+  const capabilityCache = new Map<string, CapabilitySet>();
   const candidates = normalizedCandidates.map((candidate): ScoredCandidate => {
     const normalizedName = candidate.name.replace(/[-_]+/g, " ");
     const nameTerms = tokenize(normalizedName).terms;
@@ -573,14 +584,21 @@ function scoreCandidates(
     const positiveDescription = routingNegativeClauses.length === 0
       ? candidate.description
       : positiveRoutingText(candidate.description);
-    const capabilities = extractCapabilities(`${normalizedName}. ${positiveDescription}`);
+    const capabilityInput = normalizeTask(
+      `${normalizedName}. ${positiveDescription}`
+    ).toLowerCase().replace(/[0-9]+/gu, "0");
+    let capabilities = capabilityCache.get(capabilityInput);
+    if (!capabilities) {
+      capabilities = extractCapabilities(capabilityInput);
+      capabilityCache.set(capabilityInput, capabilities);
+    }
     const matchedCapabilities = intersection(
-      new Set(taskCapabilities.all),
-      new Set(capabilities.all)
+      taskCapabilities.all,
+      capabilities.all
     );
     const matchedCapabilityPairs = intersection(
-      new Set(taskCapabilities.pairs),
-      new Set(capabilities.pairs)
+      taskCapabilities.pairs,
+      capabilities.pairs
     );
     const capabilityCoverage = weightedCapabilityRatio(
       matchedCapabilities,
@@ -841,7 +859,7 @@ function selectInstalled(
       const redundancyPenalty = Math.max(
         jaccard(candidate.routeTerms, selectedRouteTerms) *
           PREFLIGHT_CONFIG.redundancyWeight,
-        jaccard(new Set(candidate.capabilities.all), selectedCapabilityTerms) * 0.45
+        jaccard(candidate.capabilities.all, selectedCapabilityTerms) * 0.45
       );
       const marginal = clamp(
         candidate.relevance + uniqueCoverage + capabilityGain * 0.8 -
@@ -921,7 +939,7 @@ function selectAvailable(
       const redundancyPenalty = Math.max(
         jaccard(candidate.routeTerms, selectedRouteTerms) *
           PREFLIGHT_CONFIG.redundancyWeight,
-        jaccard(new Set(candidate.capabilities.all), selectedCapabilityTerms) * 0.45
+        jaccard(candidate.capabilities.all, selectedCapabilityTerms) * 0.45
       );
       const marginal = clamp(
         candidate.relevance + uniqueCoverage + capabilityGain * 0.8 - redundancyPenalty -
@@ -974,7 +992,7 @@ function presentCandidates(
     const id = candidate.candidate.candidateId;
     const selectedEntry = selectedById.get(id);
     const capabilityRedundancy = jaccard(
-      new Set(candidate.capabilities.all),
+      candidate.capabilities.all,
       selectedCapabilities
     );
     const redundancyPenalty = selectedEntry
