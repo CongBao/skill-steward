@@ -2,80 +2,51 @@
 
 English | [简体中文](README.zh-CN.md)
 
-**The cross-Harness operations layer for Agent Skills.**
+**Know your Skills. Choose what matters. Change with confidence.**
 
-Skill Steward gives Codex, Claude Code, and GitHub Copilot CLI one local, proof-aware Skill inventory and one reviewed change path. It helps you understand what is installed, preflight each task—including useful Skills you do not have yet—and make reversible changes backed by exact plans and local evidence.
+**One local operations layer for Agent Skills across Codex, Claude Code, and GitHub Copilot CLI.**
 
-It works beside your Harness instead of replacing it. Your Harness still runs the task; Skill Steward keeps Skill selection small, relevant, reviewable, and recoverable. Native behavior is verified for the three core adapters above; the wider 30-Harness catalog is convention-only inventory and installation coverage.
+**See the portfolio. Preflight the task. Review every change.**
 
-> Status: Beta release candidate 0.5.0-beta.1. The npm packages and GitHub prerelease are not public yet; install the verified local candidate bundle below.
+Skill Steward gives your Harness a shared view of installed Agent Skills, recommends the smallest useful set for each task, and makes Skill changes reviewable and recoverable. It works beside Codex, Claude Code, and GitHub Copilot CLI; it does not replace your Harness or run the task itself.
 
-**Try locally:** [install the candidate](#installation), then run `skill-steward scan`, one real `skill-steward preflight`, and `skill-steward dashboard`. Inventory and Preflight work on Node.js platforms; reviewed integration lifecycle writes currently require the matching macOS or Linux native helper prepared by the installer.
+Analysis stays local and deterministic. Skill Steward does not call an LLM. Catalog refresh is opt-in, and prompt-time Preflight uses only the validated local cache.
+
+> **Status: Beta release candidate 0.5.0-beta.1.** The Skill Steward CLI is not published to npm, and there is no GitHub prerelease yet. Publication is paused while the product completes local manual testing. Install the verified local candidate below.
 
 ## Three jobs
 
 ### 1. Understand your Skill portfolio
 
-Scan standard user and project Skill directories for 30 Harnesses, inspect complete bundles, and see duplicate content, broken references, oversized context, scripts, executables, portability problems, and scope overlap in one local dashboard.
+Scan user and project Skill directories across 30 Harness conventions. See duplicate content, broken references, context cost, scripts, executables, scope overlap, plugin ownership, and whether a Skill is actually effective or shadowed.
 
 ### 2. Preflight the current task
 
-Compare the task with both installed Skills and candidates from public catalogs you explicitly enabled. A bounded English/Chinese capability model separates incidental word overlap from action-and-object intent, then selects the smallest set that adds distinct value. Results separate **Use now**, **Consider installing**, **Capability gaps**, and **Excluded**, so an uninstalled candidate is visible without being treated as already trusted.
+Compare the task with installed Skills and candidates from catalogs you explicitly enable. Results separate **Use now**, **Consider installing**, capability gaps, and exclusions, then choose a small set whose members add distinct value.
 
-### 3. Make reviewed, reversible changes
+### 3. Change Skills safely
 
-Inspect the source revision and exact filesystem plan before installation. Confirmed changes use provenance, backups, drift checks, and rollback. Quarantine and restore remove a Skill from active use without offering permanent deletion.
+Inspect a local folder, ZIP, public Git source, or catalog candidate before installation. Review the exact destination and filesystem plan, then confirm it explicitly. Installation, quarantine, restore, Harness connection, disconnect, rollback, and interruption recovery stop when evidence has drifted.
 
-### Why keep it installed
+## The Skill Steward loop
 
-- **Task-time help, not another destination:** Codex and Claude Code prompt Hooks can run Preflight where a request starts. Copilot remains observe-only and gets recommendations through the companion Skill or CLI.
-- **One view across tools:** direct and plugin-managed Skills are resolved into one proof-aware inventory instead of being counted by directory presence alone.
-- **Safe local operations:** installation, integration, shared-consumer disconnect, final uninstall, quarantine, restore, and rollback use exact reviewed plans and stop on drift.
-- **Recovery after interruption:** if a managed integration stops midway, the same local evidence derives one safe rollback or finalize direction for review in the CLI, loopback API, or dashboard. The direction cannot be overridden and there is no force write.
+`Inventory → Preflight → Reviewed change → Local evidence → Recovery`
 
-The ranking is deterministic and local; it does not require an LLM. Your Harness still decides whether and how to use a recommended Skill.
+This connected loop is the product: one cross-Harness inventory informs task-time selection; every accepted change keeps provenance and rollback evidence; feedback and lifecycle history show what happened without storing the raw task. Your Harness remains responsible for deciding whether and how to use a recommendation.
 
-## Native inventory visibility
-
-Finding a directory does not prove the Harness can use the Skill. Core native inventory adapters for Codex, Claude Code, and GitHub Copilot CLI inspect documented local direct and plugin Skill surfaces, then the report and UI show three separate kinds of state:
-
-- **Source statuses:** `scanned`, `missing`, `unreadable`, `invalid`, `disabled`, `stale`, `ambiguous`, `truncated`
-- **Harness coverage:** `verified`, `partial`, `unavailable`, `convention-only`
-- **Skill exposure:** `effective`, `shadowed`, `inactive`, `ambiguous`
-
-Copilot Harness coverage can remain `partial` when local runtime or MDM evidence is incomplete. An affected source or Skill exposure can remain `ambiguous` when local files do not prove activation or precedence.
-
-Native plugin-managed Skills are read-only in Skill Steward governance; manage them through the owning Harness. Skill Steward quarantine and restore apply only to directly managed Skills. Across the total 30 Harnesses, coverage outside the three core adapters is convention-only directory inventory/install coverage where native semantics have not been verified.
-
-A scan is a current-workspace snapshot plus user scopes; it does not crawl every project or workspace.
-
-## Screenshots
-
-These views use local example data to show populated states; the scores and evidence counts are not project usage results.
+## Product views
 
 ![Portfolio overview in English](docs/images/overview-light-en.png)
 
 ![Task Preflight with installed and available candidates](docs/images/preflight-discovery-light-en.png)
 
-![Evidence dashboard with explicit feedback, lifecycle, Harness, and algorithm metrics](docs/images/evidence-light-en.png)
+![Reviewed quarantine plan with verified recovery](docs/images/governance-dark-en.png)
 
-![Reviewed quarantine plan with verified recovery and no permanent delete](docs/images/governance-dark-en.png)
+The [Chinese README](README.zh-CN.md) uses the matching Chinese interface captures.
 
-![Exact reviewed Codex connection plan with Hook and companion targets](docs/images/integrations-dark-en.png)
+## Local installation
 
-Screenshots in this README use the English locale. The [Chinese README](README.zh-CN.md) uses the matching Chinese captures.
-
-## Installation
-
-### Requirements
-
-- Node.js 22 or newer
-- pnpm 10 or newer to build the local package
-- A C compiler available as `cc` to build the macOS/Linux lifecycle helper; Windows does not build that helper
-
-### Install the verified local candidate
-
-Until the npm package is published, prepare and install the same verified local artifacts that the repository tests. On macOS and Linux, the command selects exactly one helper for the current platform, architecture, libc, and Beta version, verifies it together with the CLI, then installs both. Windows installs the complete CLI without the native lifecycle helper: scan, Task Preflight, and the Dashboard remain available, while managed integration lifecycle and recovery writes remain unavailable.
+Requirements: Node.js 22+, pnpm 10+, and `cc` on macOS/Linux for the lifecycle helper. Windows installs the CLI without that helper.
 
 ```bash
 git clone https://github.com/CongBao/skill-steward.git
@@ -85,21 +56,9 @@ pnpm candidate:install
 skill-steward --version
 ```
 
-SSH works too:
-
-```bash
-git clone git@github.com:CongBao/skill-steward.git
-```
-
-The candidate installer replaces an older current-platform helper before installing the CLI, so the two versions cannot silently diverge. Check the active binary with `skill-steward --version`. Use `pnpm candidate:pack` instead when you only want the verified tarballs and `candidate-manifest.json` without changing the global installation. Both commands write to a new private system temporary directory and print its path; pass `-- --output <empty-directory>` when you need a fixed location, then remove it after inspection if it is no longer needed.
-
-For source-development setup and the full contributor quality checks, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-The packed CLI includes its package `README.md`, MIT `LICENSE`, generated `THIRD_PARTY_NOTICES.txt`, and a machine-readable third-party manifest. The artifact verifier checks real npm and pnpm tarballs against the trusted build tree and the source-controlled `runtime-audit.json`; normal builds fail rather than silently rewriting that audit.
+The candidate installer verifies the CLI and the one native helper for the current platform before installing them together. It does not publish anything. For source-development setup, use [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## First use
-
-The shortest useful path is one scan, one real task, and the dashboard:
 
 ```bash
 skill-steward scan
@@ -109,241 +68,34 @@ skill-steward preflight \
 skill-steward dashboard
 ```
 
-Any available catalog recommendation always shows its Candidate ID. Because this example supplies an explicit supported Harness, it also prints a complete reviewed preview command. When the catalog does not declare a scope, that command targets only the current project with `--scope project`; the CLI resolves the omitted workspace to the current directory. It never guesses a Harness or silently widens the destination to global scope.
+These commands create a local inventory and privacy-reduced evidence under `~/.skill-steward`; they do not install a recommendation or change Harness configuration. Mutations always begin with a preview and require the exact emitted plan ID plus explicit confirmation.
 
-This path does not change any Skill or Harness configuration. It does write the latest local report and privacy-reduced Preflight evidence under `~/.skill-steward`; the raw task is not stored. An installation preview creates a plan but does not install anything. Apply only the exact `--plan <id> --confirm` command it prints after review. The same preview-first rule applies to integration, policy, and governance changes.
+## Verified support
 
-For a headless inventory or report:
-
-```bash
-skill-steward doctor --json
-skill-steward discover --json
-skill-steward report --format markdown
-```
-
-State is stored in `~/.skill-steward`. Override that location without changing the Skill roots:
-
-```bash
-SKILL_STEWARD_HOME=/path/to/private/state skill-steward dashboard --no-open
-```
-
-## Task preflight
-
-Task Preflight answers two questions before work starts:
-
-1. Which installed Skills add distinct value now?
-2. Which not-yet-installed Skills could fill a meaningful gap?
-
-```bash
-skill-steward preflight --task-file ./task.txt --max-skills 3
-printf '%s' "Review this pull request" | skill-steward preflight --stdin --compact-json
-skill-steward preflight --task "Review this pull request" --installed-only
-```
-
-Algorithm v9 is a deterministic local ranker, not an LLM or a general semantic search engine. It combines lexical relevance with a versioned English/Chinese workflow grammar that recognizes bounded actions, objects, and local action-object pairs. Selection rewards uncovered capabilities, penalizes redundant candidates, preserves risk and Harness eligibility gates, and includes estimated context cost. Explicit negative instructions keep rejected capabilities out; broad nouns such as “Skill”, “code”, or “agent” cannot activate a candidate alone. Capability gaps appear only when the evidence is specific enough to be a plausible Skill search hint. The public 28-case benchmark reports 96.3% precision, 92.9% recall, 92.9% exact-set accuracy, 92.9% bilingual decision parity, and zero negative-control false positives. Run it with `pnpm test:preflight-quality`. These numbers describe the included synthetic corpus, not every possible task or real-world task success. Exact boundaries are documented in [Architecture](docs/architecture.md#task-time-data-flow) and the [Beta candidate testing protocol](docs/alpha-testing.md#compact-and-bilingual-preflight).
-
-Use `--compact-json` for Harness or companion-Skill handoff. Compact schema v4 emits one line and at most 4,096 UTF-8 bytes, with selected use/install recommendations and stable warning codes but no raw task or capability details. Its feedback command is `null` when evidence persistence failed. `--json` returns the complete `PreflightResult`; full result schema v5 adds capability coverage, capability precision, and trigger confidence alongside candidate decisions, scores, features, reasons, conflicts, inventory warnings, capability gaps, and aggregate coverage. Available catalog candidates may include catalog `source` metadata. It does not embed native inventory source, ownership, plugin, or exposure records. The portfolio reports and dashboard preserve those records; Preflight consumes resolved visibility and expresses relevant outcomes through candidate reason codes and inventory warnings. Companion Hooks remain capped at 2,048 bytes.
-
-If the private state directory is readable but cannot be written by the current Harness sandbox, Preflight still returns the recommendation with exit code zero. It emits `PREFLIGHT_PERSISTENCE_UNAVAILABLE`, does not expose the failed path, and makes clear that this run cannot accept feedback because its report and evidence were not saved.
-
-Human CLI output includes the Preflight run ID and, when the run was saved, a direct feedback command. Full candidate and reason details remain available with `--json`.
-
-```bash
-skill-steward evidence feedback --preflight <run-id> --label useful
-skill-steward evidence feedback \
-  --preflight <run-id> \
-  --label incomplete \
-  --candidate <complete-correct-candidate-set>
-```
-
-For `incomplete`, `--candidate` is the complete set that should have been recommended, including any original recommendations that were already correct. This keeps correction metrics meaningful.
-
-The raw task text is never written to disk. Stored evidence contains only allow-listed hashes, IDs, aggregate counts, numeric scores, source IDs, and optional feedback.
-
-### Opt-in discovery sources
-
-All built-in sources start disabled:
-
-- [OpenAI Plugins](https://github.com/openai/plugins), scanning Skills nested in public plugin bundles;
-- [Anthropic Skills](https://github.com/anthropics/skills);
-- [Awesome GitHub Copilot](https://github.com/github/awesome-copilot), classified as a community source.
-
-Enable and refresh sources explicitly:
-
-```bash
-skill-steward catalog enable openai-plugins
-skill-steward catalog refresh
-skill-steward catalog list --json
-```
-
-Custom sources must be credential-free public HTTPS Git repositories. Adding a source leaves it disabled. Refresh is the only networked indexing step; Hooks and Preflight use the validated local cache with no prompt-time network access. “Known publisher” describes repository ownership, not safety.
-
-## Evidence and data policy
-
-The **minimal mode is the default**. It retains privacy-reduced Preflight metadata and explicit `useful`, `incomplete`, or `incorrect` feedback, but no lifecycle correlation keys or ranking feature snapshots.
-
-Learning mode is opt-in. It adds bounded numeric feature snapshots—including capability coverage, capability precision, and trigger confidence—and content-free Hook events with HMAC-SHA256 pseudonyms. It never stores the extracted capability names or pairs. A private per-install salt is stored with mode `0600` and is never included in export, API responses, or the dashboard. Prompts, extracted terms, working-directory paths, raw session/turn IDs, transcripts, assistant messages, tool arguments, and tool output are excluded.
-
-```bash
-skill-steward evidence policy --json
-skill-steward evidence policy set --mode learning --retention-days 30 --max-events 5000
-skill-steward evidence policy set --plan <id> --confirm
-skill-steward evidence summary --json
-skill-steward evidence export --output ./skill-steward-evidence.json
-skill-steward evidence compact
-skill-steward evidence erase
-skill-steward evidence erase --plan <id> --confirm
-```
-
-The request without `--confirm` creates an exact, expiring plan. Apply only with the emitted ID: `--plan <id> --confirm` loads that same plan in a later process instead of rebuilding it from new arguments. Plans are single-use; a claimed plan that encounters drift or another apply-time failure is consumed, and the CLI asks for a fresh preview. Retention is configurable from 7 to 365 days and lifecycle storage from 100 to 10,000 events.
-
-The Evidence dashboard shows the numerator and denominator for feedback rate, useful/incomplete/incorrect labels, corrected-set precision/recall/F1, and provenance-only install conversion. It separates lifecycle reasons from explicit labels and compares Harnesses, algorithm versions, and rolling 7/30-day windows. **Lifecycle completion is not task success.** Calibration review requires at least **100 labeled preflights**, 30 corrected candidate sets, and 20 portfolio fingerprints. **No ranking threshold or weight changes automatically**; calibration would require a separate reviewed release.
-
-## Harness integration
-
-Skill Steward can connect Codex, Claude Code, and GitHub Copilot CLI without replacing them. The managed Hook observes the native lifecycle; the shared companion Skill gives the Harness an explicit task-preflight tool. JSON status v3 keeps those two pieces separate, including each target, reason, availability, and the companion proof category. The temporary Alpha top-level aliases have been removed, so consumers read the nested `hook` and `companion` domains directly. A connected Hook therefore cannot hide a missing, outdated, modified, or unreadable companion:
-
-```bash
-skill-steward integrate status --json
-skill-steward integrate plan --harness codex
-skill-steward integrate plan --harness claude-code
-skill-steward integrate plan --harness github-copilot
-```
-
-Each preview persists the exact Hook change, companion bundle, packaged source, ownership proof, record head, and consumer set. Apply uses the emitted single-use plan, revalidates every bound field under one cross-process lease, and publishes the companion, Harness configuration, readiness report, and history as one transaction. A definite failure before finalize restores the exact prior state; uncertain publication, lease loss, or failed compensation keeps recovery evidence and reports `recovery-required` instead of guessing.
-
-```bash
-skill-steward integrate apply --plan <plan-id> --confirm
-skill-steward integrate remove --harness codex
-skill-steward integrate remove --plan <plan-id> --confirm
-```
-
-Interrupted integration recovery is global because all three adapters share one companion Skill and one mutation lease. Status is read-only. A recoverable state first produces a single-use plan whose `rollback` or `finalize` direction comes from the exact transaction and lifecycle record; `unknown` evidence offers diagnostics but no mutation.
-
-```bash
-skill-steward integrate recovery status --json
-skill-steward integrate recovery plan
-skill-steward integrate recovery apply --plan <plan-id> --confirm
-```
-
-Recovery covers interrupted create, upgrade, connect, retained disconnect, and final uninstall transactions on supported POSIX platforms. Apply revalidates the record, transaction sequence, artifact roles, platform, and plan expiry under the shared lease. A partial recovery remains blocked with a fresh-plan instruction instead of reporting success. Windows CI verifies native journal identities, junction refusal, Win32 manifest modes, and fail-closed planning, but recovery and lifecycle writes remain unavailable until native reparse detection and handle-relative mutation authority are implemented.
-
-Disconnect removes the reviewed Harness Hook and updates the proven consumer set. The shared companion stays in place while another Harness still uses it. When the last proven consumer disconnects, Skill Steward removes only the exact tree recorded at installation; a modified, unreadable, or unproved tree is left untouched. This uses recorded installed evidence rather than the current package, so an unchanged older companion can still be uninstalled after an upgrade. Create, upgrade, and final uninstall use the packaged no-replace native helper for the current platform. Missing or unsupported helpers block the write instead of falling back to a racy filesystem operation.
-
-Managed Hooks fail open and use cached local state. Codex and Claude Code cover `UserPromptSubmit` and completion Hooks and receive a compact recommendation rather than raw task text or catalog URLs. Codex may still require its native trust review. GitHub Copilot CLI is intentionally observe-only: its documented Hook records lifecycle evidence, while recommendations remain available through the companion Skill or explicit CLI Preflight.
-
-## Harness capability matrix
-
-| Harness | Managed events | Recommendation | Local evidence |
+| Harness coverage | Inventory | Task-time integration | Reviewed lifecycle |
 |---|---|---|---|
-| Codex | `UserPromptSubmit`, `Stop` | Recommend + observe through the prompt Hook | Turn lifecycle |
-| Claude Code | `UserPromptSubmit`, `Stop`, `SessionEnd` | Recommend + observe through the prompt Hook | Turn and session lifecycle |
-| GitHub Copilot CLI | `userPromptSubmitted`, `sessionEnd` | **Observe only**; recommendations via companion Skill/CLI | Prompt observation and session lifecycle |
+| Codex | Native direct and plugin visibility | Recommend + observe | Supported on proven macOS/Linux paths |
+| Claude Code | Native direct and plugin visibility | Recommend + observe | Supported on proven macOS/Linux paths |
+| GitHub Copilot CLI | Native direct and plugin visibility | Observe only; recommend through companion Skill/CLI | Supported on proven macOS/Linux paths |
+| 27 other Harness conventions | Directory inventory and installation | No verified native Hook behavior | No verified native lifecycle behavior |
 
-All three adapter configurations are tested with temporary-HOME fixtures and preserve unrelated configuration. “Observe only” is deliberate: the Copilot adapter does not inject recommendations into prompts.
+The dashboard is bilingual, supports light and dark appearance, and adapts from narrow in-app-browser widths to wide desktop layouts.
 
-## Supported harnesses
+## Current boundaries
 
-The root catalog covers 30 Harnesses: Amazon Q, Antigravity, Auggie, Bob, Claude Code, Cline, CodeBuddy, Codex, ForgeCode, Continue, CoStrict, Crush, Cursor, Factory, Gemini CLI, GitHub Copilot, iFlow, Junie, Kilo Code, Kimi, Kiro, Lingma, Vibe, OpenCode, Pi, Qoder, Qwen Code, RooCode, Trae, and Windsurf.
+- Native behavior is verified for Codex, Claude Code, and GitHub Copilot CLI. The wider 30-Harness catalog is convention-based coverage, not a claim of native semantic compatibility.
+- Windows supports inventory, Preflight, reports, and the dashboard. Reviewed integration lifecycle writes remain unavailable until native filesystem proof is complete.
+- A scan covers the current workspace and user scopes; it does not crawl every project on the machine.
+- Native plugin-managed Skills are visible but read-only. Manage them through their owning Harness.
+- Preflight is an explainable local ranker, not general semantic understanding. An empty result is preferred to a low-confidence recommendation.
+- Catalog sources are disabled by default. Refresh supports credential-free public HTTPS Git sources; a catalog entry is metadata, not a safety endorsement.
+- Skill Steward protects reviewed operations against detected drift, but it is not an isolation boundary from another malicious process running as the same operating-system user.
 
-Across the total 30 Harnesses, coverage outside the three core adapters provides convention-only directory inventory and installation. Native workflow integration is narrower still and is described exactly in the capability matrix.
+## Learn more
 
-## How safe installation works
-
-Skill Steward never installs a recommendation automatically. A catalog recommendation follows the same reviewed flow as a folder, ZIP, or public Git source:
-
-1. **Inspect** — resolve the recorded commit and recheck fingerprint, files, scripts, executables, references, and findings.
-2. **Choose destination** — select Harness, global/project scope, workspace, and target name.
-3. **Resolve conflicts** — identical content is a no-op; different content requires a rename or explicit replacement.
-4. **Confirm** — review the exact filesystem operations.
-5. **Apply** — create or replace atomically, record provenance, and rescan the portfolio.
-6. **Rollback** — restore the backup only while destination drift checks still pass.
-
-For a catalog candidate, preview first and then run the exact command it prints:
-
-```bash
-skill-steward install --catalog-candidate <candidate-id> --harness codex --scope global
-skill-steward install --plan <id> --confirm
-```
-
-The preview keeps the inspected source in private staging until the plan is applied or expires. Apply reuses that staged content in a later process, checks source and destination fingerprints again, and never restages from the network behind the reviewed plan.
-
-Installation apply and rollback share one state-scoped cross-process lease with managed Harness changes. The CLI acquires it before consuming the reviewed plan and checks the destination again after preparing the verified copy. Concurrent replacements therefore serialize: a stale waiter stops on drift instead of overwriting the newer installation or recording the wrong backup.
-
-ZIP traversal, absolute paths, links, case-folding collisions, excessive entries, and expansion limits are rejected. Git staging is non-interactive, disables repository Hooks and submodules, and never executes source content.
-
-## Reversible governance
-
-Quarantine removes an installed Skill from active discovery without deleting it permanently. It creates and verifies a private copy, moves the active directory atomically through a rollback location, commits the vault copy, and records the transaction. Restore verifies the vault again and refuses an occupied destination, an expired plan, or source/destination drift.
-
-```bash
-skill-steward govern history --json
-skill-steward govern quarantine --skill <skill-id>
-skill-steward govern quarantine --plan <id> --confirm
-skill-steward govern restore --transaction <quarantine-id>
-skill-steward govern restore --plan <id> --confirm
-```
-
-The dashboard exposes the same operation plan. There is no Delete action. Recovery keeps at least one verified copy if a transaction fails at copy, verification, move, vault, journal, or restore boundaries.
-
-## Comparison
-
-Skill Steward is strongest for developers who use several Harnesses and want local task selection plus reviewed, reversible operations. Native products remain the best-integrated experience inside their own Harness; package managers and registries are stronger at broad distribution, dependency locking, or hosted evaluation. Comparison checked **2026-07-05** against the linked product documentation.
-
-| Product | Primary job | Task-time selection | Cross-Harness lifecycle |
-|---|---|---|---|
-| **Skill Steward** | Proof-aware local inventory, task Preflight, evidence, and reversible governance | **Ranks installed and opt-in catalog candidates for the current task** | **Three core adapters share reviewed Hook + companion transactions, exact final uninstall, and user-visible evidence-derived recovery across CLI/API/Dashboard; convention-only inventory elsewhere** |
-| [Microsoft APM](https://microsoft.github.io/apm/) | Declarative agent-context package management with manifest, lockfile, transitive dependencies, policy, and CI audit | Installs and compiles declared packages; audit checks integrity and deployment drift | Deploys several primitive types across supported Harnesses with reproducible lockfile and policy controls |
-| [skills.sh](https://www.skills.sh/docs) | Public directory, leaderboard, security checks, and one-command cross-agent Skill installation | Discovery and popularity ranking before install | Installs GitHub-hosted Skills into supported agents; lifecycle centers on CLI install/update |
-| [Tessl](https://docs.tessl.io/) | Versioned Skill registry, evaluation, distribution, and optimization | Registry search plus measured quality/impact before install | Agent-agnostic package installation and hosted evaluation lifecycle |
-| [Codex Skills and Plugins](https://developers.openai.com/codex/plugins) | Native Codex Skills, plugins, marketplace, and Hooks | Native discovery and invocation inside Codex | Codex-native enable, disable, and uninstall controls |
-| [Claude Code Skills and Plugins](https://code.claude.com/docs/en/discover-plugins) | Native Claude Code Skills, plugins, marketplaces, and Hooks | Native discovery and invocation inside Claude Code | Claude-native install, update, enable, disable, and remove controls |
-| [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) | Native Copilot Skills and Hooks across supported Copilot surfaces | Native discovery and invocation inside Copilot | Copilot-native Skill and Hook management |
-
-## Privacy and security
-
-- The server binds to `127.0.0.1` and rejects unexpected Host and Origin values.
-- Packaged UI assets are same-origin and load no remote fonts, scripts, images, or analytics.
-- Mutations require a random per-process token held by the local page.
-- Dashboard read APIs do not return complete Skill bodies.
-- Prompt-time Preflight uses cached state and does not contact catalog sources.
-- Minimal evidence is the default; learning mode requires a reviewed policy change.
-- Persisted evidence excludes task text, extracted terms, descriptions, reasons, URLs, local paths, transcripts, assistant content, tool data, and raw Harness IDs.
-- Sanitized export and API responses never include the private HMAC salt.
-- Installation-source scripts, package managers, build commands, repository Hooks, and submodules are not executed.
-- CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use; confirmation never regenerates a plan from request arguments.
-- Installation, integration, and disconnect mutations share a cross-process lease. Integration create/upgrade binds no-replace native filesystem operations, recovery state, readiness publication, Hook configuration, history, and rollback to the same reviewed transaction.
-- Packed npm and pnpm tarballs are checked against the exact local package tree, generated notices, and the locked runtime audit.
-- The repository includes a prerelease workflow designed to require protected review. It reuses the exact npm-served bytes, checks canonical SHA-256/SHA-512 identities, and attests the complete nine-file GitHub asset set before draft finalization. It has not yet produced a public npm or GitHub release, so no protected-environment or public-install result is claimed.
-- Governance offers verified quarantine/restore, not permanent deletion, and stops on drift.
-
-Review [SECURITY.md](SECURITY.md) before reporting a vulnerability. Package boundaries and trust decisions are documented in [docs/architecture.md](docs/architecture.md).
-
-## Current limitations
-
-- Task scoring is deterministic and bounded. Algorithm v9 adds a published English/Chinese developer-workflow capability grammar and benchmark, but it is not general semantic understanding and does not measure actual task success.
-- Evidence describes recommendations and lifecycle events; it does not prove task success or change ranking automatically.
-- Harness lifecycle apply currently covers Codex, Claude Code, and GitHub Copilot CLI only. Final companion uninstall is available on proven POSIX paths; Windows lifecycle mutation remains blocked until native reparse and identity proof is available.
-- GitHub Copilot CLI is observe-only; prompt-time recommendation injection is not supported.
-- Native inventory is limited to documented local surfaces for Codex, Claude Code, and GitHub Copilot CLI. Copilot Harness coverage can remain `partial` when local runtime or MDM proof is unavailable; an affected source or Skill exposure can remain `ambiguous`.
-- Each scan covers the current workspace and user scopes, not every project or workspace on the machine.
-- Across the total 30 Harnesses, coverage outside the three core adapters follows directory conventions; inventory support for a Harness does not imply verified native plugin or Hook semantics.
-- Native plugin-managed Skills are reported but read-only in governance. Manage them through their owning Harness; Skill Steward quarantine and restore remain direct-Skill operations.
-- A reviewed plan is intentionally consumed after it is claimed, including when later validation detects drift; create a new preview before retrying.
-- Skill Steward protects against detected filesystem drift and unsafe paths, but it is not an isolation boundary from another malicious process running as the same operating-system user.
-- Catalog refresh supports public credential-free HTTPS Git sources, not private repositories or SSH.
-- Catalog records are metadata snapshots, not endorsements. Source contents are reinspected before an install plan.
-- Finding explanations remain English when the dashboard locale is Chinese.
-
-## Roadmap
-
-1. Validate additional native adapters only where local precedence, activation, lifecycle, and trust behavior can be tested.
-2. Evaluate reviewed ranking calibration only after the published evidence thresholds are met.
-3. Add scope migration and broader policy baselines on top of the reversible governance journal.
-4. Complete the first protected npm and attested GitHub Beta publication, then verify public installation before promoting release status.
-
-See [CHANGELOG.md](CHANGELOG.md), the [attested prerelease guide](docs/github-prerelease.md), and the [2026-07-03 product review](docs/product-review-2026-07-03.md) for released behavior, distribution controls, the historical Alpha.3 verdict, hands-on evidence, baseline, and priorities.
-
-## Contributing
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [GOVERNANCE.md](GOVERNANCE.md). For help use [SUPPORT.md](SUPPORT.md); for vulnerabilities use [SECURITY.md](SECURITY.md). The project is available under the [MIT License](LICENSE).
+- [Architecture and trust boundaries](docs/architecture.md)
+- [Beta candidate testing](docs/alpha-testing.md)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md) and [governance](GOVERNANCE.md)
+- [Support](SUPPORT.md) and [private security reporting](SECURITY.md)
+- [MIT License](LICENSE)

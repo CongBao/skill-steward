@@ -17,6 +17,26 @@ const chineseScreenshots = [
   "governance-dark-zh-CN.png",
   "integrations-dark-zh-CN.png"
 ];
+const englishLandingScreenshots = [
+  "overview-light-en.png",
+  "preflight-discovery-light-en.png",
+  "governance-dark-en.png"
+] as const;
+const chineseLandingScreenshots = [
+  "overview-light-zh-CN.png",
+  "preflight-discovery-light-zh-CN.png",
+  "governance-dark-zh-CN.png"
+] as const;
+const englishSlogans = [
+  "Know your Skills. Choose what matters. Change with confidence.",
+  "One local operations layer for Agent Skills across Codex, Claude Code, and GitHub Copilot CLI.",
+  "See the portfolio. Preflight the task. Review every change."
+] as const;
+const chineseSlogans = [
+  "看清你的 Skills，只选真正有用的，放心完成每次变更。",
+  "统一管理 Codex、Claude Code 和 GitHub Copilot CLI 中的 Agent Skills。",
+  "盘点资产，预检任务，审核变更。"
+] as const;
 const required = [
   "LICENSE",
   "README.zh-CN.md",
@@ -97,6 +117,15 @@ function shellCommandLines(markdown: string): string[] {
     .map((line) => line.replace(/--task\s+"[^"]+"/u, '--task "<task>"'));
 }
 
+function nonBlankMarkdownLines(markdown: string): number {
+  return markdown.split("\n").filter((line) => line.trim().length > 0).length;
+}
+
+function markdownImages(markdown: string): string[] {
+  return [...markdown.matchAll(/!\[[^\]]*\]\(docs\/images\/([^)]+)\)/gu)]
+    .map((match) => match[1] as string);
+}
+
 async function expectLocalLinksToExist(markdownPath: string, markdown: string): Promise<void> {
   const links = [...markdown.matchAll(/\[[^\]]*\]\((?!https?:|#)([^)]+)\)/g)].map(
     (match) => match[1] as string
@@ -147,7 +176,7 @@ describe("open-source repository", () => {
 
     const readme = await readFile(join(root, "README.md"), "utf8");
     expect(readme).toContain("Status: Beta release candidate 0.5.0-beta.1");
-    expect(readme).toContain("npm packages and GitHub prerelease are not public yet");
+    expect(readme).toContain("The Skill Steward CLI is not published to npm");
     expect(readme).not.toMatch(/npm install --global skill-steward|npm package is (?:now )?available|downloads? badge/iu);
   });
 
@@ -164,152 +193,59 @@ describe("open-source repository", () => {
 
     for (const readmePath of ["README.md", "README.zh-CN.md"]) {
       const readme = await readFile(join(root, readmePath), "utf8");
-      expect(readme).toMatch(/npm[^\n]*(?:not public|尚未公开|尚未发布)/iu);
+      expect(readme).toMatch(/(?:CLI[^\n]*not published to npm|CLI[^\n]*尚未发布到 npm)/iu);
       expect(readme).not.toMatch(/npm install (?:--global|-g) skill-steward/u);
     }
   });
 
-  it("ships a substantive README with valid local links and real screenshots", async () => {
+  it("ships a concise English product landing page with valid local links", async () => {
     const readme = await readFile(join(root, "README.md"), "utf8");
+    expect(nonBlankMarkdownLines(readme)).toBeLessThanOrEqual(160);
     for (const heading of [
       "## Three jobs",
-      "## Screenshots",
-      "## Installation",
+      "## The Skill Steward loop",
+      "## Product views",
+      "## Local installation",
       "## First use",
-      "## Task preflight",
-      "## Evidence and data policy",
-      "## Reversible governance",
-      "## Harness capability matrix",
-      "## Supported harnesses",
-      "## How safe installation works",
-      "## Comparison",
-      "## Privacy and security",
-      "## Contributing"
+      "## Verified support",
+      "## Current boundaries",
+      "## Learn more"
     ]) {
       expect(readme).toContain(heading);
     }
     expect(readme).toContain("[简体中文](README.zh-CN.md)");
     expect(readme).not.toContain("not a design mockup or a real user's portfolio");
     expect(readme).not.toContain("OpenSpec");
-    expect(readme).toContain(
-      "The cross-Harness operations layer for Agent Skills."
-    );
-    expect(readme).toContain("task—including useful Skills you do not have yet");
+    const firstScreen = readme.slice(0, readme.indexOf("## Three jobs"));
+    for (const slogan of englishSlogans) expect(firstScreen).toContain(slogan);
     expect(readme).toContain("Codex, Claude Code, and GitHub Copilot CLI");
-    expect(readme).toContain("works beside your Harness instead of replacing it");
-    expect(readme.indexOf("## Three jobs")).toBeLessThan(readme.indexOf("## Screenshots"));
-    expect(readme.indexOf("## Screenshots")).toBeLessThan(readme.indexOf("## First use"));
+    expect(firstScreen).toMatch(/does not replace your Harness/i);
+    expect(firstScreen).toMatch(/local and deterministic/i);
+    expect(firstScreen).toMatch(/does not call an LLM/i);
+    expect(firstScreen).toContain("Status: Beta release candidate 0.5.0-beta.1");
+    expect(firstScreen).toContain("The Skill Steward CLI is not published to npm");
+    expect(firstScreen).toMatch(/local manual testing/i);
+    expect(readme.indexOf("## Three jobs")).toBeLessThan(readme.indexOf("## Product views"));
+    expect(readme.indexOf("## Product views")).toBeLessThan(readme.indexOf("## First use"));
     expect(readme).toContain("skill-steward preflight");
-    expect(readme).toContain("raw task text is never written to disk");
-    expect(readme).not.toContain("cross-Harness control plane");
     expect(readme).toContain("Use now");
     expect(readme).toContain("Consider installing");
-    expect(readme).toContain(
-      "Codex and Claude Code cover `UserPromptSubmit` and completion Hooks"
-    );
-    expect(readme).toContain("no prompt-time network access");
-    expect(readme).toContain("never installs a recommendation automatically");
-    expect(readme).toContain("Primary job");
-    expect(readme).toContain("Task-time selection");
-    expect(readme).toContain("Cross-Harness lifecycle");
-    expect(readme).toContain("Microsoft APM");
-    expect(readme).toContain("skills.sh");
-    expect(readme).toContain("Tessl");
-    expect(readme).toContain("2026-07-05");
-    expect(readme).toContain("minimal mode is the default");
-    expect(readme).toContain("100 labeled preflights");
-    expect(readme).toContain("Lifecycle completion is not task success");
-    expect(readme).toContain("GitHub Copilot CLI");
-    expect(readme).toContain("Observe only");
-    expect(readme).toContain("No ranking threshold or weight changes automatically");
-    expect(readme).toContain("skill-steward govern quarantine");
-    expect(readme).toContain("skill-steward evidence erase");
-    for (const command of [
-      "skill-steward install --plan <id> --confirm",
-      "skill-steward integrate status --json",
-      "skill-steward integrate plan --harness codex",
-      "skill-steward integrate apply --plan <plan-id> --confirm",
-      "skill-steward integrate remove --plan <plan-id> --confirm",
-      "skill-steward evidence policy set --plan <id> --confirm",
-      "skill-steward evidence erase --plan <id> --confirm",
-      "skill-steward govern quarantine --plan <id> --confirm",
-      "skill-steward govern restore --plan <id> --confirm"
-    ]) {
-      expect(readme).toContain(command);
-    }
-    expect(readme).toContain("publishes the companion, Harness configuration, readiness report, and history as one transaction");
-    expect(readme).toMatch(/record head[^.]*consumer set/i);
-    expect(readme).toMatch(/definite failure before finalize restores the exact prior state/i);
-    expect(readme).toMatch(/uncertain publication[^.]*reports `recovery-required`/i);
-    expect(readme).toContain("THIRD_PARTY_NOTICES.txt");
-    expect(readme).toContain("runtime-audit.json");
-    expect(readme).toMatch(/real npm and pnpm tarballs/i);
-    expect(readme).toContain("Status: Beta release candidate 0.5.0-beta.1");
-    expect(readme).toContain("does not change any Skill or Harness configuration");
-    expect(readme).toContain("privacy-reduced Preflight evidence under `~/.skill-steward`");
-    const nativeHeading = readme.indexOf("## Native inventory visibility");
-    const userValue = readme.search(
-      /finding (?:a|the) director(?:y|ies)[^.]*not prove[^.]*Harness[^.]*use[^.]*Skill/i
-    );
-    expect(userValue).toBeGreaterThan(nativeHeading);
-    expect(userValue).toBeLessThan(readme.indexOf("Core native inventory adapters"));
-    expectInventoryTaxonomies(readme);
-    expect(readme).toMatch(/native plugin-managed Skills[^.]*read-only[^.]*governance/i);
-    expect(readme).toMatch(/quarantine and restore[^.]*directly managed Skills/i);
-    expect(readme).toContain("Across the total 30 Harnesses");
-    expect(readme).toMatch(/outside the three core adapters[^.]*convention-only/i);
-    expect(readme).toMatch(/current-workspace snapshot[^.]*user scopes/i);
-    expect(readme).toMatch(/does not crawl every project or workspace/i);
-    expect(readme).toMatch(/Copilot Harness coverage[^.]*`partial`/i);
-    expect(readme).toMatch(/source or Skill exposure[^.]*`ambiguous`/i);
-    expect(readme).toContain("Algorithm v9");
-    expect(readme).toContain("deterministic local ranker");
-    expect(readme).toMatch(/bounded English\/Chinese capability model/i);
-    expect(readme).toMatch(/actions, objects, and local action-object pairs/i);
-    expect(readme).toContain("28-case benchmark");
-    expect(readme).toContain("96.3% precision");
-    expect(readme).toContain("zero negative-control false positives");
-    expect(readme).toContain("not an LLM or a general semantic search engine");
-    expect(readme).toMatch(/explicit negative instructions[^.]*keep rejected capabilities out/i);
-    expect(readme).toMatch(/Capability gaps appear only when the evidence is specific enough/i);
-    expect(readme).toContain("docs/architecture.md#task-time-data-flow");
-    expect(readme).toContain("docs/alpha-testing.md#compact-and-bilingual-preflight");
-    expect(readme).toContain("--stdin --compact-json");
-    expect(readme).toContain("one line and at most 4,096 UTF-8 bytes");
-    expect(readme).toContain("selected use/install recommendations");
-    expect(readme).toContain("`--json` returns the complete `PreflightResult`");
-    expect(readme).toContain("catalog `source` metadata");
-    expect(readme).toMatch(/does not (?:embed|include)[^.]*native inventory[^.]*ownership[^.]*plugin[^.]*exposure records/i);
-    expect(readme).toMatch(/portfolio reports and (?:the )?dashboard[^.]*preserve/i);
-    expect(readme).toMatch(/reason codes and inventory warnings/i);
-    expect(readme).toContain("Companion Hooks remain capped at 2,048 bytes");
-    expect(readme).not.toContain("--stdin --json");
-    expect(readme).not.toContain("Algorithm v4");
-    expect(readme).not.toContain(
-      "does not yet enumerate every Skill nested inside a natively installed plugin"
-    );
-    expect(readme).not.toMatch(/remaining 30-Harness|full candidate, feature, exposure/i);
-    expect(readme).toMatch(
-      /Installation, integration, and disconnect mutations share a cross-process lease/i
-    );
-    expect(readme).toMatch(/Integration create\/upgrade binds no-replace native filesystem operations/i);
-    expect(readme).toMatch(
-      /CLI installation, integration apply, evidence-policy, evidence-erasure, quarantine, and restore plans are persisted privately, expire, and are single-use/
-    );
-    expect(readme).not.toContain("Managed native prompt Hooks are available only for Codex and Claude Code");
     expect(readme).not.toMatch(/status:\s*beta(?:\s+(?:is\s+)?(?:public|available|ready)|[.!]\s*$)|beta-ready|complete native plugin (?:coverage|inventory)|universal Hook support|supports automatic installation|automatically installs recommendations|guaranteed safe|sends task to (?:the )?catalog|hosted registry|Copilot automatic prompt injection/im);
-    for (const screenshot of englishScreenshots) expect(readme).toContain(screenshot);
+    expect(markdownImages(readme)).toEqual([...englishLandingScreenshots]);
     for (const screenshot of chineseScreenshots) expect(readme).not.toContain(screenshot);
+    for (const detail of ["NPM_BOOTSTRAP_TOKEN", "schema v", "recovery-required", "Microsoft APM"]) {
+      expect(readme).not.toContain(detail);
+    }
     await expectLocalLinksToExist("README.md", readme);
   });
 
   it("documents one coherent packaged first-value command path in both locales", async () => {
     const readme = await readFile(join(root, "README.md"), "utf8");
     const chineseReadme = await readFile(join(root, "README.zh-CN.md"), "utf8");
-    const installation = markdownSection(readme, "## Installation", "## First use");
-    const chineseInstallation = markdownSection(chineseReadme, "## 安装", "## 第一次使用");
-    const firstUse = markdownSection(readme, "## First use", "## Task preflight");
-    const chineseFirstUse = markdownSection(chineseReadme, "## 第一次使用", "## 任务预检");
+    const installation = markdownSection(readme, "## Local installation", "## First use");
+    const chineseInstallation = markdownSection(chineseReadme, "## 本地安装", "## 第一次使用");
+    const firstUse = markdownSection(readme, "## First use", "## Verified support");
+    const chineseFirstUse = markdownSection(chineseReadme, "## 第一次使用", "## 已验证的支持范围");
 
     expect(installation).not.toContain("pnpm check");
     expect(chineseInstallation).not.toContain("pnpm check");
@@ -333,144 +269,48 @@ describe("open-source repository", () => {
       .toBeLessThan(journey.indexOf("skill-steward scan"));
   });
 
-  it("ships a complete Chinese README with mutual language navigation", async () => {
+  it("ships a concise natural-Chinese product landing page", async () => {
     const chineseReadme = await readFile(join(root, "README.zh-CN.md"), "utf8");
+    expect(nonBlankMarkdownLines(chineseReadme)).toBeLessThanOrEqual(160);
     for (const heading of [
       "## 它主要做三件事",
-      "## 界面截图",
-      "## 安装",
+      "## Skill Steward 的闭环",
+      "## 产品界面",
+      "## 本地安装",
       "## 第一次使用",
-      "## 任务预检",
-      "## 证据与数据策略",
-      "## 可恢复治理",
-      "## Harness 能力矩阵",
-      "## 支持的 Harness",
-      "## 安全安装如何工作",
-      "## 竞品比较",
-      "## 隐私与安全",
-      "## 参与贡献"
+      "## 已验证的支持范围",
+      "## 当前边界",
+      "## 更多资料"
     ]) {
       expect(chineseReadme).toContain(heading);
     }
     expect(chineseReadme).toContain("[English](README.md)");
     expect(chineseReadme).not.toContain("并非设计稿");
     expect(chineseReadme).not.toContain("OpenSpec");
-    expect(chineseReadme).toContain("面向 Agent Skills 的跨 Harness 运维层。");
+    const firstScreen = chineseReadme.slice(0, chineseReadme.indexOf("## 它主要做三件事"));
+    for (const slogan of chineseSlogans) expect(firstScreen).toContain(slogan);
     expect(chineseReadme).toContain("Codex、Claude Code 和 GitHub Copilot CLI");
-    expect(chineseReadme).toContain("它与现有 Harness 配合工作，而不是取代 Harness");
+    expect(firstScreen).toContain("不会取代 Harness");
+    expect(firstScreen).toContain("本地、确定性");
+    expect(firstScreen).toContain("不会调用 LLM");
+    expect(firstScreen).toContain("当前状态：Beta 发布候选版 0.5.0-beta.1");
+    expect(firstScreen).toContain("Skill Steward CLI 尚未发布到 npm");
+    expect(firstScreen).toContain("本地人工测试");
     expect(chineseReadme.indexOf("## 它主要做三件事")).toBeLessThan(
-      chineseReadme.indexOf("## 界面截图")
+      chineseReadme.indexOf("## 产品界面")
     );
-    expect(chineseReadme.indexOf("## 界面截图")).toBeLessThan(
+    expect(chineseReadme.indexOf("## 产品界面")).toBeLessThan(
       chineseReadme.indexOf("## 第一次使用")
     );
     expect(chineseReadme).toContain("skill-steward preflight");
-    expect(chineseReadme).toContain("原始任务文本不会写入磁盘");
-    expect(chineseReadme).not.toContain("跨 Harness 控制平面");
     expect(chineseReadme).toContain("立即使用");
     expect(chineseReadme).toContain("建议安装");
-    expect(chineseReadme).toContain(
-      "Codex 和 Claude Code 适配器覆盖 `UserPromptSubmit` 与结束 Hook"
-    );
-    expect(chineseReadme).toContain("任务提交时不访问网络");
-    expect(chineseReadme).toContain("绝不会自动安装推荐项");
-    expect(chineseReadme).toContain("主要用途");
-    expect(chineseReadme).toContain("任务开始时如何选择");
-    expect(chineseReadme).toContain("跨 Harness 生命周期");
-    expect(chineseReadme).toContain("Microsoft APM");
-    expect(chineseReadme).toContain("skills.sh");
-    expect(chineseReadme).toContain("Tessl");
-    expect(chineseReadme).toContain("2026-07-05");
-    expect(chineseReadme).toContain("最小模式是默认模式");
-    expect(chineseReadme).toContain("100 次带标签的预检");
-    expect(chineseReadme).toContain("生命周期结束不等于任务成功");
-    expect(chineseReadme).toContain("GitHub Copilot CLI");
-    expect(chineseReadme).toContain("仅观察");
-    expect(chineseReadme).toContain("不会自动修改任何排序阈值或权重");
-    expect(chineseReadme).toContain("skill-steward govern quarantine");
-    expect(chineseReadme).toContain("skill-steward evidence erase");
-    for (const command of [
-      "skill-steward install --plan <id> --confirm",
-      "skill-steward integrate status --json",
-      "skill-steward integrate plan --harness codex",
-      "skill-steward integrate apply --plan <plan-id> --confirm",
-      "skill-steward integrate remove --plan <plan-id> --confirm",
-      "skill-steward evidence policy set --plan <id> --confirm",
-      "skill-steward evidence erase --plan <id> --confirm",
-      "skill-steward govern quarantine --plan <id> --confirm",
-      "skill-steward govern restore --plan <id> --confirm"
-    ]) {
-      expect(chineseReadme).toContain(command);
-    }
-    expect(chineseReadme).toMatch(/配套 Skill、Harness 配置、就绪报告和历史记录作为一个事务发布/);
-    expect(chineseReadme).toMatch(/记录头[^。]*consumer 集合/);
-    expect(chineseReadme).toMatch(/明确判定的失败[^。]*恢复原状态/);
-    expect(chineseReadme).toMatch(/发布结果不确定[^。]*`recovery-required`/);
-    expect(chineseReadme).toContain("THIRD_PARTY_NOTICES.txt");
-    expect(chineseReadme).toContain("runtime-audit.json");
-    expect(chineseReadme).toMatch(/npm 和 pnpm[^。]*真实 tarball/);
-    expect(chineseReadme).toContain("当前状态：Beta 发布候选版 0.5.0-beta.1");
-    expect(chineseReadme).toContain("不会修改任何 Skill 或 Harness 配置");
-    expect(chineseReadme).toContain("经过隐私裁剪的预检证据写入 `~/.skill-steward`");
-    const chineseNativeHeading = chineseReadme.indexOf("## 原生盘点可见性");
-    const chineseUserValue = chineseReadme.search(
-      /找到目录[^。]*不(?:代表|能证明)[^。]*Harness[^。]*使用[^。]*Skill/
-    );
-    expect(chineseUserValue).toBeGreaterThan(chineseNativeHeading);
-    expect(chineseUserValue).toBeLessThan(
-      chineseReadme.indexOf("核心原生盘点适配器")
-    );
-    expectInventoryTaxonomies(chineseReadme, {
-      source: "来源状态：",
-      coverage: "Harness 覆盖状态：",
-      exposure: "Skill 可见状态："
-    });
-    expect(chineseReadme).toMatch(/原生插件管理[^。]*治理[^。]*只读/);
-    expect(chineseReadme).toMatch(/隔离与恢复[^。]*直接管理的 Skills/);
-    expect(chineseReadme).toContain("在总计 30 种 Harness 中");
-    expect(chineseReadme).toMatch(/三种核心适配器之外[^。]*`convention-only`/);
-    expect(chineseReadme).toMatch(/当前工作区[^。]*用户级作用域[^。]*快照/);
-    expect(chineseReadme).toMatch(/不会遍历本机上的每个项目或工作区/);
-    expect(chineseReadme).toMatch(/Copilot 的 Harness 覆盖状态[^。]*`partial`/);
-    expect(chineseReadme).toMatch(/来源或 Skill 可见状态[^。]*`ambiguous`/);
-    expect(chineseReadme).toContain("算法 v9");
-    expect(chineseReadme).toContain("本机确定性运行");
-    expect(chineseReadme).toMatch(/中英文能力模型/);
-    expect(chineseReadme).toMatch(/动作、对象与局部动作—对象组合/);
-    expect(chineseReadme).toContain("28 个合成场景基准");
-    expect(chineseReadme).toContain("96.3% 精确率");
-    expect(chineseReadme).toContain("4 个负例没有误报");
-    expect(chineseReadme).toContain("不依赖 LLM，也不是通用语义搜索");
-    expect(chineseReadme).toMatch(/明确否定的能力[^。]*不会进入选择/);
-    expect(chineseReadme).toMatch(/能力缺口只有在证据足够具体[^。]*时才显示/);
-    expect(chineseReadme).toContain("docs/architecture.md#task-time-data-flow");
-    expect(chineseReadme).toContain("docs/alpha-testing.md#compact-and-bilingual-preflight");
-    expect(chineseReadme).toContain("--stdin --compact-json");
-    expect(chineseReadme).toMatch(
-      /需要把结果交给 Harness 或配套 Skill 时[^。]*`--compact-json`/
-    );
-    expect(chineseReadme).toContain("单行且不超过 4,096 UTF-8 字节");
-    expect(chineseReadme).toContain("只保留选中的使用/安装建议");
-    expect(chineseReadme).toContain("`--json` 返回完整的 `PreflightResult`");
-    expect(chineseReadme).toMatch(/目录候选项[^。；]*`source` 元数据/);
-    expect(chineseReadme).toMatch(/不包含原生盘点的来源、所有权、插件或可见状态记录/);
-    expect(chineseReadme).toMatch(/资产报告与 Dashboard[^。]*保留/);
-    expect(chineseReadme).toMatch(/原因码和盘点警告/);
-    expect(chineseReadme).toContain("配套 Hook 仍以 2,048 字节为上限");
-    expect(chineseReadme).not.toContain("--stdin --json");
-    expect(chineseReadme).not.toContain("算法 v4");
-    expect(chineseReadme).not.toContain("尚不能枚举所有原生已安装插件内部嵌套的 Skill");
-    expect(chineseReadme).not.toMatch(/其余 30 种|结果 schema v4|候选项特征、暴露状态/);
-    expect(chineseReadme).not.toMatch(/失败开放策略|临时 HOME 夹具|边界失败/);
-    expect(chineseReadme).toMatch(/安装、Harness 接入和断开共用跨进程锁/);
-    expect(chineseReadme).toMatch(/无覆盖原生文件操作[^。]*恢复状态[^。]*回滚/);
-    expect(chineseReadme).toMatch(
-      /CLI 的安装、集成应用、证据策略、证据清除、隔离和恢复计划保存在私有目录、会过期且只能使用一次/
-    );
-    expect(chineseReadme).not.toContain("托管的原生提示词 Hook 目前只覆盖 Codex 和 Claude Code");
     expect(chineseReadme).not.toMatch(/当前状态：\s*Beta(?:\s*(?:已公开|已就绪)|[。！]\s*$)|Beta 就绪|完整(?:的)?原生插件(?:覆盖|盘点)|通用 Hook 支持|支持自动安装|无须确认即可安装|保证安全|将任务发送到目录|托管 Registry|Copilot 自动注入/im);
-    for (const screenshot of chineseScreenshots) expect(chineseReadme).toContain(screenshot);
+    expect(markdownImages(chineseReadme)).toEqual([...chineseLandingScreenshots]);
     for (const screenshot of englishScreenshots) expect(chineseReadme).not.toContain(screenshot);
+    for (const detail of ["NPM_BOOTSTRAP_TOKEN", "schema v", "recovery-required", "Microsoft APM"]) {
+      expect(chineseReadme).not.toContain(detail);
+    }
     await expectLocalLinksToExist("README.zh-CN.md", chineseReadme);
   });
 
