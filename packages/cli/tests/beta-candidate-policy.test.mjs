@@ -105,19 +105,19 @@ it("keeps the unpublished Beta candidate truthful and bilingual", async () => {
     readFile(resolve(root, path), "utf8")
   ));
   const changelog = await readFile(resolve(root, "CHANGELOG.md"), "utf8");
-  const englishLead = english.slice(0, english.indexOf("## Screenshots"));
-  const chineseLead = chinese.slice(0, chinese.indexOf("## 界面截图"));
+  const englishLead = english.slice(0, english.indexOf("## Product views"));
+  const chineseLead = chinese.slice(0, chinese.indexOf("## 产品界面"));
   const betaNotes = changelog.slice(
     changelog.indexOf("## [0.5.0-beta.1]"),
     changelog.indexOf("## [0.5.0-alpha.4]")
   );
 
-  expect(englishLead).toContain("The cross-Harness operations layer for Agent Skills.");
+  expect(englishLead).toContain("Know your Skills. Choose what matters. Change with confidence.");
   expect(englishLead).toContain("Beta release candidate 0.5.0-beta.1");
-  expect(englishLead).toContain("npm packages and GitHub prerelease are not public yet");
-  expect(chineseLead).toContain("面向 Agent Skills 的跨 Harness 运维层。");
+  expect(englishLead).toContain("The Skill Steward CLI is not published to npm");
+  expect(chineseLead).toContain("看清你的 Skills，只选真正有用的，放心完成每次变更。");
   expect(chineseLead).toContain("Beta 发布候选版 0.5.0-beta.1");
-  expect(chineseLead).toMatch(/npm 包和 GitHub 预发布版本尚未公开/u);
+  expect(chineseLead).toContain("Skill Steward CLI 尚未发布到 npm");
 
   for (const markdown of [english, chinese, packageReadme, betaNotes, ...releaseDocuments]) {
     expect(actionablePrematurePublicClaims(markdown)).toEqual([]);
